@@ -67,8 +67,9 @@ fisseremo soltanto dopo aver verificato i protocolli reali dei CLI (vedi
   (stdio, JSON-RPC o NDJSON) in eventi del runtime.
 - Non legge e non scrive le credenziali dei provider: l'autenticazione resta interamente
   nel CLI.
-- Stato attuale: vuoto (`export {}`). Il contratto dell'adapter verrà definito dopo lo
-  studio dei riferimenti.
+- Stato attuale: c'è solo il client di connessione a Codex App Server (avvio, handshake,
+  richieste, notifiche, errori, arresto). Vedi [codex-app-server.md](codex-app-server.md).
+  Il contratto generale dell'adapter non è ancora definito.
 
 ### Stato operativo persistente
 

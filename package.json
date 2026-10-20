@@ -1,5 +1,5 @@
 {
-  "name": "agent-workspace-monorepo",
+  "name": "only-one-chat-monorepo",
   "version": "0.0.0",
   "private": true,
   "description": "VS Code extension that coordinates multiple AI coding agents through one shared conversation.",
@@ -16,8 +16,8 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "pnpm --filter agent-workspace run test:e2e",
-    "package": "pnpm --filter agent-workspace run package",
+    "test:e2e": "pnpm --filter only-one-chat run test:e2e",
+    "package": "pnpm --filter only-one-chat run package",
     "check": "pnpm build && pnpm typecheck && pnpm lint && pnpm test"
   },
   "devDependencies": {

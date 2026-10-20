@@ -45,25 +45,25 @@ Le eccezioni sono documentate in `pnpm-workspace.yaml`.
 
 Tutti i comandi si lanciano dalla root del repository.
 
-| Comando          | Cosa fa                                                              |
-| ---------------- | -------------------------------------------------------------------- |
-| `pnpm build`     | bundle di sviluppo (extension host e Webview) con source map         |
-| `pnpm typecheck` | `tsc --noEmit` strict su tutti i progetti                            |
-| `pnpm lint`      | ESLint (type-aware, `--max-warnings 0`) + `prettier --check`         |
-| `pnpm format`    | formatta con Prettier                                                |
-| `pnpm test`      | unit test Vitest (Node puro)                                         |
-| `pnpm test:e2e`  | smoke test nell'Extension Host isolato                               |
-| `pnpm package`   | bundle di produzione + `apps/vscode/agent-workspace-<versione>.vsix` |
-| `pnpm check`     | build + typecheck + lint + test                                      |
+| Comando          | Cosa fa                                                            |
+| ---------------- | ------------------------------------------------------------------ |
+| `pnpm build`     | bundle di sviluppo (extension host e Webview) con source map       |
+| `pnpm typecheck` | `tsc --noEmit` strict su tutti i progetti                          |
+| `pnpm lint`      | ESLint (type-aware, `--max-warnings 0`) + `prettier --check`       |
+| `pnpm format`    | formatta con Prettier                                              |
+| `pnpm test`      | unit test Vitest (Node puro)                                       |
+| `pnpm test:e2e`  | smoke test nell'Extension Host isolato                             |
+| `pnpm package`   | bundle di produzione + `apps/vscode/only-one-chat-<versione>.vsix` |
+| `pnpm check`     | build + typecheck + lint + test                                    |
 
-Watch: `pnpm --filter agent-workspace run watch`.
+Watch: `pnpm --filter only-one-chat run watch`.
 
 ## Avvio con F5
 
 1. Apri la cartella del repository in VS Code.
 2. Premi **F5** e scegli "Run Extension". Il task `build` parte in automatico.
 3. Nell'Extension Development Host apri la Command Palette e lancia
-   **Agent Workspace: Open Panel**.
+   **Only One Chat: Open Panel**.
 4. Il pannello mostra le versioni e lo stato del workspace trust. Il pulsante
    **Ping extension host** verifica il round trip dei messaggi.
 
@@ -88,7 +88,7 @@ pnpm package
 
 Il VSIX contiene solo `dist/extension.js`, `dist/webview/main.js`, `media/`,
 `package.json`, `README.md` e `LICENSE` (allow-list in `apps/vscode/.vscodeignore`).
-Per installarlo in locale: `code --install-extension apps/vscode/agent-workspace-0.0.1.vsix`.
+Per installarlo in locale: `code --install-extension apps/vscode/only-one-chat-0.0.1.vsix`.
 
 ## Repository di riferimento
 

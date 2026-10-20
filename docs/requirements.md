@@ -4,7 +4,7 @@ Stato: bozza iniziale (bootstrap, 2026-10-18). Nessun requisito è ancora implem
 
 ## Visione
 
-`agent-workspace` è un'estensione VS Code che coordina più agenti AI attraverso
+`only-one-chat` è un'estensione VS Code che coordina più agenti AI attraverso
 **un'unica chat condivisa**. L'utente parla con un solo thread. Il leader pianifica e delega,
 i worker eseguono, e l'attività di ciascun agente compare come elemento subordinato di
 quel thread. L'esperienza d'uso si ispira all'estensione Codex. Il codice è

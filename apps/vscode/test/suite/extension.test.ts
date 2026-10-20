@@ -3,13 +3,13 @@
 
 import * as assert from 'node:assert/strict';
 import * as vscode from 'vscode';
-import type { AgentWorkspaceExports } from '../../src/extension.js';
+import type { OnlyOneChatExports } from '../../src/extension.js';
 
-const EXTENSION_ID = 'ffontanesi.agent-workspace';
-const OPEN_PANEL = 'agentWorkspace.openPanel';
+const EXTENSION_ID = 'francesco-fontanesi.only-one-chat';
+const OPEN_PANEL = 'onlyOneChat.openPanel';
 
-async function activate(): Promise<AgentWorkspaceExports> {
-  const extension = vscode.extensions.getExtension<AgentWorkspaceExports>(EXTENSION_ID);
+async function activate(): Promise<OnlyOneChatExports> {
+  const extension = vscode.extensions.getExtension<OnlyOneChatExports>(EXTENSION_ID);
   assert.ok(extension, `${EXTENSION_ID} is not installed in the test host`);
   return extension.activate();
 }
@@ -20,11 +20,11 @@ function panelTabs(): vscode.Tab[] {
     .filter(
       (tab) =>
         tab.input instanceof vscode.TabInputWebview &&
-        tab.input.viewType.endsWith('agentWorkspace.panel'),
+        tab.input.viewType.endsWith('onlyOneChat.panel'),
     );
 }
 
-describe('Agent Workspace extension', () => {
+describe('Only One Chat extension', () => {
   it('activates and registers its commands', async () => {
     await activate();
     const commands = await vscode.commands.getCommands(true);

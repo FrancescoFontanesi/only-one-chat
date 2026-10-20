@@ -11,13 +11,13 @@
     {
       "label": "build tests",
       "type": "shell",
-      "command": "pnpm --filter agent-workspace exec node esbuild.mjs --tests",
+      "command": "pnpm --filter only-one-chat exec node esbuild.mjs --tests",
       "problemMatcher": []
     },
     {
       "label": "watch",
       "type": "shell",
-      "command": "pnpm --filter agent-workspace run watch",
+      "command": "pnpm --filter only-one-chat run watch",
       "isBackground": true,
       "problemMatcher": []
     },

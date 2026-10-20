@@ -1,5 +1,5 @@
 {
-  "name": "@agent-workspace/runtime",
+  "name": "@only-one-chat/runtime",
   "version": "0.0.0",
   "private": true,
   "description": "Provider-agnostic orchestration runtime. Must not depend on the vscode API.",

@@ -35,7 +35,7 @@ export function App() {
 
   return (
     <main>
-      <h1>Agent Workspace</h1>
+      <h1>Only One Chat</h1>
       <p class="muted">Development bootstrap. The orchestrator is not implemented yet.</p>
       {status ? (
         <dl>

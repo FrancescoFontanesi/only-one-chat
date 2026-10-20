@@ -1,6 +1,6 @@
 # Istruzioni per gli agenti
 
-Progetto: `agent-workspace`, un'estensione VS Code che coordina più agenti AI in
+Progetto: `only-one-chat`, un'estensione VS Code che coordina più agenti AI in
 un'unica chat. Prima di lavorare leggi [docs/requirements.md](docs/requirements.md),
 [docs/architecture.md](docs/architecture.md) e [docs/security.md](docs/security.md).
 

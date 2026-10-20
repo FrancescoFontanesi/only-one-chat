@@ -1,29 +1,29 @@
 import * as vscode from 'vscode';
-import { getRuntimeInfo } from '@agent-workspace/runtime';
+import { getRuntimeInfo } from '@only-one-chat/runtime';
 import { createNonce, renderWebviewHtml } from './html.js';
 import { parseWebviewMessage, type HostToWebviewMessage } from './protocol.js';
 
-const TITLE = 'Agent Workspace';
+const TITLE = 'Only One Chat';
 
 /** Single editor panel hosting the (future) orchestration chat. */
-export class AgentWorkspacePanel {
-  static readonly viewType = 'agentWorkspace.panel';
+export class OnlyOneChatPanel {
+  static readonly viewType = 'onlyOneChat.panel';
 
-  private static current: AgentWorkspacePanel | undefined;
+  private static current: OnlyOneChatPanel | undefined;
   private static readonly readyEmitter = new vscode.EventEmitter<void>();
 
   /** Fires each time a panel's webview has loaded and received its status. */
-  static readonly onDidBecomeReady = AgentWorkspacePanel.readyEmitter.event;
+  static readonly onDidBecomeReady = OnlyOneChatPanel.readyEmitter.event;
 
   static show(context: vscode.ExtensionContext): void {
-    if (AgentWorkspacePanel.current) {
-      AgentWorkspacePanel.current.panel.reveal();
+    if (OnlyOneChatPanel.current) {
+      OnlyOneChatPanel.current.panel.reveal();
       return;
     }
     const webviewRoot = vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview');
     const mediaRoot = vscode.Uri.joinPath(context.extensionUri, 'media');
     const panel = vscode.window.createWebviewPanel(
-      AgentWorkspacePanel.viewType,
+      OnlyOneChatPanel.viewType,
       TITLE,
       vscode.ViewColumn.Active,
       {
@@ -33,7 +33,7 @@ export class AgentWorkspacePanel {
         localResourceRoots: [webviewRoot, mediaRoot],
       },
     );
-    AgentWorkspacePanel.current = new AgentWorkspacePanel(panel, context, webviewRoot, mediaRoot);
+    OnlyOneChatPanel.current = new OnlyOneChatPanel(panel, context, webviewRoot, mediaRoot);
   }
 
   private readonly disposables: vscode.Disposable[] = [];
@@ -77,7 +77,7 @@ export class AgentWorkspacePanel {
             workspaceTrusted: vscode.workspace.isTrusted,
           },
         }).then(() => {
-          AgentWorkspacePanel.readyEmitter.fire();
+          OnlyOneChatPanel.readyEmitter.fire();
         });
         break;
       case 'ping':
@@ -91,7 +91,7 @@ export class AgentWorkspacePanel {
   }
 
   private dispose(): void {
-    AgentWorkspacePanel.current = undefined;
+    OnlyOneChatPanel.current = undefined;
     for (const disposable of this.disposables.splice(0)) disposable.dispose();
   }
 }

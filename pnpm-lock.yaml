@@ -35,7 +35,7 @@ importers:
 
   apps/vscode:
     dependencies:
-      '@agent-workspace/runtime':
+      '@only-one-chat/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
       preact:

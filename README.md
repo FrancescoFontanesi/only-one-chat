@@ -1,6 +1,6 @@
-# Agent Workspace
+# Only One Chat
 
-Estensione VS Code (nome provvisorio `agent-workspace`) per coordinare più agenti AI di
+Estensione VS Code (`francesco-fontanesi.only-one-chat`) per coordinare più agenti AI di
 coding attraverso **un'unica chat condivisa**. Un leader configurabile delega a worker e
 subagent, con task persistenti, esecuzione parallela, failover in caso di quote esaurite
 e permessi espliciti. Usa i CLI ufficiali e gli abbonamenti esistenti, mai API a pagamento.
@@ -17,7 +17,7 @@ pnpm install --frozen-lockfile
 pnpm check
 ```
 
-Poi apri la cartella in VS Code, premi **F5** e lancia **Agent Workspace: Open Panel**.
+Poi apri la cartella in VS Code, premi **F5** e lancia **Only One Chat: Open Panel**.
 
 ## Documentazione
 

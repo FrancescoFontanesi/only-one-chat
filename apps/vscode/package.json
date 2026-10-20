@@ -1,11 +1,15 @@
 {
-  "name": "agent-workspace",
-  "displayName": "Agent Workspace",
+  "name": "only-one-chat",
+  "displayName": "Only One Chat",
   "description": "Coordinate multiple AI coding agents through one shared conversation.",
   "version": "0.0.1",
-  "publisher": "ffontanesi",
+  "publisher": "francesco-fontanesi",
   "private": true,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FrancescoFontanesi/only-one-chat"
+  },
   "engines": {
     "vscode": "^1.140.0"
   },
@@ -24,9 +28,9 @@
   "contributes": {
     "commands": [
       {
-        "command": "agentWorkspace.openPanel",
+        "command": "onlyOneChat.openPanel",
         "title": "Open Panel",
-        "category": "Agent Workspace"
+        "category": "Only One Chat"
       }
     ]
   },
@@ -35,10 +39,10 @@
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p webview/tsconfig.json && tsc --noEmit -p test/tsconfig.json",
     "test:e2e": "node esbuild.mjs --tests && vscode-test",
-    "package": "node esbuild.mjs --production && vsce package --no-dependencies --allow-missing-repository"
+    "package": "node esbuild.mjs --production && vsce package --no-dependencies"
   },
   "dependencies": {
-    "@agent-workspace/runtime": "workspace:*",
+    "@only-one-chat/runtime": "workspace:*",
     "preact": "10.29.8"
   },
   "devDependencies": {

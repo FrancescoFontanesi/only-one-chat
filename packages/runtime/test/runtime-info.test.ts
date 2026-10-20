@@ -4,7 +4,7 @@ import pkg from '../package.json' with { type: 'json' };
 
 describe('getRuntimeInfo', () => {
   it('reports the package identity from package.json', () => {
-    expect(getRuntimeInfo()).toEqual({ name: '@agent-workspace/runtime', version: pkg.version });
+    expect(getRuntimeInfo()).toEqual({ name: '@only-one-chat/runtime', version: pkg.version });
   });
 
   it('returns a fresh object on every call', () => {

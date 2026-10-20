@@ -1,0 +1,14 @@
+{
+  "name": "@agent-workspace/runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Provider-agnostic orchestration runtime. Must not depend on the vscode API.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

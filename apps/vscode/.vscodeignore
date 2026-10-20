@@ -1,0 +1,9 @@
+# Allow-list: the VSIX contains only the bundles, media and metadata.
+# Sources, tests, references/, graft/ and node_modules never ship.
+**
+!dist/extension.js
+!dist/webview/main.js
+!media/**
+!package.json
+!README.md
+!LICENSE

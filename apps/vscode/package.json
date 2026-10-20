@@ -1,0 +1,52 @@
+{
+  "name": "agent-workspace",
+  "displayName": "Agent Workspace",
+  "description": "Coordinate multiple AI coding agents through one shared conversation.",
+  "version": "0.0.1",
+  "publisher": "ffontanesi",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.140.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentWorkspace.openPanel",
+        "title": "Open Panel",
+        "category": "Agent Workspace"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p webview/tsconfig.json && tsc --noEmit -p test/tsconfig.json",
+    "test:e2e": "node esbuild.mjs --tests && vscode-test",
+    "package": "node esbuild.mjs --production && vsce package --no-dependencies --allow-missing-repository"
+  },
+  "dependencies": {
+    "@agent-workspace/runtime": "workspace:*",
+    "preact": "10.29.8"
+  },
+  "devDependencies": {
+    "@types/mocha": "10.0.10",
+    "@types/vscode": "1.140.0",
+    "@vscode/test-cli": "0.0.15",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "4.0.0",
+    "esbuild": "0.28.2"
+  }
+}

@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+*.vsix
+*.tsbuildinfo
+
+# Test artifacts
+coverage/
+.vscode-test/
+
+# Reference checkouts (fetched by scripts/fetch-references.ps1, never versioned)
+references/*
+!references/README.md
+
+# Local graft index (optional personal tool, see docs/development.md).
+# graft also writes .ignore so ripgrep can still search graft/ locally.
+graft/
+.graft/
+.ignore
+
+# Logs and local state
+*.log
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp

@@ -1,0 +1,15 @@
+{
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "files.eol": "\n",
+  "search.exclude": {
+    "references/**": true,
+    "**/dist/**": true,
+    "**/out/**": true,
+    ".vscode-test/**": true
+  },
+  "files.watcherExclude": {
+    "**/references/**": true,
+    "**/.vscode-test/**": true
+  }
+}

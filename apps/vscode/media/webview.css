@@ -1,0 +1,42 @@
+body {
+  padding: 0 20px;
+  color: var(--vscode-foreground);
+  background-color: var(--vscode-editor-background);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
+.muted {
+  color: var(--vscode-descriptionForeground);
+}
+
+dl {
+  display: grid;
+  grid-template-columns: max-content auto;
+  gap: 4px 16px;
+}
+
+dt {
+  font-weight: 600;
+}
+
+dd {
+  margin: 0;
+}
+
+button {
+  padding: 4px 12px;
+  border: none;
+  color: var(--vscode-button-foreground);
+  background-color: var(--vscode-button-background);
+  cursor: pointer;
+}
+
+button:hover {
+  background-color: var(--vscode-button-hoverBackground);
+}
+
+button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}

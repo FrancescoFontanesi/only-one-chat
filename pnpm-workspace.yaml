@@ -1,0 +1,15 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Dependency lifecycle scripts stay blocked (pnpm default):
+# - esbuild ships its platform binary as an optional dependency, so its
+#   postinstall (a binary check) is not needed;
+# - @vscode/vsce-sign only copies/downloads the signing binary used by
+#   `vsce sign`/`verify-signature`; `vsce package` does not need it.
+ignoredBuiltDependencies:
+  - '@vscode/vsce-sign'
+  - esbuild
+
+# Exact versions only; upgrades are deliberate and reviewed.
+savePrefix: ''

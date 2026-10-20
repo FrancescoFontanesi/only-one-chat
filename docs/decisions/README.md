@@ -1,0 +1,10 @@
+# Architecture Decision Records
+
+Un file per ogni decisione: `NNNN-titolo.md`, con Stato, Contesto, Decisione e Conseguenze.
+Una decisione superata non si cancella: si marca "Sostituita da NNNN".
+
+| ADR                             | Titolo                                                    | Stato     |
+| ------------------------------- | --------------------------------------------------------- | --------- |
+| [0001](0001-toolchain.md)       | Toolchain e versioni del bootstrap                        | Accettata |
+| [0002](0002-reuse-policy.md)    | Riuso dei sorgenti di riferimento: solo reimplementazione | Accettata |
+| [0003](0003-monorepo-layout.md) | Layout del monorepo e package interni                     | Accettata |

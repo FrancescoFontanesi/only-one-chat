@@ -89,7 +89,7 @@ solo per capire i problemi pratici (shim npm, stderr). Nessun codice è stato ri
   TODO(adapters): kill dell'intero albero di processi quando arriveranno i turni.
 - Se un processo nipote eredita stdout e resta vivo, l'evento `close` arriva solo
   quando quel processo esce. Nel frattempo le richieste terminano per timeout.
-- L'ambiente non viene ancora filtrato dalle API key (security T9).
-  TODO(adapters): ambiente in allow-list nello strato adapter.
+- `startAppServer` passa l'ambiente così com'è. Per usare Codex servono `connectCodex`
+  e il suo ambiente in allow-list: vedi [codex-auth.md](codex-auth.md).
 - Nessuna validazione di versione o di schema oltre `userAgent` nella risposta a
   `initialize`.

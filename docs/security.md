@@ -112,6 +112,8 @@ tocca e come le mitiga.
 - Mitigazioni: i processi figli ricevono un ambiente filtrato senza chiavi API, si
   verifica la modalità di autenticazione del CLI prima dell'uso e, se non è un
   abbonamento, la sessione viene rifiutata.
+- Stato: **attiva per Codex** (milestone 1.2). Ambiente in allow-list, profilo dedicato e
+  gate fail-closed su `account/read`. Vedi [codex-auth.md](codex-auth.md).
 
 ## Sicurezza della supply chain (bootstrap)
 

@@ -5,12 +5,18 @@
 // pipe back-pressure are real.
 //
 // Flags: app-server (required) | --ignore-eof | --exit-at-start | --fail-initialize
+//        --account=<kind> (see ACCOUNTS) | --log=<file> (received messages, JSONL)
+//        --login-url=<url> (URL returned by account/login/start)
+// Unknown arguments (such as Codex `-c key=value` overrides) are ignored.
 
 import { spawn } from 'node:child_process';
-import { writeSync } from 'node:fs';
+import { appendFileSync, writeSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 const flags = new Set(process.argv.slice(2));
+const option = (name) =>
+  process.argv.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
+const logFile = option('log');
 if (!flags.has('app-server')) {
   writeSync(2, 'usage: fake-app-server app-server [flags]\n');
   process.exit(2);
@@ -29,8 +35,79 @@ const awaitingClient = new Map();
 let initialized = false;
 let nextServerRequestId = 1000;
 
+// `account/read` results, shaped like codex-rs GetAccountResponse.
+const chatgpt = { type: 'chatgpt', email: 'user@example.com', planType: 'plus' };
+const ACCOUNTS = {
+  chatgpt: { account: chatgpt, requiresOpenaiAuth: true },
+  apiKey: { account: { type: 'apiKey' }, requiresOpenaiAuth: true },
+  none: { account: null, requiresOpenaiAuth: true },
+  bedrock: {
+    account: { type: 'amazonBedrock', usesCodexManagedCredentials: false },
+    requiresOpenaiAuth: true,
+  },
+  futureMode: { account: { type: 'quantumToken' }, requiresOpenaiAuth: true },
+  // A custom model provider (proxy, local model): Codex reports no OpenAI auth requirement.
+  customProvider: { account: null, requiresOpenaiAuth: false },
+  customProviderChatgpt: { account: chatgpt, requiresOpenaiAuth: false },
+  missingField: { account: chatgpt },
+};
+// AuthMode values of `account/updated` (lowercase on the wire, e.g. "apikey").
+const AUTH_MODE = { chatgpt: 'chatgpt', apiKey: 'apikey', none: null };
+
+let accountKind = option('account') ?? 'none';
+
+function setAccount(kind) {
+  accountKind = kind;
+  send({
+    method: 'account/updated',
+    params: { authMode: AUTH_MODE[kind] ?? kind, planType: kind === 'chatgpt' ? 'plus' : null },
+  });
+}
+
 const handlers = {
   'test/received': () => received,
+  'test/env': () => process.env,
+  'test/argv': () => process.argv.slice(2),
+  'turn/start': () => ({ turn: { id: 'turn-1' } }),
+
+  // Switches the account and emits account/updated before responding.
+  'test/setAccount': ({ kind }) => {
+    setAccount(kind);
+    return 'switched';
+  },
+
+  'account/read': (_params, id) => {
+    if (accountKind === 'readError') {
+      return send({ id, error: { code: -32603, message: 'failed to load auth' } });
+    }
+    if (accountKind === 'updateDuringRead') {
+      // The account changes while this read is in flight: the notification is
+      // written first, the stale answer second.
+      setAccount('apiKey');
+      return send({ id, result: ACCOUNTS.chatgpt });
+    }
+    return ACCOUNTS[accountKind];
+  },
+
+  'account/login/start': ({ type }, id) => {
+    const url = option('login-url');
+    if (type === 'chatgpt') {
+      return {
+        type,
+        loginId: 'login-1',
+        authUrl: url ?? 'https://auth.openai.com/oauth/authorize?x=1',
+      };
+    }
+    if (type === 'chatgptDeviceCode') {
+      return {
+        type,
+        loginId: 'login-2',
+        verificationUrl: url ?? 'https://auth.openai.com/codex/device',
+        userCode: 'ABCD-1234',
+      };
+    }
+    return send({ id, error: { code: -32600, message: `unsupported login type ${String(type)}` } });
+  },
 
   'test/echo': async ({ value, delayMs = 0 }) => {
     await sleep(delayMs);
@@ -117,6 +194,7 @@ async function handle(line) {
     return;
   }
   received.push(message);
+  if (logFile) appendFileSync(logFile, `${JSON.stringify(message)}\n`);
 
   const { id, method, params } = message;
   if (method === undefined) {

@@ -17,3 +17,12 @@ export {
   type RequestOptions,
 } from './codex/app-server.js';
 export { resolveCodexExecutable, type ResolveCodexOptions } from './codex/executable.js';
+export {
+  CodexAuthError,
+  type CodexAuthState,
+  type CodexLoginMethod,
+  type CodexLoginStart,
+  type CodexRejection,
+  type CodexUnauthorizedState,
+} from './codex/auth.js';
+export { connectCodex, type CodexSession, type CodexSessionOptions } from './codex/session.js';

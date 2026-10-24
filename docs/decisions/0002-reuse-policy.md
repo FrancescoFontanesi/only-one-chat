@@ -29,6 +29,6 @@ attribuzione è non copiare codice.
 
 - Il repository resta MIT senza notice di terze parti (fatta eccezione per le dipendenze
   npm, che hanno le loro licenze e non sono incluse nel repository).
-- Gli agenti che lavorano sul repo devono rispettare questa regola (`AGENTS.md`).
+- Chiunque lavori sul repo, persone o agenti, deve rispettare questa regola.
 - La licenza MIT del progetto è provvisoria e va confermata prima di una distribuzione
   pubblica.

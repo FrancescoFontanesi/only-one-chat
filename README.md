@@ -27,7 +27,6 @@ Poi apri la cartella in VS Code, premi **F5** e lancia **Only One Chat: Open Pan
 - [Sviluppo](docs/development.md)
 - [Sorgenti di riferimento](docs/reference-sources.md)
 - [Decisioni (ADR)](docs/decisions/README.md)
-- [Istruzioni per gli agenti](AGENTS.md)
 
 ## Struttura
 

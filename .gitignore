@@ -25,8 +25,31 @@ graft/
 *.log
 .env
 .env.*
+*.tmp
+*.orig
 
-# OS / editor
+# Tool caches
+.pnpm-store/
+.eslintcache
+.cache/
+
+# Personal agent and tool settings (project rules are documented in docs/)
+.claude/
+.codex/
+CLAUDE.local.md
+
+# Editor: share only what F5, tasks and recommendations need
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.code-workspace
+
+# OS
 .DS_Store
 Thumbs.db
+Desktop.ini
+ehthumbs.db
 *.swp

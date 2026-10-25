@@ -110,7 +110,38 @@ export interface ClaudeTurnOptions {
   readonly onEvent?: (event: ClaudeEvent) => void;
   /** Time allowed for a clean exit after the result or stop(), default 5 s. */
   readonly shutdownTimeoutMs?: number;
+  /**
+   * Allow Claude's own sub-agents (the Agent tool), held to this model and
+   * effort; without it the Agent tool is not offered. See subagentEnv.
+   */
+  readonly subagents?: { readonly model: string; readonly effort: string };
 }
+
+/**
+ * Environment that holds Claude's sub-agents to a model and effort (Claude Code
+ * docs, sub-agents; names checked in the 2.1.308 binary). Set on the child
+ * process only, never in the user's settings:
+ * - CLAUDE_CODE_SUBAGENT_MODEL with _FORCE: the model wins over a per-call
+ *   choice and over agent definitions;
+ * - CLAUDE_CODE_EFFORT_LEVEL: wins over a sub-agent's own effort; it also
+ *   sets the main session's effort, so the policy effort should match it;
+ * - CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1: sub-agents cannot nest.
+ * Sub-agents inherit the parent's tools, so they stay read-only.
+ */
+export function subagentEnv(subagents: {
+  readonly model: string;
+  readonly effort: string;
+}): NodeJS.ProcessEnv {
+  return {
+    CLAUDE_CODE_SUBAGENT_MODEL: subagents.model,
+    CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1',
+    CLAUDE_CODE_EFFORT_LEVEL: subagents.effort,
+    CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: '1',
+  };
+}
+
+/** The Agent tool, offered only with a sub-agent policy. */
+export const SUBAGENT_TOOL = 'Agent';
 
 export interface ClaudeTurn {
   readonly done: Promise<ClaudeTurnResult>;
@@ -149,7 +180,7 @@ export function claudeTurnArgs(options: ClaudeTurnOptions): string[] {
     'stream-json',
     '--verbose',
     '--tools',
-    READ_ONLY_TOOLS.join(','),
+    [...READ_ONLY_TOOLS, ...(options.subagents ? [SUBAGENT_TOOL] : [])].join(','),
     '--disallowedTools',
     DENIED_TOOLS.join(','),
     // No MCP servers: the claude.ai connectors include tools that write elsewhere.
@@ -160,6 +191,8 @@ export function claudeTurnArgs(options: ClaudeTurnOptions): string[] {
     // Explicit, so the user's defaultMode (acceptEdits, bypassPermissions, …) never applies.
     '--permission-mode',
     PERMISSION_MODE,
+    // Without it the text of a foreground sub-agent is left out of the stream.
+    ...(options.subagents ? ['--forward-subagent-text'] : []),
     ...(options.model ? ['--model', options.model] : []),
     ...(options.effort ? ['--effort', options.effort] : []),
     ...(options.appendSystemPrompt ? ['--append-system-prompt', options.appendSystemPrompt] : []),
@@ -247,7 +280,10 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
 
     const spawned = spawn(options.executable, claudeTurnArgs(options), {
       cwd: options.cwd,
-      env: withoutApiKeys(options.baseEnv ?? process.env),
+      env: {
+        ...withoutApiKeys(options.baseEnv ?? process.env),
+        ...(options.subagents ? subagentEnv(options.subagents) : {}),
+      },
       stdio: 'pipe',
       windowsHide: true,
       detached: OWN_PROCESS_GROUP,

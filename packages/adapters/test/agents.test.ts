@@ -298,6 +298,53 @@ describe('Claude agent session', () => {
     expect(second?.[second.indexOf('--resume') + 1]).toBe('<session-id-1>');
   });
 
+  it('allows the Agent tool only with a sub-agent policy, forcing model, effort and depth', async () => {
+    const withPolicy = await createClaudeAgentFactory({
+      executable: process.execPath,
+      launcherArgs: [FAKE_CLAUDE, `--log=${log()}`, '--echo'],
+      cwd: dir,
+      model: 'haiku',
+      effort: 'low',
+      baseEnv: { ...process.env, CLAUDE_CODE_SUBAGENT_MODEL: 'claude-opus-from-user' },
+      shutdownTimeoutMs: 300,
+    })({
+      instructions: 'Sei il worker.',
+      subagents: {
+        model: 'claude-haiku-5-5',
+        effort: 'low',
+        maxConcurrent: 2,
+        forbiddenNames: ['codex'],
+        rules: 'REGOLE DEL RUNTIME',
+      },
+    });
+    sessions.push(withPolicy);
+    await withPolicy.runTurn('domanda', handlers().value).done;
+    const without = await claude();
+    sessions.push(without);
+    await without.runTurn('domanda', handlers().value).done;
+
+    const entries = readFileSync(log(), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { argv?: string[]; env?: Record<string, string> })
+      .filter((entry) => entry.argv?.includes('-p'));
+    const [first, second] = entries;
+    const tools = (argv: string[] | undefined) => argv?.[argv.indexOf('--tools') + 1];
+    expect(tools(first?.argv)).toBe('Read,Grep,Glob,Agent');
+    expect(first?.argv).toContain('--forward-subagent-text');
+    const argv = first?.argv ?? [];
+    expect(argv[argv.indexOf('--append-system-prompt') + 1]).toContain('REGOLE DEL RUNTIME');
+    expect(first?.env).toMatchObject({
+      CLAUDE_CODE_SUBAGENT_MODEL: 'claude-haiku-5-5', // the policy wins over the user's value
+      CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1',
+      CLAUDE_CODE_EFFORT_LEVEL: 'low',
+      CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: '1',
+    });
+    expect(tools(second?.argv)).toBe('Read,Grep,Glob');
+    expect(second?.argv).not.toContain('--forward-subagent-text');
+    expect(second?.env?.['CLAUDE_CODE_SUBAGENT_MODEL_FORCE']).toBeUndefined();
+  });
+
   it('labels the answer with the model and session reported by init', async () => {
     const session = await claude();
     sessions.push(session);

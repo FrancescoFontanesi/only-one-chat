@@ -60,6 +60,8 @@ export {
 export { resolveClaudeExecutable } from './claude/executable.js';
 export {
   ClaudeError,
+  SUBAGENT_TOOL,
+  subagentEnv,
   READ_ONLY_TOOLS,
   checkClaudeBilling,
   claudeTurnArgs,

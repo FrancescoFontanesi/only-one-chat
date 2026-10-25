@@ -7,11 +7,11 @@ import { ClaudeError, startClaudeTurn, type ClaudeTurn, type ClaudeTurnOptions }
 
 export type ClaudeAgentConfig = Omit<
   ClaudeTurnOptions,
-  'prompt' | 'appendSystemPrompt' | 'resumeSessionId' | 'onEvent'
+  'prompt' | 'appendSystemPrompt' | 'resumeSessionId' | 'onEvent' | 'subagents'
 >;
 
 export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactory {
-  return ({ instructions }): Promise<AgentSession> => {
+  return ({ instructions, subagents }): Promise<AgentSession> => {
     let sessionId: string | undefined;
     let running: ClaudeTurn | undefined;
 
@@ -19,7 +19,8 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
       const turn = startClaudeTurn({
         ...config,
         prompt,
-        appendSystemPrompt: instructions,
+        appendSystemPrompt: subagents ? `${instructions}\n\n${subagents.rules}` : instructions,
+        ...(subagents ? { subagents: { model: subagents.model, effort: subagents.effort } } : {}),
         ...(sessionId ? { resumeSessionId: sessionId } : {}),
         onEvent(event) {
           if (event.type === 'text') handlers.onText(event.text);

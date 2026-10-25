@@ -37,11 +37,18 @@ export { API_KEY_VARIABLES, withoutApiKeys } from './environment.js';
 export type {
   AgentApprovalRequest,
   AgentFactory,
+  AgentIdentity,
   AgentSession,
   AgentTurn,
   AgentTurnHandlers,
 } from './agent.js';
-export { createCodexAgentFactory, declineResponse, type CodexAgentConfig } from './codex/agent.js';
+export {
+  CodexSubagentError,
+  NO_SUBAGENTS_CONFIG,
+  createCodexAgentFactory,
+  declineResponse,
+  type CodexAgentConfig,
+} from './codex/agent.js';
 export { createClaudeAgentFactory, type ClaudeAgentConfig } from './claude/agent.js';
 export {
   ExecutableNotFoundError,

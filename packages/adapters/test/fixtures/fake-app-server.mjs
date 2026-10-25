@@ -98,21 +98,33 @@ const handlers = {
   'test/received': () => received,
   'test/env': () => process.env,
   'test/argv': () => process.argv.slice(2),
-  // Turns follow the v2 protocol shapes (thread.rs, turn.rs, item.rs at
-  // rust-v0.164.0); no real turn has been recorded yet. Markers in the prompt
-  // pick the behaviour: [approval] asks for a command approval first, [hang]
-  // runs until turn/interrupt, [fail] ends with status failed.
+  // Turns follow a real Codex 0.164.0 turn (personal profile, recorded during
+  // the demo; fields the client does not read are omitted). Markers in the
+  // prompt pick the behaviour: [approval] asks for a command approval first,
+  // [hang] runs until turn/interrupt, [fail] ends with status failed,
+  // [subagent] starts a native sub-agent (its activity item, then a turn on
+  // the child thread) and runs until turn/interrupt, [mcp] calls an MCP tool.
   'thread/start': (params) => {
     threads.set('thread-1', params);
     return {
-      thread: { id: 'thread-1' },
+      thread: { id: 'thread-1', sessionId: 'thread-1', ephemeral: params.ephemeral ?? false },
       model: params.model ?? 'fake-model',
-      modelProvider: 'openai',
+      modelProvider: option('provider') ?? 'openai',
+      serviceTier: null,
+      disabledPluginIds: [],
       cwd: params.cwd ?? process.cwd(),
+      runtimeWorkspaceRoots: [params.cwd ?? process.cwd()],
+      instructionSources: [],
       approvalPolicy: params.approvalPolicy ?? 'on-request',
       approvalsReviewer: params.approvalsReviewer ?? 'user',
-      sandbox: { type: params.sandbox === 'read-only' ? 'readOnly' : 'workspaceWrite' },
-      reasoningEffort: null,
+      sandbox: {
+        type: params.sandbox === 'read-only' ? 'readOnly' : 'workspaceWrite',
+        networkAccess: false,
+      },
+      activePermissionProfile: null,
+      // The thread's default effort comes from the profile; turns pass their own.
+      reasoningEffort: 'high',
+      multiAgentMode: 'explicitRequestOnly',
     };
   },
 
@@ -122,18 +134,68 @@ const handlers = {
     const threadId = params.threadId;
     const text = params.input?.[0]?.text ?? '';
     turns.push({ turnId, params });
-    send({ id, result: { turn: { id: turnId, status: 'inProgress', items: [], error: null } } });
-    notify('turn/started', { threadId, turn: { id: turnId, status: 'inProgress', items: [] } });
+    const turnObject = (status, items = [], error = null) => ({
+      id: turnId,
+      rootTurnId: turnId,
+      items,
+      itemsView: status === 'inProgress' ? 'notLoaded' : 'summary',
+      status,
+      error,
+      startedAt: null,
+      completedAt: null,
+      durationMs: null,
+    });
+    send({ id, result: { turn: turnObject('inProgress') } });
+    notify('turn/started', { threadId, turn: turnObject('inProgress') });
     const complete = (status, error = null) =>
       notify('turn/completed', {
         threadId,
-        turn: { id: turnId, status, items: [], error: error && { message: error } },
+        turn: turnObject(status, [], error && { message: error }),
       });
     if (text.includes('[hang]')) {
       hanging.set(turnId, () => complete('interrupted'));
       return;
     }
     if (text.includes('[fail]')) return complete('failed', 'boom');
+    if (text.includes('[subagent]')) {
+      notify('item/started', {
+        item: {
+          type: 'subAgentActivity',
+          model: 'fake-model',
+          reasoningEffort: 'medium',
+          id: 'call-1',
+          kind: 'started',
+          agentThreadId: 'thread-child',
+          agentPath: '/root/claude_review',
+        },
+        threadId,
+        turnId,
+        startedAtMs: Date.now(),
+      });
+      notify('turn/started', {
+        threadId: 'thread-child',
+        turn: { ...turnObject('inProgress'), id: 'turn-child', rootTurnId: turnId },
+      });
+      hanging.set(turnId, () => complete('interrupted'));
+      return;
+    }
+    if (text.includes('[mcp]')) {
+      const item = {
+        type: 'mcpToolCall',
+        id: 'mcp-1',
+        server: 'docs',
+        tool: 'search',
+        status: 'inProgress',
+        arguments: { query: 'resolver' },
+      };
+      notify('item/started', { item, threadId, turnId, startedAtMs: Date.now() });
+      notify('item/completed', {
+        item: { ...item, status: 'completed' },
+        threadId,
+        turnId,
+        completedAtMs: Date.now(),
+      });
+    }
     let answer = `Risposta: ${text}`;
     if (text.includes('[approval]')) {
       const serverId = nextServerRequestId++;
@@ -151,9 +213,18 @@ const handlers = {
       notify('item/agentMessage/delta', { threadId, turnId, itemId, delta });
     }
     notify('item/completed', {
+      item: {
+        type: 'agentMessage',
+        id: itemId,
+        text: answer,
+        phase: 'final_answer',
+        memoryCitation: null,
+        delivery: null,
+        questions: null,
+      },
       threadId,
       turnId,
-      item: { type: 'agentMessage', id: itemId, text: answer },
+      completedAtMs: Date.now(),
     });
     complete('completed');
   },

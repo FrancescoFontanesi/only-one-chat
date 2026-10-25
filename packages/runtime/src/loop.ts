@@ -1,17 +1,28 @@
 // The minimal D6 loop: user request → orchestrator plan and delegation →
 // the user approves, edits or cancels it → worker → review message, again
 // approved by the user → orchestrator review; at most `maxExchanges`
-// delegations. Every event is appended to the event log. Approval requests
-// from agents are declined: not supported in this version.
+// delegations. In `question` mode the orchestrator only asks the worker one
+// question and the loop ends with the worker's answer. Every event is
+// appended to the event log; each answer carries a label written here from
+// what the adapter observed, never from the agent's own text. Approval
+// requests from agents are declined: not supported in this version.
 
 import type {
   AgentFactory,
+  AgentIdentity,
   AgentSession,
   AgentTurn,
+  AgentTurnResult,
   ApprovalRequest,
   ApprovalDecision,
 } from './agent.js';
-import { delegationTemplate, parseDelegation, DELEGATION_SECTIONS } from './delegation.js';
+import {
+  delegationTemplate,
+  parseDelegation,
+  DELEGATION_SECTIONS,
+  DELEGATION_START,
+  type DelegationParse,
+} from './delegation.js';
 import type { EventLog } from './event-log.js';
 
 export type Role = 'orchestrator' | 'worker';
@@ -36,6 +47,8 @@ export interface MalformedDelegation {
   readonly answer: string;
   readonly errors: readonly string[];
   readonly exchange: number;
+  /** False once the correction allowed in `question` mode has been used. */
+  readonly canAskOrchestrator: boolean;
 }
 
 export type MalformedDecision =
@@ -46,7 +59,15 @@ export type MalformedDecision =
 export type ThreadEvent =
   | { readonly type: 'turn_started'; readonly role: Role; readonly agent: string }
   | { readonly type: 'text'; readonly role: Role; readonly text: string }
-  | { readonly type: 'message'; readonly role: Role; readonly agent: string; readonly text: string }
+  | {
+      readonly type: 'message';
+      readonly role: Role;
+      readonly agent: string;
+      readonly text: string;
+      /** Written by the runtime from `identity`; see agentLabel. */
+      readonly label: string;
+      readonly identity: AgentIdentity;
+    }
   | {
       readonly type: 'approval_denied';
       readonly role: Role;
@@ -74,6 +95,13 @@ export type ThreadEvent =
 export type LoopOutcome =
   | { readonly status: 'completed'; readonly conclusion: string; readonly exchanges: number }
   | { readonly status: 'limit_reached'; readonly conclusion: string; readonly exchanges: number }
+  | {
+      /** `question` mode: the worker answered the orchestrator's question. */
+      readonly status: 'answered';
+      readonly question: string;
+      readonly answer: string;
+      readonly label: string;
+    }
   | { readonly status: 'cancelled'; readonly at: 'delegation' | 'review' | 'malformed' }
   | { readonly status: 'stopped' }
   | { readonly status: 'failed'; readonly error: string };
@@ -93,6 +121,11 @@ export interface LoopOptions {
   onEvent?(event: ThreadEvent): void;
   /** Default and maximum 3. */
   readonly maxExchanges?: number;
+  /**
+   * `loop` (default): the D6 loop above. `question`: one delegation addressed
+   * to the worker by id, one answer, one correction of a malformed block at most.
+   */
+  readonly mode?: 'loop' | 'question';
 }
 
 export interface Loop {
@@ -125,6 +158,33 @@ export const WORKER_INSTRUCTIONS = [
   "Rispondi seguendo l'Output atteso, rispondi alle Domande aperte e indica le assunzioni che non",
   'hai potuto verificare.',
 ].join('\n');
+
+/** Role instructions for `question` mode: ask, do not answer. */
+export function questionInstructions(workerId: string): string {
+  return [
+    "Sei l'orchestratore di Only One Chat. In questa conversazione non rispondi tu: formuli UNA",
+    `domanda per l'agente "${workerId}" e la invii con UN SOLO blocco di delega, esattamente in`,
+    'questo formato, con il destinatario sulla prima riga:',
+    '',
+    delegationTemplate(workerId),
+    '',
+    'Regole: le righe di apertura e di chiusura del blocco stanno da sole sulla propria riga; le',
+    `sezioni sono esattamente ${DELEGATION_SECTIONS.join(', ')}, in quest'ordine, ciascuna con un`,
+    'titolo "## " e nessuna vuota (scrivi "Nessuna" se non ci sono domande aperte); la domanda va in',
+    'Obiettivo. Non leggere file e non eseguire comandi: la risposta la dà l’altro agente. Non usare',
+    'sotto-agenti. Fuori dal blocco scrivi al massimo una riga.',
+  ].join('\n');
+}
+
+/** The label shown above an answer: provider, model, effort and session, as observed. */
+export function agentLabel(identity: AgentIdentity): string {
+  return [
+    identity.provider,
+    identity.model,
+    `effort ${identity.effort ?? 'predefinito'}`,
+    `sessione ${identity.sessionId}`,
+  ].join(' · ');
+}
 
 class Stopped extends Error {}
 
@@ -188,7 +248,7 @@ export function runLoop(options: LoopOptions): Loop {
     if (stopped) throw new Stopped();
   }
 
-  async function turn(session: AgentSession, role: Role, prompt: string): Promise<string> {
+  async function turn(session: AgentSession, role: Role, prompt: string): Promise<AgentTurnResult> {
     checkStopped();
     await emit({ type: 'turn_started', role, agent: session.name });
     const running = session.runTurn(prompt, {
@@ -211,10 +271,17 @@ export function runLoop(options: LoopOptions): Loop {
     });
     current = running;
     try {
-      const { text } = await running.done;
+      const result = await running.done;
       checkStopped();
-      await emit({ type: 'message', role, agent: session.name, text });
-      return text;
+      await emit({
+        type: 'message',
+        role,
+        agent: session.name,
+        text: result.text,
+        label: agentLabel(result.identity),
+        identity: result.identity,
+      });
+      return result;
     } catch (error) {
       checkStopped();
       throw error;
@@ -241,16 +308,52 @@ export function runLoop(options: LoopOptions): Loop {
     return decision.action === 'edit' ? decision.text : message.text;
   }
 
-  async function run(): Promise<LoopOutcome> {
-    await options.log.append('loop_started', { request: options.request, maxExchanges: max });
-    const orchestrator = await options.orchestrator({ instructions: ORCHESTRATOR_INSTRUCTIONS });
-    sessions.push(orchestrator);
-    let worker: AgentSession | undefined;
+  const question = options.mode === 'question';
 
-    let answer = await turn(orchestrator, 'orchestrator', requestPrompt(options.request));
+  /** Format errors, plus recipient errors once the worker is known. */
+  function check(answer: string, workerId: string | undefined): DelegationParse {
+    const parsed = parseDelegation(answer);
+    if (parsed.status !== 'valid' || workerId === undefined) return parsed;
+    const { recipient } = parsed.delegation;
+    if (recipient === null && question) {
+      return {
+        status: 'malformed',
+        errors: [`the start line must name the recipient: "${DELEGATION_START} @${workerId}"`],
+      };
+    }
+    if (recipient !== null && recipient !== workerId.toLowerCase()) {
+      return {
+        status: 'malformed',
+        errors: [`unknown recipient "@${recipient}": the only agent is "@${workerId}"`],
+      };
+    }
+    return parsed;
+  }
+
+  async function run(): Promise<LoopOutcome> {
+    await options.log.append('loop_started', {
+      request: options.request,
+      maxExchanges: max,
+      mode: question ? 'question' : 'loop',
+    });
+    // A question names its recipient, so the worker session exists first.
+    let worker: AgentSession | undefined = question
+      ? await options.worker({ instructions: WORKER_INSTRUCTIONS })
+      : undefined;
+    if (worker) sessions.push(worker);
+    const orchestrator = await options.orchestrator({
+      instructions: worker ? questionInstructions(worker.id) : ORCHESTRATOR_INSTRUCTIONS,
+    });
+    sessions.push(orchestrator);
+
+    let answer = (await turn(orchestrator, 'orchestrator', requestPrompt(options.request))).text;
     let exchange = 0;
+    let fixes = 0;
     for (;;) {
-      const parsed = parseDelegation(answer);
+      const parsed = check(answer, worker?.id);
+      if (parsed.status === 'absent' && question) {
+        throw new Error('The orchestrator answered without asking the worker a question');
+      }
       if (parsed.status === 'absent') {
         return { status: 'completed', conclusion: answer, exchanges: exchange };
       }
@@ -260,9 +363,10 @@ export function runLoop(options: LoopOptions): Loop {
       let delegation: string;
       if (parsed.status === 'malformed') {
         await emit({ type: 'delegation_invalid', errors: parsed.errors });
+        const canAskOrchestrator = !question || fixes < 1;
         const decision = await abortable(
           options.onMalformedDelegation(
-            { answer, errors: parsed.errors, exchange: exchange + 1 },
+            { answer, errors: parsed.errors, exchange: exchange + 1, canAskOrchestrator },
             controller.signal,
           ),
           controller.signal,
@@ -276,7 +380,11 @@ export function runLoop(options: LoopOptions): Loop {
         });
         if (decision.action === 'cancel') return { status: 'cancelled', at: 'malformed' };
         if (decision.action === 'ask_orchestrator') {
-          answer = await turn(orchestrator, 'orchestrator', fixPrompt(parsed.errors));
+          if (!canAskOrchestrator) {
+            throw new Error('The delegation block is still malformed after the one correction');
+          }
+          fixes++;
+          answer = (await turn(orchestrator, 'orchestrator', fixPrompt(parsed.errors))).text;
           continue;
         }
         delegation = decision.text;
@@ -297,15 +405,23 @@ export function runLoop(options: LoopOptions): Loop {
       if (approved === undefined) return { status: 'cancelled', at: 'delegation' };
 
       const result = await turn(worker, 'worker', approved);
+      if (question) {
+        return {
+          status: 'answered',
+          question: approved,
+          answer: result.text,
+          label: agentLabel(result.identity),
+        };
+      }
       const review = await intercept({
         kind: 'review',
         from: worker.name,
         to: orchestrator.name,
-        text: reviewPrompt(worker.name, result, exchange, max),
+        text: reviewPrompt(worker.name, result.text, exchange, max),
         exchange,
       });
       if (review === undefined) return { status: 'cancelled', at: 'review' };
-      answer = await turn(orchestrator, 'orchestrator', review);
+      answer = (await turn(orchestrator, 'orchestrator', review)).text;
     }
   }
 

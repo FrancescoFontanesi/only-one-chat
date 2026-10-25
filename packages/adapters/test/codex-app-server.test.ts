@@ -133,6 +133,33 @@ describe('framing', () => {
     expect(problems).toHaveLength(4);
   });
 
+  it('reports every JSON object on the wire, in order, to onWire', async () => {
+    const wire: string[] = [];
+    const client = await start({
+      onWire: (direction, message) => {
+        // Unsolicited, so its position relative to the client's messages varies.
+        if (message['method'] === 'remoteControl/status/changed') return;
+        const method = message['method'];
+        const label =
+          typeof method === 'string' || typeof method === 'number'
+            ? String(method)
+            : `response ${JSON.stringify(message['id'])}`;
+        wire.push(`${direction} ${label}`);
+      },
+    });
+    await client.request('test/malformed');
+    expect(wire).toEqual([
+      'client initialize',
+      'server response 0',
+      'client initialized',
+      'client test/malformed',
+      // invalid JSON and non-objects are not reported; objects with a bad shape are
+      'server 5',
+      'server response undefined',
+      'server response 1',
+    ]);
+  });
+
   it('drains stderr so a chatty server cannot block on a full pipe', async () => {
     const client = await start();
     expect(await client.request('test/stderrFlood', { bytes: 1024 * 1024 })).toBe('flooded');

@@ -75,6 +75,9 @@ solo per capire i problemi pratici (shim npm, stderr). Nessun codice è stato ri
   terminazione.
 - **Ambiente**: per default `process.env`. Il client non legge e non modifica la
   configurazione né le credenziali di Codex.
+- **`onWire`** (diagnostica e transcript): riceve in ordine ogni messaggio inviato e ogni
+  oggetto JSON ricevuto, non redatti. La demo lo usa con `OOC_CODEX_TRACE` e scrive solo
+  dopo redaction e scanner.
 
 ## Rilevamento dell'eseguibile
 
@@ -98,7 +101,9 @@ solo per capire i problemi pratici (shim npm, stderr). Nessun codice è stato ri
   `CODEX_EXECUTABLE=<percorso di codex.exe>`. Usa un `CODEX_HOME` temporaneo e non
   effettua chiamate al modello. Segnala con un avviso e uno _skip_ motivato quando la
   versione installata non è fra quelle registrate nelle fixture.
-- **Transcript reali** (`test/fixtures/codex/<versione>/*.jsonl`): registrati da
+- **Transcript reali** (`test/fixtures/codex/<versione>/*.jsonl`): `startup`,
+  `custom-provider` e `personal-startup` (profilo dell'utente, solo letture, `config/read`
+  ridotta al provider), registrati da
   `dev/record-codex.ts` (`pnpm record:codex`, scenario in `CODEX_RECORD_SCENARIO`), che
   parla il protocollo da solo, senza passare dal client in prova, e avvia Codex con
   `prepareCodexLaunch`, lo stesso lancio di `connectCodex`. Ogni file inizia con una riga
@@ -110,6 +115,11 @@ solo per capire i problemi pratici (shim npm, stderr). Nessun codice è stato ri
   sui messaggi reali, e la parità del fake: i messaggi del client registrati vengono
   rigiocati contro il fake e le risposte devono avere la stessa forma, gli stessi codici
   d'errore e lo stesso ordine di quelle reali. Se divergono, si corregge il fake.
+- **Turno reale** (`question-turn.jsonl`): il turno di Codex della mini conversazione,
+  registrato dalla demo. Il fake è confrontato sui campi che il client legge (risposta di
+  `thread/start`, `turn/started`, `turn/completed`, `agentMessage`, delta), non messaggio
+  per messaggio: il turno reale ha anche hook dell'utente, stati di avvio MCP, uso dei
+  token e rate limit.
 
 ## Rate limit
 

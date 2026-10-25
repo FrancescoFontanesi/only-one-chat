@@ -4,8 +4,20 @@
 // requests from the server go to the runtime, which declines them in this
 // iteration; the protocol answer is built here. Shapes: codex-rs
 // app-server-protocol v2 (thread.rs, turn.rs, item.rs), docs/codex-app-server.md.
+//
+// Native sub-agents (Codex's own multi-agent tools) bypass the runtime: no
+// interception, their own model and effort. With `nativeSubagents: false` they
+// are switched off for this thread only (thread/start `config`, the user's
+// configuration is untouched) and, as a safety net, a turn that still starts
+// one is interrupted and fails with CodexSubagentError.
 
-import type { AgentFactory, AgentSession, AgentTurn, AgentTurnHandlers } from '../agent.js';
+import type {
+  AgentFactory,
+  AgentIdentity,
+  AgentSession,
+  AgentTurn,
+  AgentTurnHandlers,
+} from '../agent.js';
 import { CodexAuthError, isUsable } from './auth.js';
 import { connectCodex, type CodexSessionOptions } from './session.js';
 
@@ -21,6 +33,32 @@ export interface CodexAgentConfig extends Omit<
   readonly effort?: string;
   /** Time allowed for an interrupted turn to report completion, default 10 s. */
   readonly interruptTimeoutMs?: number;
+  /** False: no native sub-agents in this thread (see above). Default: the user's configuration. */
+  readonly nativeSubagents?: boolean;
+}
+
+/** Per-thread overrides that switch the multi-agent tools off (`codex features list`). */
+export const NO_SUBAGENTS_CONFIG: Readonly<Record<string, boolean>> = {
+  'features.multi_agent': false,
+  'features.multi_agent_v2': false,
+};
+
+/** Thread items that mean Codex is starting or driving a sub-agent of its own. */
+const SUBAGENT_ITEMS = new Set(['subAgentActivity', 'collabAgentToolCall']);
+
+export class CodexSubagentError extends Error {
+  override readonly name = 'CodexSubagentError';
+
+  readonly itemType: string;
+
+  // A plain field rather than a parameter property: runnable with Node's type stripping.
+  constructor(itemType: string) {
+    super(
+      `Codex started a native sub-agent (${itemType}) although they are disabled for this ` +
+        'thread; the turn was interrupted',
+    );
+    this.itemType = itemType;
+  }
 }
 
 type Json = Record<string, unknown>;
@@ -55,25 +93,51 @@ function summarize(method: string, params: unknown): string {
   return parts.length > 0 ? parts.join(' — ') : method;
 }
 
+type TurnOutcome = { text: string; identity: AgentIdentity } | Error;
+
 interface RunningTurn {
   readonly handlers: AgentTurnHandlers;
   turnId?: string;
   readonly messages: string[];
-  settle(outcome: { text: string } | Error): void;
+  settle(outcome: TurnOutcome): void;
+  /** Interrupts the turn and fails it with `error`. */
+  abort(error: Error): Promise<void>;
 }
 
 export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory {
   return async ({ instructions }): Promise<AgentSession> => {
-    const { cwd, model, effort, interruptTimeoutMs = 10_000, ...sessionOptions } = config;
+    const {
+      cwd,
+      model,
+      effort,
+      interruptTimeoutMs = 10_000,
+      nativeSubagents,
+      ...sessionOptions
+    } = config;
+    const subagentsOff = nativeSubagents === false;
     let current: RunningTurn | undefined;
     let threadId = '';
+    let identity: AgentIdentity = { provider: 'Codex', model: '', effort: null, sessionId: '' };
 
     const session = await connectCodex({
       ...sessionOptions,
       clientInfo: { name: 'only-one-chat', title: 'Only One Chat', version: '0.0.0' },
       onNotification(method, params) {
         const turn = current;
-        if (!turn || !isRecord(params) || params['threadId'] !== threadId) return;
+        if (!turn || !isRecord(params)) return;
+        // Checked on every thread: a sub-agent's own items carry its thread id.
+        if (method === 'item/started' && isRecord(params['item'])) {
+          const type = String(params['item']['type']);
+          if (SUBAGENT_ITEMS.has(type)) {
+            turn.handlers.onActivity?.({
+              kind: 'subagent',
+              detail: JSON.stringify(params['item']),
+            });
+            if (subagentsOff) void turn.abort(new CodexSubagentError(type));
+            return;
+          }
+        }
+        if (params['threadId'] !== threadId) return;
         if (method === 'item/agentMessage/delta' && typeof params['delta'] === 'string') {
           turn.handlers.onText(params['delta']);
         } else if (method === 'item/completed' && isRecord(params['item'])) {
@@ -85,6 +149,11 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
           const item = params['item'];
           if (item['type'] === 'commandExecution') {
             turn.handlers.onActivity?.({ kind: 'command', detail: String(item['command']) });
+          } else if (item['type'] === 'mcpToolCall') {
+            turn.handlers.onActivity?.({
+              kind: 'mcp_tool',
+              detail: `${String(item['server'])}/${String(item['tool'])} ${JSON.stringify(item['arguments'])}`,
+            });
           }
         } else if (method === 'error' && isRecord(params['error'])) {
           turn.handlers.onActivity?.({ kind: 'error', detail: String(params['error']['message']) });
@@ -92,7 +161,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
           const completed = params['turn'];
           if (turn.turnId !== undefined && completed['id'] !== turn.turnId) return;
           const status = completed['status'];
-          if (status === 'completed') turn.settle({ text: turn.messages.join('\n\n') });
+          if (status === 'completed') turn.settle({ text: turn.messages.join('\n\n'), identity });
           else {
             const error = isRecord(completed['error']) ? String(completed['error']['message']) : '';
             turn.settle(new Error(`Codex turn ${String(status)}${error ? `: ${error}` : ''}`));
@@ -123,10 +192,23 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         developerInstructions: instructions,
         ephemeral: true,
         ...(model ? { model } : {}),
+        ...(subagentsOff ? { config: NO_SUBAGENTS_CONFIG } : {}),
       });
-      const thread = isRecord(started) && isRecord(started['thread']) ? started['thread'] : {};
+      const response = isRecord(started) ? started : {};
+      const thread = isRecord(response['thread']) ? response['thread'] : {};
       threadId = typeof thread['id'] === 'string' ? thread['id'] : '';
       if (threadId === '') throw new Error('thread/start returned no thread id');
+      // As Codex reports them for this thread, not as configured here.
+      const provider = session.provider;
+      const route =
+        provider?.unofficialBaseUrl === true ? ` via ${provider.name ?? provider.id}` : '';
+      const threadEffort = response['reasoningEffort'];
+      identity = {
+        provider: `Codex${route}`,
+        model: typeof response['model'] === 'string' ? response['model'] : (model ?? 'unknown'),
+        effort: effort ?? (typeof threadEffort === 'string' ? threadEffort : null),
+        sessionId: threadId,
+      };
     } catch (error) {
       await session.close();
       throw error;
@@ -135,15 +217,27 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
 
     function runTurn(prompt: string, handlers: AgentTurnHandlers): AgentTurn {
       if (current) throw new Error('A Codex turn is already running in this session');
-      let settle!: (outcome: { text: string } | Error) => void;
-      const done = new Promise<{ text: string }>((resolve, reject) => {
+      let settle!: (outcome: TurnOutcome) => void;
+      const done = new Promise<{ text: string; identity: AgentIdentity }>((resolve, reject) => {
         settle = (outcome) => {
           if (current === turn) current = undefined;
           if (outcome instanceof Error) reject(outcome);
           else resolve(outcome);
         };
       });
-      const turn: RunningTurn = { handlers, messages: [], settle };
+      const turn: RunningTurn = {
+        handlers,
+        messages: [],
+        settle,
+        async abort(error) {
+          if (turn.turnId !== undefined) {
+            await session
+              .request('turn/interrupt', { threadId, turnId: turn.turnId })
+              .catch(() => undefined);
+          }
+          settle(error);
+        },
+      };
       current = turn;
       session
         .request('turn/start', {
@@ -182,6 +276,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
 
     return {
       name: `Codex (${resolvedModel})`,
+      id: 'codex',
       runTurn,
       close: () => session.close(),
     };

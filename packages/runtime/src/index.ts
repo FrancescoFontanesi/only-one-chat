@@ -2,7 +2,8 @@
 // persistent tasks and failover (see docs/architecture.md).
 //
 // Implemented so far: the minimal D6 loop (orchestrator → intercepted
-// delegation → worker → intercepted review → orchestrator), provider-agnostic
+// delegation → worker → intercepted review → orchestrator, or a single
+// question to the worker), provider-agnostic
 // agent interfaces and the JSONL event log. TODO(orchestrator): persistent
 // tasks, failover and mediated approvals come in later iterations. This package
 // must stay free of any `vscode` import so it can be tested in plain Node and
@@ -21,6 +22,7 @@ export function getRuntimeInfo(): RuntimeInfo {
 
 export type {
   AgentFactory,
+  AgentIdentity,
   AgentSession,
   AgentSessionOptions,
   AgentTurn,
@@ -45,7 +47,9 @@ export {
   MAX_EXCHANGES,
   ORCHESTRATOR_INSTRUCTIONS,
   WORKER_INSTRUCTIONS,
+  agentLabel,
   fixPrompt,
+  questionInstructions,
   requestPrompt,
   reviewPrompt,
   runLoop,

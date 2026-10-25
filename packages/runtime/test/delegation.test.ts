@@ -50,4 +50,18 @@ describe('delegation block', () => {
   it('builds a template that the parser recognises once filled', () => {
     expect(parseDelegation(delegationTemplate().replaceAll('<testo>', 'x')).status).toBe('valid');
   });
+
+  it('reads the recipient from the start line, and none when it is not given', () => {
+    const named = parseDelegation(delegationBlock('Domanda', 'Claude'));
+    expect(named.status === 'valid' && named.delegation.recipient).toBe('claude');
+    const plain = parseDelegation(delegationBlock());
+    expect(plain.status === 'valid' && plain.delegation.recipient).toBeNull();
+    const template = parseDelegation(delegationTemplate('claude').replaceAll('<testo>', 'x'));
+    expect(template.status === 'valid' && template.delegation.recipient).toBe('claude');
+  });
+
+  it('does not take a recipient written without @ as a start line', () => {
+    const block = delegationBlock().replace('<<<DELEGA', '<<<DELEGA a Claude');
+    expect(parseDelegation(block)).toMatchObject({ status: 'malformed' });
+  });
 });

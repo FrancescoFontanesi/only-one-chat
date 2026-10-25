@@ -13,6 +13,7 @@ import {
   type LoggedEvent,
   type LoopOptions,
   type MalformedDecision,
+  type MalformedDelegation,
   type ThreadEvent,
 } from '../src/index.js';
 import { delegationBlock, fakeAgent, type FakeAgent } from './fake-agents.js';
@@ -38,7 +39,7 @@ function logged(): LoggedEvent[] {
 interface Harness {
   readonly intercepted: InterceptedMessage[];
   readonly events: ThreadEvent[];
-  readonly malformed: { errors: readonly string[] }[];
+  readonly malformed: MalformedDelegation[];
 }
 
 async function loop(
@@ -315,6 +316,76 @@ describe('limits', () => {
     const { running } = await loop(codex, claude);
     expect(await running.done).toMatchObject({ status: 'failed' });
     expect(logged().map((e) => e.type)).toContain('error');
+  });
+});
+
+describe('question mode', () => {
+  const ask = (overrides: Partial<LoopOptions> = {}) => ({
+    mode: 'question' as const,
+    ...overrides,
+  });
+
+  it('forwards one approved question and ends with the answer and the runtime label', async () => {
+    const codex = fakeAgent('Codex', [{ answer: delegationBlock('Spiega il resolver', 'claude') }]);
+    const claude = fakeAgent('Claude', [{ answer: 'Tre righe di spiegazione.' }]);
+    const { running, harness } = await loop(codex, claude, [], [], ask());
+
+    const outcome = await running.done;
+    expect(outcome).toMatchObject({
+      status: 'answered',
+      answer: 'Tre righe di spiegazione.',
+      label: 'Claude · fake-model · effort low · sessione claude-1',
+    });
+    expect(harness.intercepted).toHaveLength(1);
+    expect(codex.prompts).toHaveLength(1); // no review turn
+    expect(codex.instructions[0]).toMatch(/<<<DELEGA @claude/);
+    expect(codex.instructions[0]).toMatch(/non rispondi tu/);
+    const messages = harness.events.filter((e) => e.type === 'message');
+    expect(messages.map((m) => m.label)).toEqual([
+      'Codex · fake-model · effort low · sessione codex-1',
+      'Claude · fake-model · effort low · sessione claude-1',
+    ]);
+  });
+
+  it('refuses a block without a recipient or addressed to someone else', async () => {
+    for (const recipient of [undefined, 'gemini']) {
+      const codex = fakeAgent('Codex', [{ answer: delegationBlock('Domanda', recipient) }]);
+      const claude = fakeAgent('Claude', []);
+      const { running, harness } = await loop(codex, claude, [], [], ask());
+      expect(await running.done).toEqual({ status: 'cancelled', at: 'malformed' });
+      expect(harness.malformed[0]?.errors.join(' ')).toMatch(/recipient/);
+      expect(claude.prompts).toHaveLength(0);
+    }
+  });
+
+  it('allows one correction by the orchestrator, then stops', async () => {
+    const codex = fakeAgent('Codex', [
+      { answer: ['<<<DELEGA @claude', '## Obiettivo', 'x', 'DELEGA>>>'].join('\n') },
+      { answer: ['<<<DELEGA @claude', 'ancora sbagliato', 'DELEGA>>>'].join('\n') },
+    ]);
+    const claude = fakeAgent('Claude', []);
+    const { running, harness } = await loop(
+      codex,
+      claude,
+      [],
+      [{ action: 'ask_orchestrator' }, { action: 'ask_orchestrator' }],
+      ask(),
+    );
+    expect(await running.done).toMatchObject({
+      status: 'failed',
+      error: /after the one correction/,
+    });
+    expect(harness.malformed.map((m) => m.canAskOrchestrator)).toEqual([true, false]);
+    expect(codex.prompts).toHaveLength(2);
+    expect(claude.prompts).toHaveLength(0);
+  });
+
+  it('fails when the orchestrator answers instead of asking', async () => {
+    const codex = fakeAgent('Codex', [{ answer: 'Rispondo io: fa questo e quello.' }]);
+    const claude = fakeAgent('Claude', []);
+    const { running } = await loop(codex, claude, [], [], ask());
+    expect(await running.done).toMatchObject({ status: 'failed', error: /without asking/ });
+    expect(claude.prompts).toHaveLength(0);
   });
 });
 

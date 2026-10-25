@@ -1,7 +1,8 @@
 // The fixed format of a delegation message from the orchestrator to a worker,
 // and its parser. The block is delimited by marker lines so it can be found in
 // a longer answer (plan first, then the block), and must contain the six
-// sections in order, none empty.
+// sections in order, none empty. The start line may name the recipient:
+// `<<<DELEGA @claude`.
 
 export const DELEGATION_START = '<<<DELEGA';
 export const DELEGATION_END = 'DELEGA>>>';
@@ -18,6 +19,8 @@ export const DELEGATION_SECTIONS = [
 export type DelegationSection = (typeof DELEGATION_SECTIONS)[number];
 
 export interface Delegation {
+  /** Recipient named on the start line, lowercase; null when none is given. */
+  readonly recipient: string | null;
   readonly sections: Readonly<Record<DelegationSection, string>>;
   /** The block as it will be forwarded, markers excluded. */
   readonly text: string;
@@ -28,10 +31,12 @@ export type DelegationParse =
   | { readonly status: 'absent' }
   | { readonly status: 'malformed'; readonly errors: readonly string[] };
 
+const START_LINE = /^<<<DELEGA(?:\s+@([\w.-]+))?$/;
+
 /** Template shown to the orchestrator in its role instructions. */
-export function delegationTemplate(): string {
+export function delegationTemplate(recipient?: string): string {
   return [
-    DELEGATION_START,
+    recipient ? `${DELEGATION_START} @${recipient}` : DELEGATION_START,
     ...DELEGATION_SECTIONS.map((section) => `## ${section}\n<testo>`),
     DELEGATION_END,
   ].join('\n');
@@ -47,7 +52,7 @@ function lines(text: string): string[] {
  */
 export function parseDelegation(answer: string): DelegationParse {
   const all = lines(answer);
-  const starts = all.flatMap((line, at) => (line.trim() === DELEGATION_START ? [at] : []));
+  const starts = all.flatMap((line, at) => (START_LINE.test(line.trim()) ? [at] : []));
   const ends = all.flatMap((line, at) => (line.trim() === DELEGATION_END ? [at] : []));
   if (starts.length === 0 && ends.length === 0) return { status: 'absent' };
 
@@ -58,6 +63,7 @@ export function parseDelegation(answer: string): DelegationParse {
     errors.push(`expected one "${DELEGATION_END}" line, found ${String(ends.length)}`);
   if (errors.length > 0) return { status: 'malformed', errors };
   const [start, end] = [starts[0] ?? 0, ends[0] ?? 0];
+  const recipient = START_LINE.exec(all[start]?.trim() ?? '')?.[1]?.toLowerCase() ?? null;
   if (end < start)
     return { status: 'malformed', errors: ['the end marker comes before the start marker'] };
 
@@ -92,6 +98,7 @@ export function parseDelegation(answer: string): DelegationParse {
   return {
     status: 'valid',
     delegation: {
+      recipient,
       sections: sections as Record<DelegationSection, string>,
       text: body.join('\n').trim(),
     },

@@ -33,9 +33,19 @@ eseguito `claude install`.
 | `--disallowedTools Bash,PowerShell,Edit,…`  | rinforzo: shell, scrittura, modifica e rete negate            |
 | `--strict-mcp-config`                       | nessun server MCP (vedi sotto)                                |
 | `--permission-prompts none`                 | ciò che chiederebbe un permesso viene negato                  |
+| `--permission-mode default`                 | esplicito: il `defaultMode` dei settings non si applica       |
 | `--model <alias>`, `--effort <level>`       | da configurazione (iterazione 1: `haiku`, `low`)              |
 | `--append-system-prompt <testo>`            | istruzioni di ruolo passate dal runtime                       |
 | `--resume <session id>`                     | continua una sessione precedente                              |
+
+Testo di `--help` per `--permission-prompts`: _"Who answers permission prompts with
+--print: "host" (the SDK host or --permission-prompt-tool) or "none" (nobody: anything
+that would prompt is denied automatically; the permission mode still decides everything
+else)"_. Quindi `none` significa **rifiuta senza chiedere**; per questo la modalità è
+passata esplicita. `default` non compare fra le scelte elencate da `--help` (`acceptEdits`,
+`auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`) ma è accettato (un valore
+inventato viene rifiutato) e `init` lo riporta come `permissionMode: "default"`: se
+riporta altro, il turno viene fermato con `permission_mode`.
 
 Mai `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`,
 `--permission-mode bypassPermissions` o `acceptEdits`. Non si usa `--restricted` né
@@ -47,13 +57,13 @@ scrivono su un servizio esterno.
 
 ## Eventi
 
-| Evento (`type`/`subtype`) | Campi usati                                                   | Diventa                    |
-| ------------------------- | ------------------------------------------------------------- | -------------------------- |
-| `system` / `init`         | `session_id`, `model`, `apiKeySource`, `tools`                | `init` + controllo billing |
-| `rate_limit_event`        | `rate_limit_info` (`five_hour`, `seven_day`, `overageStatus`) | `rate_limit`               |
-| `assistant`               | blocchi `text` e `tool_use` di `message.content`              | `text`, `tool_use`         |
-| `result`                  | `result`, `is_error`, `session_id`, `permission_denials`      | esito del turno            |
-| altri                     | —                                                             | `other`                    |
+| Evento (`type`/`subtype`) | Campi usati                                                                  | Diventa            |
+| ------------------------- | ---------------------------------------------------------------------------- | ------------------ |
+| `system` / `init`         | `session_id`, `model`, `apiKeySource`, `permissionMode`, `tools`             | `init` + controlli |
+| `rate_limit_event`        | `rate_limit_info` (`five_hour`, `seven_day`, `overageStatus`)                | `rate_limit`       |
+| `assistant`               | blocchi `text` e `tool_use` di `message.content`                             | `text`, `tool_use` |
+| `result`                  | `result`, `is_error`, `api_error_status`, `session_id`, `permission_denials` | esito del turno    |
+| altri                     | —                                                                            | `other`            |
 
 Lo streaming è per messaggio: ogni messaggio dell'assistente arriva quando è completo.
 `--include-partial-messages` darebbe i delta di testo, ma non è stato registrato dal CLI
@@ -75,6 +85,22 @@ prima del turno.
    `allowUnverifiedProvider`; l'esito riporta allora `billing: "unverified_provider"`.
 3. All'evento `init`, `apiKeySource` deve essere `"none"`: altrimenti l'albero di
    processi viene terminato subito e il turno rifiutato con `api_key`.
+
+## Limite di utilizzo (429)
+
+Con il limite della subscription esaurito, Claude risponde senza inferenza (modello
+`<synthetic>`, costo 0): `rate_limit_event` con `status: "rejected"` e un `result` con
+`is_error: true`, `api_error_status: 429`, `api_error: "usage_limit_reached"` e il testo
+del CLI (per esempio "You've hit your session limit · resets 1:50pm"). L'agente lo
+trasforma in `ClaudeError` `usage_limit`, con un messaggio chiaro e **nessun nuovo
+tentativo**; il ciclo si ferma con `failed`. Fixture reale e redatta:
+`turn-usage-limit.jsonl`.
+
+## Etichetta
+
+Ogni risposta porta l'identità osservata dall'adapter, non quella che il modello dichiara:
+`Claude Code`, il `model` di `init` (per esempio `claude-haiku-5-5`), l'effort passato e
+l'id di sessione. Il runtime ne scrive l'etichetta.
 
 ## Ambiente, cwd, sessione, terminazione
 

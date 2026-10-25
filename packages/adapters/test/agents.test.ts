@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   ClaudeError,
   CodexAuthError,
+  CodexSubagentError,
+  NO_SUBAGENTS_CONFIG,
   createClaudeAgentFactory,
   createCodexAgentFactory,
   declineResponse,
@@ -99,6 +101,72 @@ describe('Codex agent session', () => {
     expect(h.text.join('')).toBe('Risposta: analizza');
   });
 
+  it('reports the identity Codex gave the thread, with the proxy it goes through', async () => {
+    const direct = await codex();
+    expect(direct.id).toBe('codex');
+    expect((await direct.runTurn('ciao', handlers().value).done).identity).toEqual({
+      provider: 'Codex',
+      model: 'gpt-6-luna',
+      effort: 'low',
+      sessionId: 'thread-1',
+    });
+    const proxied = await codex('chatgpt', {
+      launcherArgs: [
+        FAKE_CODEX,
+        '--account=chatgpt',
+        '--provider=headroom',
+        '--provider-name=Headroom persistent proxy',
+      ],
+      effort: undefined,
+    });
+    expect((await proxied.runTurn('ciao', handlers().value).done).identity).toMatchObject({
+      provider: 'Codex via Headroom persistent proxy',
+      effort: 'high', // the thread default reported by thread/start
+    });
+  });
+
+  it('switches native sub-agents off for the thread only, and stops a turn that starts one', async () => {
+    const received = join(dir, 'received.jsonl');
+    const session = await codex('chatgpt', {
+      launcherArgs: [FAKE_CODEX, '--account=chatgpt', `--log=${received}`],
+      nativeSubagents: false,
+    });
+    const h = handlers();
+    const error: unknown = await session
+      .runTurn('[subagent] chiedi a Claude', h.value)
+      .done.catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(CodexSubagentError);
+    expect((error as Error).message).toMatch(/subAgentActivity/);
+    expect(h.activity).toContain('subagent');
+    const messages = readFileSync(received, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
+    expect(messages.find((m) => m.method === 'thread/start')?.params?.['config']).toEqual(
+      NO_SUBAGENTS_CONFIG,
+    );
+    expect(messages.map((m) => m.method)).toContain('turn/interrupt');
+    expect(messages.find((m) => m.method === 'thread/start')?.params).not.toHaveProperty(
+      'model_reasoning_effort',
+    );
+  });
+
+  it('passes no thread config when sub-agents follow the user configuration', async () => {
+    const received = join(dir, 'received.jsonl');
+    const session = await codex('chatgpt', {
+      launcherArgs: [FAKE_CODEX, '--account=chatgpt', `--log=${received}`],
+    });
+    await session.runTurn('ciao', handlers().value).done;
+    expect(readFileSync(received, 'utf8')).not.toContain('features.multi_agent');
+  });
+
+  it('reports MCP tool calls as activity', async () => {
+    const session = await codex();
+    const h = handlers();
+    await session.runTurn('[mcp] cerca', h.value).done;
+    expect(h.activity).toContain('mcp_tool');
+  });
+
   it('routes an approval request to the runtime and declines it on the wire', async () => {
     const session = await codex();
     const h = handlers();
@@ -186,6 +254,18 @@ describe('Claude agent session', () => {
     expect(first?.[first.indexOf('--permission-mode') + 1]).toBe('default');
     expect(first).not.toContain('--resume');
     expect(second?.[second.indexOf('--resume') + 1]).toBe('<session-id-1>');
+  });
+
+  it('labels the answer with the model and session reported by init', async () => {
+    const session = await claude();
+    sessions.push(session);
+    expect(session.id).toBe('claude');
+    expect((await session.runTurn('domanda', handlers().value).done).identity).toEqual({
+      provider: 'Claude Code',
+      model: 'claude-haiku-5-5',
+      effort: 'low',
+      sessionId: '<session-id-1>',
+    });
   });
 
   it('stops a turn whose init reports another permission mode', async () => {

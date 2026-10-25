@@ -49,7 +49,15 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
           );
         }
         if (result.isError) throw new Error(`Claude turn failed: ${result.text}`);
-        return { text: result.text };
+        return {
+          text: result.text,
+          identity: {
+            provider: 'Claude Code',
+            model: result.model,
+            effort: config.effort ?? null,
+            sessionId: result.sessionId,
+          },
+        };
       });
       void done
         .finally(() => {
@@ -61,6 +69,7 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
 
     return Promise.resolve({
       name: `Claude (${config.model ?? 'default model'})`,
+      id: 'claude',
       runTurn,
       close: async () => {
         await running?.stop();

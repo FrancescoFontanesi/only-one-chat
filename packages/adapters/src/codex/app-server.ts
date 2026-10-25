@@ -16,15 +16,19 @@ export type AppServerErrorKind =
 export class AppServerError extends Error {
   override readonly name = 'AppServerError';
 
-  constructor(
-    readonly kind: AppServerErrorKind,
-    message: string,
-    /** JSON-RPC error code, for kind `rpc`. */
-    readonly code?: number,
-    /** JSON-RPC error data, for kind `rpc`. */
-    readonly data?: unknown,
-  ) {
+  readonly kind: AppServerErrorKind;
+  /** JSON-RPC error code, for kind `rpc`. */
+  readonly code: number | undefined;
+  /** JSON-RPC error data, for kind `rpc`. */
+  readonly data: unknown;
+
+  // Plain fields rather than parameter properties: the sources stay runnable
+  // with Node's type stripping (dev tools such as the demo).
+  constructor(kind: AppServerErrorKind, message: string, code?: number, data?: unknown) {
     super(message);
+    this.kind = kind;
+    this.code = code;
+    this.data = data;
   }
 }
 
@@ -96,6 +100,15 @@ export interface AppServerOptions {
   readonly onExit?: (info: ExitInfo) => void;
   /** close() had to terminate processes; never called for a clean shutdown. */
   readonly onForcedShutdown?: (report: ForcedShutdownReport) => void;
+  /**
+   * Every protocol message as it crosses the pipe, in order: sent by the client
+   * or received (valid JSON objects only). For diagnostics and transcripts;
+   * nothing here is redacted.
+   */
+  readonly onWire?: (
+    direction: 'client' | 'server',
+    message: Readonly<Record<string, unknown>>,
+  ) => void;
 }
 
 export interface AppServerClient {
@@ -200,7 +213,8 @@ export async function startAppServer(options: AppServerOptions): Promise<AppServ
     options.onProtocolError?.(new AppServerError('protocol', message));
   }
 
-  function write(message: object): void {
+  function write(message: Record<string, unknown>): void {
+    options.onWire?.('client', message);
     child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
@@ -239,6 +253,7 @@ export async function startAppServer(options: AppServerOptions): Promise<AppServ
       protocolError(`Expected a JSON object from app-server: ${line.slice(0, 200)}`);
       return;
     }
+    options.onWire?.('server', message);
 
     const { id, method } = message;
     if (typeof method === 'string') {
@@ -273,7 +288,7 @@ export async function startAppServer(options: AppServerOptions): Promise<AppServ
   });
 
   async function answerServerRequest(id: Id, method: string, params: unknown): Promise<void> {
-    let reply: object;
+    let reply: Record<string, unknown>;
     if (!options.onServerRequest) {
       reply = { id, error: { code: -32601, message: `Method not found: ${method}` } };
     } else {
@@ -297,8 +312,9 @@ export async function startAppServer(options: AppServerOptions): Promise<AppServ
       if (signal?.aborted) throw new AppServerError('cancelled', `${method} was cancelled`);
 
       const id = nextId++;
+      const message = params === undefined ? { id, method } : { id, method, params };
       // Serialize first: unserializable params reject here, before anything is registered.
-      const line = JSON.stringify(params === undefined ? { id, method } : { id, method, params });
+      const line = JSON.stringify(message);
       const settleLocally = (error: AppServerError) => {
         pending.get(id)?.reject(error);
         pending.delete(id);
@@ -327,6 +343,7 @@ export async function startAppServer(options: AppServerOptions): Promise<AppServ
           reject(error);
         },
       });
+      options.onWire?.('client', message);
       child.stdin.write(`${line}\n`);
     });
   }

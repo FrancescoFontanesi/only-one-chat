@@ -25,7 +25,9 @@ Stato: iterazione 1. Codice: `packages/runtime/src/` (`loop.ts`, `delegation.ts`
    ```
 
    Le sei sezioni sono obbligatorie, in quest'ordine e non vuote. Senza marcatori la
-   risposta è una conclusione e il ciclo termina.
+   risposta è una conclusione e il ciclo termina. La riga di apertura può nominare il
+   destinatario, `<<<DELEGA @claude`: un destinatario diverso dal worker rende il blocco
+   malformato.
 
 3. Il blocco viene **intercettato**: l'utente lo approva, lo modifica o lo annulla. Nessun
    messaggio arriva a un agente senza approvazione.
@@ -37,8 +39,27 @@ Stato: iterazione 1. Codice: `packages/runtime/src/` (`loop.ts`, `delegation.ts`
    la conclusione. Al massimo **3 scambi**; al terzo la review chiede di non delegare più e
    un'ulteriore delega chiude con `limit_reached`.
 
-Esiti: `completed`, `limit_reached`, `cancelled` (con il punto: `delegation`, `review`,
-`malformed`), `stopped`, `failed`.
+Esiti: `completed`, `limit_reached`, `answered` (modalità domanda), `cancelled` (con il
+punto: `delegation`, `review`, `malformed`), `stopped`, `failed`.
+
+## Modalità domanda
+
+`runLoop({ mode: 'question' })`: l'orchestratore riceve istruzioni dedicate
+(`questionInstructions`) per formulare **una** domanda al worker, con il destinatario
+obbligatorio (`<<<DELEGA @<id>`), senza rispondere da solo. Il blocco è intercettato come
+sempre; dopo la risposta del worker il ciclo termina con `answered` (domanda approvata,
+risposta, etichetta), senza review. Una sola correzione di un blocco malformato è
+ammessa (`canAskOrchestrator` diventa falso); se l'orchestratore risponde senza
+delegare, l'esito è `failed`. Nella demo: `pnpm demo --question`, con i sotto-agenti
+nativi di Codex disattivati per il thread.
+
+## Etichette
+
+Ogni risposta nel thread (`message`) porta un'etichetta scritta dal **runtime** da
+`AgentTurnResult.identity`, cioè da ciò che l'adapter ha osservato sul protocollo:
+provider (con il proxy, per esempio "Codex via Headroom persistent proxy"), modello,
+effort e id di sessione o di thread. Il testo dell'agente non può attribuirsi un'altra
+identità.
 
 ## Regole
 
@@ -68,8 +89,15 @@ poi l'estensione).
 
 ## Limiti
 
-- I turni Codex del fake seguono le forme dei sorgenti (`thread.rs`, `turn.rs`,
-  `item.rs`, tag `rust-v0.164.0`): nessun turno reale è ancora registrato come fixture.
+- I turni Codex del fake seguono un turno reale (`question-turn.jsonl`, registrato dalla
+  demo con `OOC_CODEX_TRACE` e redatto), confrontato sui campi che il client legge. Il fake
+  non emette hook, stati di avvio MCP, uso dei token e rate limit.
+- **Sotto-agenti nativi di Codex** (`subAgentActivity`, `collabAgentToolCall`): scavalcano
+  intercettazione ed effort configurato. Con `nativeSubagents: false` l'adapter li
+  disattiva per il solo thread (`thread/start` `config`: `features.multi_agent` e
+  `features.multi_agent_v2` a `false`) e interrompe il turno con `CodexSubagentError` se
+  ne compare uno. Nel ciclo normale seguono ancora la configurazione dell'utente: il
+  modello da adottare è ancora da decidere.
 - La risposta finale di un turno Codex è la concatenazione dei messaggi `agentMessage`
   completati nel turno.
 - Le approvazioni non sono ancora mediate: arriveranno con le prossime iterazioni.

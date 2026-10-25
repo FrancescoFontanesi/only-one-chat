@@ -74,9 +74,10 @@ function result(entries: Entry[] | undefined, method: string): unknown {
 const startup = load('startup');
 const customProvider = load('custom-provider');
 const personalStartup = load('personal-startup');
+const questionTurn = load('question-turn');
 
 describe(`recorded Codex ${RECORDED_VERSION}: what the client accepts`, () => {
-  const all = [startup, customProvider, personalStartup].filter(
+  const all = [startup, customProvider, personalStartup, questionTurn].filter(
     (t): t is Entry[] => t !== undefined,
   );
 
@@ -84,6 +85,7 @@ describe(`recorded Codex ${RECORDED_VERSION}: what the client accepts`, () => {
     expect(startup).toBeDefined();
     expect(customProvider).toBeDefined();
     expect(personalStartup).toBeDefined();
+    expect(questionTurn).toBeDefined();
   });
 
   it('answers every request with a result or a well-formed error, never both', () => {
@@ -341,4 +343,68 @@ describe.each([
     const fake = (await replayOnFake(entries ?? [], flags)).map((m) => shape(project(m)));
     expect(fake).toEqual(recorded);
   });
+});
+
+/**
+ * A real turn (the Part A question, recorded by the demo with OOC_CODEX_TRACE)
+ * has hooks, MCP startup and usage notifications the fake does not emit, so
+ * parity is checked on the shape of what the client reads, not message by message.
+ */
+describe('fake app-server matches the recorded question-turn on what the client reads', () => {
+  const firstParams = (
+    list: Json[],
+    method: string,
+    pick: (params: Json) => boolean = () => true,
+  ) =>
+    list.find((m) => m['method'] === method && pick(m['params'] as Json))?.['params'] as
+      Json | undefined;
+  const isAgentMessage = (params: Json) => (params['item'] as Json)['type'] === 'agentMessage';
+  const keys = (value: unknown) => Object.keys(value ?? {}).sort();
+
+  it.runIf(questionTurn !== undefined)('with the same turn, item and response fields', async () => {
+    const recorded = messages(questionTurn ?? [], 'server');
+    const fake = await replayOnFake(questionTurn ?? [], [
+      '--account=chatgpt',
+      '--provider=headroom',
+      '--provider-name=Headroom persistent proxy',
+    ]);
+    const threadStart = (list: Json[], entries: Entry[]) => {
+      const id = messages(entries, 'client').find((m) => m['method'] === 'thread/start')?.['id'];
+      return list.find((m) => m['method'] === undefined && m['id'] === id)?.['result'] as Json;
+    };
+    const recordedStart = threadStart(recorded, questionTurn ?? []);
+    const fakeStart = threadStart(fake, questionTurn ?? []);
+    expect(keys(fakeStart)).toEqual(keys(recordedStart));
+    for (const method of ['turn/started', 'turn/completed']) {
+      expect(keys(firstParams(fake, method))).toEqual(keys(firstParams(recorded, method)));
+      expect(keys(firstParams(fake, method)?.['turn'])).toEqual(
+        keys(firstParams(recorded, method)?.['turn']),
+      );
+    }
+    const recordedMessage = firstParams(recorded, 'item/completed', isAgentMessage);
+    const fakeMessage = firstParams(fake, 'item/completed', isAgentMessage);
+    expect(keys(fakeMessage)).toEqual(keys(recordedMessage));
+    expect(keys(fakeMessage?.['item'])).toEqual(keys(recordedMessage?.['item']));
+    expect(keys(firstParams(fake, 'item/agentMessage/delta'))).toEqual(
+      keys(firstParams(recorded, 'item/agentMessage/delta')),
+    );
+  });
+
+  it.runIf(questionTurn !== undefined)(
+    'switched the native sub-agents off per thread, and none started',
+    () => {
+      const start = messages(questionTurn ?? [], 'client').find(
+        (m) => m['method'] === 'thread/start',
+      );
+      expect((start?.['params'] as Json)['config']).toEqual({
+        'features.multi_agent': false,
+        'features.multi_agent_v2': false,
+      });
+      const types = messages(questionTurn ?? [], 'server')
+        .filter((m) => m['method'] === 'item/started')
+        .map((m) => ((m['params'] as Json)['item'] as Json)['type']);
+      expect(types).not.toContain('subAgentActivity');
+      expect(types).not.toContain('collabAgentToolCall');
+    },
+  );
 });

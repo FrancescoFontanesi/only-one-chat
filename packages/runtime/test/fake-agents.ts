@@ -27,7 +27,11 @@ export interface FakeAgent {
   turnStarted(): Promise<void>;
 }
 
-export function fakeAgent(name: string, steps: readonly Step[]): FakeAgent {
+export function fakeAgent(
+  name: string,
+  steps: readonly Step[],
+  id = name.toLowerCase(),
+): FakeAgent {
   const prompts: string[] = [];
   const instructions: string[] = [];
   const decisions: ApprovalDecision[] = [];
@@ -61,7 +65,10 @@ export function fakeAgent(name: string, steps: readonly Step[]): FakeAgent {
       const half = Math.ceil(step.answer.length / 2);
       handlers.onText(step.answer.slice(0, half));
       handlers.onText(step.answer.slice(half));
-      return { text: step.answer };
+      return {
+        text: step.answer,
+        identity: { provider: name, model: 'fake-model', effort: 'low', sessionId: `${id}-1` },
+      };
     })();
     return {
       done,
@@ -75,6 +82,7 @@ export function fakeAgent(name: string, steps: readonly Step[]): FakeAgent {
 
   const session: AgentSession = {
     name,
+    id,
     runTurn,
     close() {
       closed = true;
@@ -99,11 +107,14 @@ export function fakeAgent(name: string, steps: readonly Step[]): FakeAgent {
   };
 }
 
-export function delegationBlock(goal = 'Verifica le proposte su executable.ts'): string {
+export function delegationBlock(
+  goal = 'Verifica le proposte su executable.ts',
+  recipient?: string,
+): string {
   return [
     'Piano: analizzo il file e chiedo una verifica.',
     '',
-    '<<<DELEGA',
+    recipient ? `<<<DELEGA @${recipient}` : '<<<DELEGA',
     '## Obiettivo',
     goal,
     '## Contesto',

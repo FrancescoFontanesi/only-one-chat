@@ -1,9 +1,25 @@
 // Claude Code as an agent session for the runtime: each runtime turn is one
 // headless `claude -p` turn (src/claude/turn.ts); later turns resume the same
 // Claude session, so the worker keeps its context across exchanges.
+//
+// Sub-agents (D13): an Agent tool call in the main conversation starts one,
+// its messages carry the call's id as parent_tool_use_id (and the model that
+// actually ran), and the call's tool_result ends it. They become sub-agent
+// events for the runtime; stopping the turn ends the whole process tree, and
+// with it every sub-agent.
 
 import type { AgentFactory, AgentSession, AgentTurn, AgentTurnHandlers } from '../agent.js';
-import { ClaudeError, startClaudeTurn, type ClaudeTurn, type ClaudeTurnOptions } from './turn.js';
+import {
+  ClaudeError,
+  SUBAGENT_TOOL,
+  startClaudeTurn,
+  type ClaudeTurn,
+  type ClaudeTurnOptions,
+} from './turn.js';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 export type ClaudeAgentConfig = Omit<
   ClaudeTurnOptions,
@@ -16,6 +32,15 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
     let running: ClaudeTurn | undefined;
 
     function runTurn(prompt: string, handlers: AgentTurnHandlers): AgentTurn {
+      /** Sub-agents of this turn, by Agent tool call id. */
+      const children = new Map<string, { identified: boolean }>();
+      /** The first message of a sub-agent tells which model actually ran it. */
+      function identify(id: string, model: string | null): void {
+        const subagent = children.get(id);
+        if (!subagent || subagent.identified) return;
+        subagent.identified = true;
+        handlers.onSubagent?.({ type: 'identified', id, model, effort: null });
+      }
       const turn = startClaudeTurn({
         ...config,
         prompt,
@@ -23,11 +48,41 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
         ...(subagents ? { subagents: { model: subagents.model, effort: subagents.effort } } : {}),
         ...(sessionId ? { resumeSessionId: sessionId } : {}),
         onEvent(event) {
-          if (event.type === 'text') handlers.onText(event.text);
-          else if (event.type === 'tool_use') {
+          if (event.type === 'text' && event.parentToolUseId !== null) {
+            identify(event.parentToolUseId, event.model);
+            handlers.onSubagent?.({ type: 'text', id: event.parentToolUseId, text: event.text });
+          } else if (event.type === 'text') handlers.onText(event.text);
+          else if (event.type === 'tool_use' && event.parentToolUseId !== null) {
+            identify(event.parentToolUseId, event.model);
+            handlers.onSubagent?.({
+              type: 'activity',
+              id: event.parentToolUseId,
+              kind: 'tool',
+              detail: `${event.name} ${JSON.stringify(event.input)}`,
+            });
+          } else if (event.type === 'tool_use' && event.name === SUBAGENT_TOOL) {
+            const input = isRecord(event.input) ? event.input : {};
+            const name = input['subagent_type'] ?? input['description'];
+            children.set(event.id, { identified: false });
+            handlers.onSubagent?.({
+              type: 'started',
+              id: event.id,
+              name: typeof name === 'string' ? name : SUBAGENT_TOOL,
+              // Requested, if anything: the model that runs comes with its messages.
+              model: typeof input['model'] === 'string' ? input['model'] : null,
+              effort: null,
+            });
+          } else if (event.type === 'tool_use') {
             handlers.onActivity?.({
               kind: 'tool',
               detail: `${event.name} ${JSON.stringify(event.input)}`,
+            });
+          } else if (event.type === 'tool_result' && children.has(event.toolUseId)) {
+            children.delete(event.toolUseId);
+            handlers.onSubagent?.({
+              type: 'finished',
+              id: event.toolUseId,
+              status: event.isError ? 'failed' : 'completed',
             });
           } else if (event.type === 'init') {
             handlers.onActivity?.({
@@ -65,7 +120,17 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
           if (running === turn) running = undefined;
         })
         .catch(() => undefined);
-      return { done, stop: () => turn.stop() };
+      return {
+        done,
+        async stop() {
+          await turn.stop();
+          // The process tree is gone, and every sub-agent with it.
+          for (const id of children.keys()) {
+            handlers.onSubagent?.({ type: 'finished', id, status: 'interrupted' });
+          }
+          children.clear();
+        },
+      };
     }
 
     return Promise.resolve({

@@ -70,8 +70,31 @@ export type ClaudeEvent =
       readonly permissionMode: string;
       readonly tools: readonly string[];
     }
-  | { readonly type: 'text'; readonly text: string }
-  | { readonly type: 'tool_use'; readonly name: string; readonly input: unknown }
+  /**
+   * `parentToolUseId` is null in the main conversation and the id of the Agent
+   * tool call for a sub-agent's messages; `model` is the assistant message's.
+   */
+  | {
+      readonly type: 'text';
+      readonly text: string;
+      readonly parentToolUseId: string | null;
+      readonly model: string | null;
+    }
+  | {
+      readonly type: 'tool_use';
+      readonly id: string;
+      readonly name: string;
+      readonly input: unknown;
+      readonly parentToolUseId: string | null;
+      readonly model: string | null;
+    }
+  /** A tool's result, in a `user` message: ends an Agent tool call (a sub-agent). */
+  | {
+      readonly type: 'tool_result';
+      readonly toolUseId: string;
+      readonly isError: boolean;
+      readonly parentToolUseId: string | null;
+    }
   | { readonly type: 'rate_limit'; readonly info: unknown }
   | { readonly type: 'other'; readonly message: Readonly<Record<string, unknown>> };
 
@@ -357,18 +380,42 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
             });
           }
         } else if (type === 'assistant' && isRecord(message['message'])) {
+          const parent = message['parent_tool_use_id'];
+          const parentToolUseId = typeof parent === 'string' ? parent : null;
+          const messageModel = message['message']['model'];
+          const blockModel = typeof messageModel === 'string' ? messageModel : null;
           const content = message['message']['content'];
           for (const block of Array.isArray(content) ? content : []) {
             if (!isRecord(block)) continue;
             if (block['type'] === 'text' && typeof block['text'] === 'string') {
-              options.onEvent?.({ type: 'text', text: block['text'] });
+              options.onEvent?.({
+                type: 'text',
+                text: block['text'],
+                parentToolUseId,
+                model: blockModel,
+              });
             } else if (block['type'] === 'tool_use') {
               options.onEvent?.({
                 type: 'tool_use',
+                id: String(block['id']),
                 name: String(block['name']),
                 input: block['input'],
+                parentToolUseId,
+                model: blockModel,
               });
             }
+          }
+        } else if (type === 'user' && isRecord(message['message'])) {
+          const parent = message['parent_tool_use_id'];
+          const content = message['message']['content'];
+          for (const block of Array.isArray(content) ? content : []) {
+            if (!isRecord(block) || block['type'] !== 'tool_result') continue;
+            options.onEvent?.({
+              type: 'tool_result',
+              toolUseId: String(block['tool_use_id']),
+              isError: block['is_error'] === true,
+              parentToolUseId: typeof parent === 'string' ? parent : null,
+            });
           }
         } else if (type === 'rate_limit_event') {
           options.onEvent?.({ type: 'rate_limit', info: message['rate_limit_info'] });

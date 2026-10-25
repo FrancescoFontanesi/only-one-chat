@@ -160,7 +160,13 @@ describe('a turn', () => {
     const { options: turn, events } = options(['--echo']);
     const result = await startClaudeTurn(turn).done;
     expect(result.text).toBe('ECHO: Verifica le proposte');
-    expect(events).toContainEqual({ type: 'text', text: 'ECHO: Verifica le proposte' });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'text',
+        text: 'ECHO: Verifica le proposte',
+        parentToolUseId: null,
+      }),
+    );
   });
 
   it('runs in the workspace directory', async () => {

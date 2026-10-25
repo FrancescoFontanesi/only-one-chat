@@ -102,8 +102,12 @@ const handlers = {
   // the demo; fields the client does not read are omitted). Markers in the
   // prompt pick the behaviour: [approval] asks for a command approval first,
   // [hang] runs until turn/interrupt, [fail] ends with status failed,
-  // [subagent] starts a native sub-agent (its activity item, then a turn on
-  // the child thread) and runs until turn/interrupt, [mcp] calls an MCP tool.
+  // [subagent] runs a native sub-agent as in the second demo run: its activity
+  // item on the parent thread (model and effort from the thread's
+  // agents.default_subagent_* overrides), then a turn on its own thread with a
+  // message and a command. [subagent-model=…], [subagent-effort=…] and
+  // [subagent-name=…] change what it reports; [subagent-hang] keeps it (and
+  // the parent) running until turn/interrupt. [mcp] calls an MCP tool.
   'thread/start': (params) => {
     threads.set('thread-1', params);
     return {
@@ -157,27 +161,57 @@ const handlers = {
       return;
     }
     if (text.includes('[fail]')) return complete('failed', 'boom');
-    if (text.includes('[subagent]')) {
+    if (text.includes('[subagent')) {
+      const config = threads.get(threadId)?.config ?? {};
+      const marker = (name) => new RegExp(`\\[subagent-${name}=([^\\]]+)\\]`).exec(text)?.[1];
+      const child = 'thread-child';
+      const childTurn = 'turn-child';
+      const activity = (kind) =>
+        notify('item/started', {
+          item: {
+            type: 'subAgentActivity',
+            model: marker('model') ?? config['agents.default_subagent_model'] ?? 'fake-model',
+            reasoningEffort:
+              marker('effort') ?? config['agents.default_subagent_reasoning_effort'] ?? 'medium',
+            id: `activity-${kind}`,
+            kind,
+            agentThreadId: child,
+            agentPath: marker('name') ?? '/root/explorer',
+          },
+          threadId,
+          turnId,
+          startedAtMs: Date.now(),
+        });
+      const childDone = (status) => {
+        notify('turn/completed', {
+          threadId: child,
+          turn: { ...turnObject(status), id: childTurn, rootTurnId: turnId },
+        });
+        activity(status === 'completed' ? 'completed' : 'interrupted');
+      };
+      activity('started');
+      notify('turn/started', {
+        threadId: child,
+        turn: { ...turnObject('inProgress'), id: childTurn, rootTurnId: turnId },
+      });
+      notify('item/agentMessage/delta', {
+        threadId: child,
+        turnId: childTurn,
+        itemId: 'msg-child',
+        delta: 'letto il file',
+      });
       notify('item/started', {
-        item: {
-          type: 'subAgentActivity',
-          model: 'fake-model',
-          reasoningEffort: 'medium',
-          id: 'call-1',
-          kind: 'started',
-          agentThreadId: 'thread-child',
-          agentPath: '/root/claude_review',
-        },
-        threadId,
-        turnId,
+        item: { type: 'commandExecution', id: 'cmd-child', command: 'Get-Content x.ts' },
+        threadId: child,
+        turnId: childTurn,
         startedAtMs: Date.now(),
       });
-      notify('turn/started', {
-        threadId: 'thread-child',
-        turn: { ...turnObject('inProgress'), id: 'turn-child', rootTurnId: turnId },
-      });
-      hanging.set(turnId, () => complete('interrupted'));
-      return;
+      if (text.includes('[subagent-hang]')) {
+        hanging.set(childTurn, () => childDone('interrupted'));
+        hanging.set(turnId, () => complete('interrupted'));
+        return;
+      }
+      childDone('completed');
     }
     if (text.includes('[mcp]')) {
       const item = {

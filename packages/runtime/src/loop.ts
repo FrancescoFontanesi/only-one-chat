@@ -15,6 +15,7 @@ import type {
   AgentTurnResult,
   ApprovalRequest,
   ApprovalDecision,
+  SubagentEvent,
   SubagentPolicy,
 } from './agent.js';
 import {
@@ -89,6 +90,35 @@ export type ThreadEvent =
       readonly kind: 'delegation' | 'review' | 'malformed';
       readonly action: string;
       readonly text?: string;
+    }
+  | {
+      /** A sub-agent of the agent running `role`; sent again on every change. */
+      readonly type: 'subagent';
+      readonly role: Role;
+      readonly parent: string;
+      readonly subagent: SubagentState;
+      /** Written by the runtime; see subagentLabel. */
+      readonly label: string;
+    }
+  | {
+      readonly type: 'subagent_text';
+      readonly role: Role;
+      readonly id: string;
+      readonly text: string;
+    }
+  | {
+      readonly type: 'subagent_activity';
+      readonly role: Role;
+      readonly id: string;
+      readonly kind: string;
+      readonly detail: string;
+    }
+  | { readonly type: 'subagent_violation'; readonly role: Role; readonly message: string }
+  | {
+      /** The orchestrator attributes work to an external agent that did not run. */
+      readonly type: 'attribution_warning';
+      readonly agent: string;
+      readonly message: string;
     }
   | { readonly type: 'error'; readonly message: string }
   | { readonly type: 'finished'; readonly outcome: LoopOutcome };
@@ -215,6 +245,75 @@ export function subagentRules(policy: SubagentPolicy): string {
   ].join('\n');
 }
 
+export interface SubagentState {
+  readonly id: string;
+  readonly name: string;
+  readonly model: string | null;
+  readonly effort: string | null;
+  readonly status: 'running' | 'completed' | 'interrupted' | 'failed';
+}
+
+const SUBAGENT_STATUS: Readonly<Record<SubagentState['status'], string>> = {
+  running: 'in corso',
+  completed: 'completato',
+  interrupted: 'interrotto',
+  failed: 'fallito',
+};
+
+/** Label of a sub-agent: parent agent, name, model, effort and status, as observed. */
+export function subagentLabel(parent: string, subagent: SubagentState): string {
+  return [
+    `${parent} › ${subagent.name}`,
+    subagent.model ?? 'modello non riportato',
+    `effort ${subagent.effort ?? 'non riportato'}`,
+    SUBAGENT_STATUS[subagent.status],
+  ].join(' · ');
+}
+
+/** True when `name` contains `word` as a whole word, any case ("/root/claude_review", "claude"). */
+function hasWord(name: string, word: string): boolean {
+  return name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .includes(word.toLowerCase());
+}
+
+/**
+ * Checks a sub-agent against its role's policy, after the fact (D13): a model or
+ * effort other than the imposed one, an external agent's name, too many at once.
+ * Values the CLI did not report are not violations. Returns the reason, if any.
+ */
+export function checkSubagent(
+  policy: SubagentPolicy,
+  subagent: Pick<SubagentState, 'name' | 'model' | 'effort'>,
+  running: number,
+): string | undefined {
+  const forbidden = policy.forbiddenNames.find((name) => hasWord(subagent.name, name));
+  if (forbidden !== undefined) {
+    return `il nome "${subagent.name}" coincide con l'agente esterno "${forbidden}"`;
+  }
+  if (subagent.model !== null && subagent.model.toLowerCase() !== policy.model.toLowerCase()) {
+    return `modello ${subagent.model} invece di ${policy.model}`;
+  }
+  if (subagent.effort !== null && subagent.effort.toLowerCase() !== policy.effort.toLowerCase()) {
+    return `effort ${subagent.effort} invece di ${policy.effort}`;
+  }
+  if (running > policy.maxConcurrent) {
+    return `${String(running)} sotto-agenti contemporanei, al massimo ${String(policy.maxConcurrent)}`;
+  }
+  return undefined;
+}
+
+/** External agents named in `text` although none of them ran in this loop. */
+export function falseAttributions(text: string, externalNames: readonly string[]): string[] {
+  return externalNames.filter((name) =>
+    new RegExp(
+      `(^|[^\\p{L}\\p{N}])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`,
+      'iu',
+    ).test(text),
+  );
+}
+
 /** The label shown above an answer: provider, model, effort and session, as observed. */
 export function agentLabel(identity: AgentIdentity): string {
   return [
@@ -296,6 +395,62 @@ export function runLoop(options: LoopOptions): Loop {
   async function turn(session: AgentSession, role: Role, prompt: string): Promise<AgentTurnResult> {
     checkStopped();
     await emit({ type: 'turn_started', role, agent: session.name });
+    const policy =
+      role === 'orchestrator' ? options.subagents?.orchestrator : options.subagents?.worker;
+    const subagents = new Map<string, SubagentState>();
+    let violation: string | undefined;
+    /** The running turn, once runTurn has returned it. */
+    const started: { turn?: AgentTurn } = {};
+
+    function update(next: SubagentState): void {
+      subagents.set(next.id, next);
+      void emit({
+        type: 'subagent',
+        role,
+        parent: session.name,
+        subagent: next,
+        label: subagentLabel(session.name, next),
+      });
+      if (!policy || violation !== undefined || next.status !== 'running') return;
+      const runningNow = [...subagents.values()].filter((s) => s.status === 'running').length;
+      const reason = checkSubagent(policy, next, runningNow);
+      if (reason === undefined) return;
+      violation = `Sotto-agente non conforme di ${session.name}: ${reason}. Turno interrotto.`;
+      void emit({ type: 'subagent_violation', role, message: violation });
+      void started.turn?.stop();
+    }
+
+    function onSubagent(event: SubagentEvent): void {
+      const known = subagents.get(event.id);
+      if (event.type === 'started') {
+        update({
+          id: event.id,
+          name: event.name,
+          model: event.model,
+          effort: event.effort,
+          status: 'running',
+        });
+      } else if (event.type === 'identified' && known) {
+        update({
+          ...known,
+          model: event.model ?? known.model,
+          effort: event.effort ?? known.effort,
+        });
+      } else if (event.type === 'finished' && known) {
+        update({ ...known, status: event.status });
+      } else if (event.type === 'text') {
+        options.onEvent?.({ type: 'subagent_text', role, id: event.id, text: event.text });
+      } else if (event.type === 'activity') {
+        void emit({
+          type: 'subagent_activity',
+          role,
+          id: event.id,
+          kind: event.kind,
+          detail: event.detail,
+        });
+      }
+    }
+
     const running = session.runTurn(prompt, {
       onText: (text) => {
         options.onEvent?.({ type: 'text', role, text });
@@ -313,10 +468,18 @@ export function runLoop(options: LoopOptions): Loop {
       onActivity: (activity) => {
         void emit({ type: 'activity', role, ...activity });
       },
+      onSubagent,
     });
+    started.turn = running;
+    // A violation reported while runTurn was still starting the turn.
+    if (violation !== undefined) void running.stop();
     current = running;
     try {
-      const result = await running.done;
+      const result = await running.done.catch((error: unknown) => {
+        if (violation !== undefined) throw new Error(violation);
+        throw error;
+      });
+      if (violation !== undefined) throw new Error(violation);
       checkStopped();
       await emit({
         type: 'message',
@@ -328,10 +491,33 @@ export function runLoop(options: LoopOptions): Loop {
       });
       return result;
     } catch (error) {
-      checkStopped();
+      if (violation === undefined) checkStopped();
       throw error;
     } finally {
       current = undefined;
+    }
+  }
+
+  /** Names of external agents, for the attribution check: the worker and the policy's list. */
+  function externalNames(worker: AgentSession | undefined): string[] {
+    const names = new Set(options.subagents?.orchestrator?.forbiddenNames ?? []);
+    if (worker) names.add(worker.id);
+    return [...names];
+  }
+
+  async function concluded(
+    orchestrator: AgentSession,
+    worker: AgentSession | undefined,
+    conclusion: string,
+    workerTurns: number,
+  ): Promise<void> {
+    if (workerTurns > 0) return;
+    for (const agent of falseAttributions(conclusion, externalNames(worker))) {
+      await emit({
+        type: 'attribution_warning',
+        agent,
+        message: `${orchestrator.name} attribuisce lavoro a "${agent}", che in questo ciclo non è stato eseguito.`,
+      });
     }
   }
 
@@ -403,9 +589,11 @@ export function runLoop(options: LoopOptions): Loop {
         throw new Error('The orchestrator answered without asking the worker a question');
       }
       if (parsed.status === 'absent') {
+        await concluded(orchestrator, worker, answer, exchange);
         return { status: 'completed', conclusion: answer, exchanges: exchange };
       }
       if (exchange >= max) {
+        await concluded(orchestrator, worker, answer, exchange);
         return { status: 'limit_reached', conclusion: answer, exchanges: exchange };
       }
       let delegation: string;

@@ -30,6 +30,7 @@ export type {
   AgentTurnResult,
   ApprovalDecision,
   ApprovalRequest,
+  SubagentEvent,
   SubagentPolicy,
 } from './agent.js';
 export {
@@ -52,6 +53,10 @@ export {
   fixPrompt,
   questionInstructions,
   subagentRules,
+  checkSubagent,
+  falseAttributions,
+  subagentLabel,
+  type SubagentState,
   requestPrompt,
   reviewPrompt,
   runLoop,

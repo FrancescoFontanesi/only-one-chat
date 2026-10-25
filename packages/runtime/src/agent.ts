@@ -13,6 +13,38 @@ export interface ApprovalRequest {
 
 export type ApprovalDecision = 'decline';
 
+/**
+ * What an agent reports about its own sub-agents (D13). `started` may come
+ * without model or effort (Claude reports the model with the sub-agent's first
+ * message, as `identified`); null means "not reported", not "default".
+ */
+export type SubagentEvent =
+  | {
+      readonly type: 'started';
+      readonly id: string;
+      readonly name: string;
+      readonly model: string | null;
+      readonly effort: string | null;
+    }
+  | {
+      readonly type: 'identified';
+      readonly id: string;
+      readonly model: string | null;
+      readonly effort: string | null;
+    }
+  | { readonly type: 'text'; readonly id: string; readonly text: string }
+  | {
+      readonly type: 'activity';
+      readonly id: string;
+      readonly kind: string;
+      readonly detail: string;
+    }
+  | {
+      readonly type: 'finished';
+      readonly id: string;
+      readonly status: 'completed' | 'interrupted' | 'failed';
+    };
+
 export interface AgentTurnHandlers {
   /** Text as it streams (deltas or whole messages, depending on the agent). */
   onText(text: string): void;
@@ -20,6 +52,8 @@ export interface AgentTurnHandlers {
   onApprovalRequest(request: ApprovalRequest): Promise<ApprovalDecision>;
   /** Anything else worth showing (tool use, rate limits, …). */
   onActivity?(activity: { readonly kind: string; readonly detail: string }): void;
+  /** The agent's own sub-agents: visible, not approved (D13). */
+  onSubagent?(event: SubagentEvent): void;
 }
 
 /**

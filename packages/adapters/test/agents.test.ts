@@ -8,12 +8,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   ClaudeError,
   CodexAuthError,
-  CodexSubagentError,
-  NO_SUBAGENTS_CONFIG,
   createClaudeAgentFactory,
   createCodexAgentFactory,
   declineResponse,
   type AgentApprovalRequest,
+  type AgentSubagentEvent,
   type AgentSession,
   type AgentTurnHandlers,
 } from '../src/index.js';
@@ -36,6 +35,7 @@ function handlers() {
   const text: string[] = [];
   const approvals: AgentApprovalRequest[] = [];
   const activity: string[] = [];
+  const subagents: AgentSubagentEvent[] = [];
   const value: AgentTurnHandlers = {
     onText: (chunk) => text.push(chunk),
     onApprovalRequest: (request) => {
@@ -43,8 +43,9 @@ function handlers() {
       return Promise.resolve('decline');
     },
     onActivity: ({ kind }) => activity.push(kind),
+    onSubagent: (event) => subagents.push(event),
   };
-  return { value, text, approvals, activity };
+  return { value, text, approvals, activity, subagents };
 }
 
 async function codex(account = 'chatgpt', extra: Record<string, unknown> = {}) {
@@ -125,30 +126,82 @@ describe('Codex agent session', () => {
     });
   });
 
-  it('switches native sub-agents off for the thread only, and stops a turn that starts one', async () => {
-    const received = join(dir, 'received.jsonl');
-    const session = await codex('chatgpt', {
+  const policy = {
+    model: 'gpt-6-luna',
+    effort: 'low',
+    maxConcurrent: 2,
+    forbiddenNames: ['claude'],
+    rules: 'REGOLE',
+  };
+
+  async function codexWithPolicy(received: string) {
+    const session = await createCodexAgentFactory({
+      executable: process.execPath,
       launcherArgs: [FAKE_CODEX, '--account=chatgpt', `--log=${received}`],
-      nativeSubagents: false,
-    });
+      cwd: dir,
+      model: 'gpt-6-luna',
+      effort: 'low',
+      requestTimeoutMs: 5_000,
+      interruptTimeoutMs: 2_000,
+    })({ instructions: 'Sei l’orchestratore.', subagents: policy });
+    sessions.push(session);
+    return session;
+  }
+
+  it('reports a native sub-agent with its model, effort, messages and commands', async () => {
+    const session = await codexWithPolicy(join(dir, 'received.jsonl'));
     const h = handlers();
-    const error: unknown = await session
-      .runTurn('[subagent] chiedi a Claude', h.value)
-      .done.catch((reason: unknown) => reason);
-    expect(error).toBeInstanceOf(CodexSubagentError);
-    expect((error as Error).message).toMatch(/subAgentActivity/);
-    expect(h.activity).toContain('subagent');
-    const messages = readFileSync(received, 'utf8')
+    const { text } = await session.runTurn('[subagent] leggi un file', h.value).done;
+    expect(text).toBe('Risposta: [subagent] leggi un file');
+    expect(h.subagents).toEqual([
+      {
+        type: 'started',
+        id: 'thread-child',
+        name: '/root/explorer',
+        model: 'gpt-6-luna', // the thread's default_subagent_model override
+        effort: 'low',
+      },
+      { type: 'text', id: 'thread-child', text: 'letto il file' },
+      { type: 'activity', id: 'thread-child', kind: 'command', detail: 'Get-Content x.ts' },
+      { type: 'finished', id: 'thread-child', status: 'completed' },
+    ]);
+    expect(h.text.join('')).not.toContain('letto il file'); // not the parent's text
+  });
+
+  it('reports what the sub-agent really runs with, and leaves the policy to the runtime', async () => {
+    const session = await codexWithPolicy(join(dir, 'received.jsonl'));
+    const h = handlers();
+    await session.runTurn(
+      '[subagent] [subagent-model=gpt-6.1-sol] [subagent-effort=high] [subagent-name=/root/claude]',
+      h.value,
+    ).done;
+    expect(h.subagents[0]).toMatchObject({
+      name: '/root/claude',
+      model: 'gpt-6.1-sol',
+      effort: 'high',
+    });
+  });
+
+  it('stop interrupts the sub-agent’s turn as well as its parent’s', async () => {
+    const received = join(dir, 'received.jsonl');
+    const session = await codexWithPolicy(received);
+    const h = handlers();
+    const turn = session.runTurn('[subagent] [subagent-hang] lungo', h.value);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await turn.stop();
+    await expect(turn.done).rejects.toThrow(/interrupted/);
+    const interrupts = readFileSync(received, 'utf8')
       .split('\n')
       .filter(Boolean)
-      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
-    expect(messages.find((m) => m.method === 'thread/start')?.params?.['config']).toEqual(
-      NO_SUBAGENTS_CONFIG,
-    );
-    expect(messages.map((m) => m.method)).toContain('turn/interrupt');
-    expect(messages.find((m) => m.method === 'thread/start')?.params).not.toHaveProperty(
-      'model_reasoning_effort',
-    );
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+      .filter((m) => m.method === 'turn/interrupt')
+      .map((m) => m.params?.['threadId']);
+    expect(interrupts.sort()).toEqual(['thread-1', 'thread-child']);
+    expect(h.subagents.at(-1)).toEqual({
+      type: 'finished',
+      id: 'thread-child',
+      status: 'interrupted',
+    });
   });
 
   it('holds sub-agents to the policy with per-thread overrides only', async () => {
@@ -354,6 +407,64 @@ describe('Claude agent session', () => {
       model: 'claude-haiku-5-5',
       effort: 'low',
       sessionId: '<session-id-1>',
+    });
+  });
+
+  async function claudeWithPolicy(fakeFlags: string[]) {
+    const session = await createClaudeAgentFactory({
+      executable: process.execPath,
+      launcherArgs: [FAKE_CLAUDE, `--log=${log()}`, ...fakeFlags],
+      cwd: dir,
+      model: 'haiku',
+      effort: 'low',
+      baseEnv: { ...process.env },
+      shutdownTimeoutMs: 300,
+    })({
+      instructions: 'Sei il worker.',
+      subagents: { ...policyForClaude, rules: 'REGOLE' },
+    });
+    sessions.push(session);
+    return session;
+  }
+  const policyForClaude = {
+    model: 'claude-haiku-5-5',
+    effort: 'low',
+    maxConcurrent: 2,
+    forbiddenNames: ['codex'],
+  };
+
+  it('reports a sub-agent from the Agent tool call, its messages and the model that ran it', async () => {
+    const session = await claudeWithPolicy(['--subagent']);
+    const h = handlers();
+    const { text } = await session.runTurn('usa un sotto-agente', h.value).done;
+    expect(text).toBe('OK');
+    expect(h.subagents).toEqual([
+      { type: 'started', id: 'toolu_sub1', name: 'Explore', model: null, effort: null },
+      { type: 'identified', id: 'toolu_sub1', model: 'claude-haiku-5-5', effort: null },
+      { type: 'text', id: 'toolu_sub1', text: 'letto il file' },
+      {
+        type: 'activity',
+        id: 'toolu_sub1',
+        kind: 'tool',
+        detail: 'Read {"file_path":"x.ts"}',
+      },
+      { type: 'finished', id: 'toolu_sub1', status: 'completed' },
+    ]);
+    expect(h.text).toEqual(['OK']); // the sub-agent's text is not the worker's
+  });
+
+  it('stop ends the process tree and reports the running sub-agent as interrupted', async () => {
+    const session = await claudeWithPolicy(['--subagent-hang']);
+    const h = handlers();
+    const turn = session.runTurn('usa un sotto-agente', h.value);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(h.subagents[0]).toMatchObject({ type: 'started' });
+    await turn.stop();
+    await expect(turn.done).rejects.toMatchObject({ kind: 'stopped' });
+    expect(h.subagents.at(-1)).toEqual({
+      type: 'finished',
+      id: 'toolu_sub1',
+      status: 'interrupted',
     });
   });
 

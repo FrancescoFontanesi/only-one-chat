@@ -10,6 +10,10 @@
 //        --hang (no result; a grandchild keeps the pipes open) | --exit-early
 //        --scenario=<fixture> (default turn-ok; turn-usage-limit is a 429 rejection)
 //        --permission-mode-reported=<m> (in the init event; default: the -p argument)
+//        --subagent[=<model>] (an Agent tool call, the sub-agent's messages with
+//        parent_tool_use_id and <model> (default: CLAUDE_CODE_SUBAGENT_MODEL), then
+//        its tool_result; shapes from the Claude Code docs, not yet recorded)
+//        --subagent-hang (the sub-agent never finishes)
 // Real Claude arguments (-p, --model, …) are accepted and ignored.
 
 import { spawn } from 'node:child_process';
@@ -86,6 +90,49 @@ input.on('line', (line) => {
         return;
       }
       continue;
+    }
+    if (
+      (flag('subagent') || option('subagent') || flag('subagent-hang')) &&
+      message.type === 'assistant'
+    ) {
+      const sessionId = message.session_id;
+      const model =
+        option('subagent') ?? process.env.CLAUDE_CODE_SUBAGENT_MODEL ?? 'claude-haiku-5-5';
+      const assistant = (parent, messageModel, content) => ({
+        type: 'assistant',
+        message: { role: 'assistant', model: messageModel, content },
+        parent_tool_use_id: parent,
+        session_id: sessionId,
+      });
+      send(
+        assistant(null, message.message.model, [
+          {
+            type: 'tool_use',
+            id: 'toolu_sub1',
+            name: 'Agent',
+            input: { description: 'Legge il file', prompt: 'Leggi x.ts', subagent_type: 'Explore' },
+          },
+        ]),
+      );
+      send(assistant('toolu_sub1', model, [{ type: 'text', text: 'letto il file' }]));
+      send(
+        assistant('toolu_sub1', model, [
+          { type: 'tool_use', id: 'toolu_read1', name: 'Read', input: { file_path: 'x.ts' } },
+        ]),
+      );
+      if (flag('subagent-hang')) {
+        setInterval(() => undefined, 60_000);
+        return;
+      }
+      send({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'toolu_sub1', content: 'fatto' }],
+        },
+        parent_tool_use_id: null,
+        session_id: sessionId,
+      });
     }
     if (flag('echo') && message.type === 'assistant') {
       message.message.content = [{ type: 'text', text: `ECHO: ${prompt}` }];

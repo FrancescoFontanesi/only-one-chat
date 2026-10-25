@@ -7,6 +7,10 @@
 //   CODEX_EXECUTABLE, CLAUDE_EXECUTABLE   native binaries (else searched on PATH)
 //   OOC_CODEX_MODEL=gpt-6-luna  OOC_CODEX_EFFORT=low
 //   OOC_CLAUDE_MODEL=haiku      OOC_CLAUDE_EFFORT=low
+//   Sub-agents (D13), each CLI's own, visible and held to these:
+//   OOC_CODEX_SUBAGENT_MODEL=gpt-6-luna         OOC_CODEX_SUBAGENT_EFFORT=low
+//   OOC_CLAUDE_SUBAGENT_MODEL=claude-haiku-5-5  OOC_CLAUDE_SUBAGENT_EFFORT=low
+//   OOC_MAX_SUBAGENTS=2
 //   OOC_LOG_DIR                 event logs, outside the repository
 //                               (default %LOCALAPPDATA%\only-one-chat\logs or
 //                               ~/.local/state/only-one-chat/logs)
@@ -15,9 +19,9 @@
 //                               redacted like the recorded fixtures (raw traffic
 //                               is never written: nothing is if a leak is found)
 // Arguments: --request "<text>" to skip the first question; --question for the
-// mini conversation: Codex only asks Claude one question (`<<<DELEGA @claude`),
-// with its native sub-agents switched off for the thread, and the run ends
-// with Claude's answer.
+// mini conversation: Codex only asks Claude one question (`<<<DELEGA @claude`)
+// and the run ends with Claude's answer. In both modes each CLI's own
+// sub-agents are allowed, shown with their label and held to the policy above.
 // Ctrl+C stops the loop (interrupts the running turn); a second one exits.
 
 import { writeFileSync } from 'node:fs';
@@ -51,6 +55,11 @@ const config = {
   codexEffort: env['OOC_CODEX_EFFORT'] ?? 'low',
   claudeModel: env['OOC_CLAUDE_MODEL'] ?? 'haiku',
   claudeEffort: env['OOC_CLAUDE_EFFORT'] ?? 'low',
+  codexSubagentModel: env['OOC_CODEX_SUBAGENT_MODEL'] ?? 'gpt-6-luna',
+  codexSubagentEffort: env['OOC_CODEX_SUBAGENT_EFFORT'] ?? 'low',
+  claudeSubagentModel: env['OOC_CLAUDE_SUBAGENT_MODEL'] ?? 'claude-haiku-5-5',
+  claudeSubagentEffort: env['OOC_CLAUDE_SUBAGENT_EFFORT'] ?? 'low',
+  maxSubagents: Number(env['OOC_MAX_SUBAGENTS'] ?? '2'),
   allowUnverifiedProvider: env['OOC_ALLOW_UNVERIFIED_PROVIDER'] === '1',
   logDir:
     env['OOC_LOG_DIR'] ??
@@ -139,6 +148,11 @@ function writeTrace(path: string, scenario: string): void {
   process.stdout.write(`Codex trace (redacted): ${path}\n`);
 }
 
+/** Names a sub-agent of the other CLI must never take (its product and model names). */
+const CLAUDE_NAMES = ['claude', 'anthropic', 'haiku', 'sonnet', 'opus', 'fable'];
+const CODEX_NAMES = ['codex', 'openai', 'chatgpt', 'gpt', 'luna', 'sol'];
+const OTHER_AGENT_NAMES = ['gemini', 'antigravity'];
+
 const bar = '─'.repeat(72);
 let streaming: Role | undefined;
 
@@ -172,6 +186,26 @@ function onEvent(event: ThreadEvent): void {
     case 'delegation_invalid':
       endStream();
       process.stdout.write(`✖ blocco di delega non valido:\n  - ${event.errors.join('\n  - ')}\n`);
+      break;
+    case 'subagent':
+      endStream();
+      process.stdout.write(`  ↳ ${event.label}\n`);
+      break;
+    case 'subagent_text':
+      streaming = event.role;
+      process.stdout.write(event.text);
+      break;
+    case 'subagent_activity':
+      endStream();
+      process.stdout.write(`    · ${event.kind}: ${event.detail.slice(0, 160)}\n`);
+      break;
+    case 'subagent_violation':
+      endStream();
+      process.stdout.write(`✖ ${event.message}\n`);
+      break;
+    case 'attribution_warning':
+      endStream();
+      process.stdout.write(`⚠ attribuzione: ${event.message}\n`);
       break;
     case 'error':
       endStream();
@@ -210,6 +244,20 @@ async function main(): Promise<void> {
     log,
     onEvent,
     ...(question ? { mode: 'question' as const } : {}),
+    subagents: {
+      orchestrator: {
+        model: config.codexSubagentModel,
+        effort: config.codexSubagentEffort,
+        maxConcurrent: config.maxSubagents,
+        forbiddenNames: CLAUDE_NAMES.concat(OTHER_AGENT_NAMES),
+      },
+      worker: {
+        model: config.claudeSubagentModel,
+        effort: config.claudeSubagentEffort,
+        maxConcurrent: config.maxSubagents,
+        forbiddenNames: CODEX_NAMES.concat(OTHER_AGENT_NAMES),
+      },
+    },
     orchestrator: createCodexAgentFactory({
       executable: codexExecutable,
       cwd: workspace,
@@ -217,7 +265,6 @@ async function main(): Promise<void> {
       effort: config.codexEffort,
       allowUnverifiedProvider: config.allowUnverifiedProvider,
       requestTimeoutMs: 120_000,
-      ...(question ? { nativeSubagents: false } : {}),
       ...(env['OOC_CODEX_TRACE']
         ? {
             onWire: (dir: 'client' | 'server', message: unknown) => {

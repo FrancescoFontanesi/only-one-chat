@@ -38,14 +38,13 @@ export type {
   AgentApprovalRequest,
   AgentFactory,
   AgentIdentity,
+  AgentSubagentEvent,
   AgentSubagentOptions,
   AgentSession,
   AgentTurn,
   AgentTurnHandlers,
 } from './agent.js';
 export {
-  CodexSubagentError,
-  NO_SUBAGENTS_CONFIG,
   subagentThreadConfig,
   createCodexAgentFactory,
   declineResponse,

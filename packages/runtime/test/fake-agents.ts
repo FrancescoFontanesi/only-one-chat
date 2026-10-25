@@ -9,12 +9,13 @@ import type {
   AgentTurn,
   AgentTurnHandlers,
   ApprovalDecision,
+  SubagentEvent,
 } from '../src/index.js';
 
 export type Step =
-  | { readonly answer: string }
+  | { readonly answer: string; readonly subagents?: readonly SubagentEvent[] }
   | { readonly approval: string; readonly answer: string }
-  | { readonly hang: true };
+  | { readonly hang: true; readonly subagents?: readonly SubagentEvent[] };
 
 export interface FakeAgent {
   readonly factory: AgentFactory;
@@ -49,10 +50,16 @@ export function fakeAgent(
     prompts.push(prompt);
     const step = steps[next++];
     let stop: () => void = () => undefined;
+    const stopsAtStart = stops;
     const done = (async () => {
       started();
       startedPromise = new Promise<void>((resolve) => (started = resolve));
       if (step === undefined) throw new Error(`${name}: no scripted step for turn ${String(next)}`);
+      // Sub-agent events arrive after the turn has started, as from a CLI.
+      await Promise.resolve();
+      for (const event of 'subagents' in step ? (step.subagents ?? []) : []) {
+        handlers.onSubagent?.(event);
+      }
       if ('hang' in step) {
         await new Promise<void>((_resolve, reject) => {
           stop = () => {
@@ -61,6 +68,7 @@ export function fakeAgent(
         });
         throw new Error('unreachable');
       }
+      if (stops > stopsAtStart) throw new Error(`${name} turn interrupted`);
       if ('approval' in step) {
         decisions.push(
           await handlers.onApprovalRequest({ kind: 'command', summary: step.approval }),
@@ -79,6 +87,7 @@ export function fakeAgent(
       stop() {
         stops++;
         stop();
+        stop = () => undefined;
         return Promise.resolve();
       },
     };

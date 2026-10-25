@@ -7,10 +7,39 @@ export interface AgentApprovalRequest {
   readonly summary: string;
 }
 
+/** What an agent reports about its own sub-agents (runtime: SubagentEvent). */
+export type AgentSubagentEvent =
+  | {
+      readonly type: 'started';
+      readonly id: string;
+      readonly name: string;
+      readonly model: string | null;
+      readonly effort: string | null;
+    }
+  | {
+      readonly type: 'identified';
+      readonly id: string;
+      readonly model: string | null;
+      readonly effort: string | null;
+    }
+  | { readonly type: 'text'; readonly id: string; readonly text: string }
+  | {
+      readonly type: 'activity';
+      readonly id: string;
+      readonly kind: string;
+      readonly detail: string;
+    }
+  | {
+      readonly type: 'finished';
+      readonly id: string;
+      readonly status: 'completed' | 'interrupted' | 'failed';
+    };
+
 export interface AgentTurnHandlers {
   onText(text: string): void;
   onApprovalRequest(request: AgentApprovalRequest): Promise<'decline'>;
   onActivity?(activity: { readonly kind: string; readonly detail: string }): void;
+  onSubagent?(event: AgentSubagentEvent): void;
 }
 
 /** Who answered, as observed on the wire: the runtime writes the label from it. */

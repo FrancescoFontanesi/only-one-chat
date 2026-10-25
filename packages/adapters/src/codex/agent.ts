@@ -5,11 +5,13 @@
 // iteration; the protocol answer is built here. Shapes: codex-rs
 // app-server-protocol v2 (thread.rs, turn.rs, item.rs), docs/codex-app-server.md.
 //
-// Native sub-agents (Codex's own multi-agent tools) bypass the runtime: no
-// interception, their own model and effort. With `nativeSubagents: false` they
-// are switched off for this thread only (thread/start `config`, the user's
-// configuration is untouched) and, as a safety net, a turn that still starts
-// one is interrupted and fails with CodexSubagentError.
+// Native sub-agents (Codex's own multi-agent tools) are allowed and held to the
+// runtime's policy with per-thread overrides (subagentThreadConfig, D13). They
+// cannot be approved before they start, only seen: `subAgentActivity` on the
+// parent thread announces one with its resolved model and effort, and its own
+// thread's messages and commands arrive on the same connection. Each becomes a
+// sub-agent event for the runtime, which checks the policy; stop() interrupts
+// the sub-agents' turns too.
 
 import type {
   AgentFactory,
@@ -34,8 +36,6 @@ export interface CodexAgentConfig extends Omit<
   readonly effort?: string;
   /** Time allowed for an interrupted turn to report completion, default 10 s. */
   readonly interruptTimeoutMs?: number;
-  /** False: no native sub-agents in this thread (see above). Default: the user's configuration. */
-  readonly nativeSubagents?: boolean;
 }
 
 /**
@@ -81,34 +81,14 @@ export function subagentThreadConfig(policy: AgentSubagentOptions): Record<strin
   };
 }
 
-/** Per-thread overrides that switch the multi-agent tools off (`codex features list`). */
-export const NO_SUBAGENTS_CONFIG: Readonly<Record<string, boolean>> = {
-  'features.multi_agent': false,
-  'features.multi_agent_v2': false,
-};
-
-/** Thread items that mean Codex is starting or driving a sub-agent of its own. */
-const SUBAGENT_ITEMS = new Set(['subAgentActivity', 'collabAgentToolCall']);
-
-export class CodexSubagentError extends Error {
-  override readonly name = 'CodexSubagentError';
-
-  readonly itemType: string;
-
-  // A plain field rather than a parameter property: runnable with Node's type stripping.
-  constructor(itemType: string) {
-    super(
-      `Codex started a native sub-agent (${itemType}) although they are disabled for this ` +
-        'thread; the turn was interrupted',
-    );
-    this.itemType = itemType;
-  }
-}
-
 type Json = Record<string, unknown>;
 
 function isRecord(value: unknown): value is Json {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
 }
 
 /** Answer that declines what an approval request asks for, per request method. */
@@ -137,6 +117,20 @@ function summarize(method: string, params: unknown): string {
   return parts.length > 0 ? parts.join(' — ') : method;
 }
 
+/** Commands and MCP calls, the same for the parent and its sub-agents. */
+function itemActivity(item: Json): { kind: string; detail: string } | undefined {
+  if (item['type'] === 'commandExecution') {
+    return { kind: 'command', detail: String(item['command']) };
+  }
+  if (item['type'] === 'mcpToolCall') {
+    return {
+      kind: 'mcp_tool',
+      detail: `${String(item['server'])}/${String(item['tool'])} ${JSON.stringify(item['arguments'])}`,
+    };
+  }
+  return undefined;
+}
+
 type TurnOutcome = { text: string; identity: AgentIdentity } | Error;
 
 interface RunningTurn {
@@ -144,24 +138,78 @@ interface RunningTurn {
   turnId?: string;
   readonly messages: string[];
   settle(outcome: TurnOutcome): void;
-  /** Interrupts the turn and fails it with `error`. */
-  abort(error: Error): Promise<void>;
 }
+
+/** A sub-agent seen during the current turn, by its thread id. */
+interface Child {
+  turnId?: string;
+  finished: boolean;
+}
+
+const FINISHED: Readonly<Record<string, 'completed' | 'interrupted' | 'failed'>> = {
+  completed: 'completed',
+  interrupted: 'interrupted',
+  failed: 'failed',
+};
 
 export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory {
   return async ({ instructions, subagents }): Promise<AgentSession> => {
-    const {
-      cwd,
-      model,
-      effort,
-      interruptTimeoutMs = 10_000,
-      nativeSubagents,
-      ...sessionOptions
-    } = config;
-    const subagentsOff = nativeSubagents === false;
+    const { cwd, model, effort, interruptTimeoutMs = 10_000, ...sessionOptions } = config;
     let current: RunningTurn | undefined;
     let threadId = '';
     let identity: AgentIdentity = { provider: 'Codex', model: '', effort: null, sessionId: '' };
+    const children = new Map<string, Child>();
+
+    function finishChild(
+      handlers: AgentTurnHandlers,
+      id: string,
+      status: 'completed' | 'interrupted' | 'failed',
+    ): void {
+      const child = children.get(id);
+      if (!child || child.finished) return;
+      child.finished = true;
+      handlers.onSubagent?.({ type: 'finished', id, status });
+    }
+
+    /** Notifications of a sub-agent's own thread. */
+    function onChildNotification(
+      turn: RunningTurn,
+      id: string,
+      method: string,
+      params: Json,
+    ): void {
+      const child = children.get(id);
+      if (!child) return;
+      if (method === 'turn/started' && isRecord(params['turn'])) {
+        const childTurn = stringOrNull(params['turn']['id']);
+        if (childTurn !== null) child.turnId = childTurn;
+      } else if (method === 'item/agentMessage/delta' && typeof params['delta'] === 'string') {
+        turn.handlers.onSubagent?.({ type: 'text', id, text: params['delta'] });
+      } else if (method === 'item/started' && isRecord(params['item'])) {
+        const activity = itemActivity(params['item']);
+        if (activity) turn.handlers.onSubagent?.({ type: 'activity', id, ...activity });
+      } else if (method === 'turn/completed' && isRecord(params['turn'])) {
+        finishChild(turn.handlers, id, FINISHED[String(params['turn']['status'])] ?? 'failed');
+      }
+    }
+
+    /** `subAgentActivity` on the parent thread: a sub-agent started, ended or was used. */
+    function onSubagentActivity(turn: RunningTurn, item: Json): void {
+      const id = String(item['agentThreadId']);
+      const kind = item['kind'];
+      if (kind === 'started' && !children.has(id)) {
+        children.set(id, { finished: false });
+        turn.handlers.onSubagent?.({
+          type: 'started',
+          id,
+          name: String(item['agentPath']),
+          model: stringOrNull(item['model']),
+          effort: stringOrNull(item['reasoningEffort']),
+        });
+      } else if (kind === 'completed' || kind === 'interrupted') {
+        finishChild(turn.handlers, id, kind);
+      }
+    }
 
     const session = await connectCodex({
       ...sessionOptions,
@@ -169,19 +217,12 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
       onNotification(method, params) {
         const turn = current;
         if (!turn || !isRecord(params)) return;
-        // Checked on every thread: a sub-agent's own items carry its thread id.
-        if (method === 'item/started' && isRecord(params['item'])) {
-          const type = String(params['item']['type']);
-          if (SUBAGENT_ITEMS.has(type)) {
-            turn.handlers.onActivity?.({
-              kind: 'subagent',
-              detail: JSON.stringify(params['item']),
-            });
-            if (subagentsOff) void turn.abort(new CodexSubagentError(type));
-            return;
-          }
+        const notifiedThread = params['threadId'];
+        if (typeof notifiedThread === 'string' && notifiedThread !== threadId) {
+          onChildNotification(turn, notifiedThread, method, params);
+          return;
         }
-        if (params['threadId'] !== threadId) return;
+        if (notifiedThread !== threadId) return;
         if (method === 'item/agentMessage/delta' && typeof params['delta'] === 'string') {
           turn.handlers.onText(params['delta']);
         } else if (method === 'item/completed' && isRecord(params['item'])) {
@@ -191,13 +232,12 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
           }
         } else if (method === 'item/started' && isRecord(params['item'])) {
           const item = params['item'];
-          if (item['type'] === 'commandExecution') {
-            turn.handlers.onActivity?.({ kind: 'command', detail: String(item['command']) });
-          } else if (item['type'] === 'mcpToolCall') {
-            turn.handlers.onActivity?.({
-              kind: 'mcp_tool',
-              detail: `${String(item['server'])}/${String(item['tool'])} ${JSON.stringify(item['arguments'])}`,
-            });
+          if (item['type'] === 'subAgentActivity') onSubagentActivity(turn, item);
+          else if (item['type'] === 'collabAgentToolCall') {
+            turn.handlers.onActivity?.({ kind: 'collab', detail: String(item['tool']) });
+          } else {
+            const activity = itemActivity(item);
+            if (activity) turn.handlers.onActivity?.(activity);
           }
         } else if (method === 'error' && isRecord(params['error'])) {
           turn.handlers.onActivity?.({ kind: 'error', detail: String(params['error']['message']) });
@@ -236,11 +276,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         developerInstructions: instructions,
         ephemeral: true,
         ...(model ? { model } : {}),
-        ...(subagentsOff
-          ? { config: NO_SUBAGENTS_CONFIG }
-          : subagents
-            ? { config: subagentThreadConfig(subagents) }
-            : {}),
+        ...(subagents ? { config: subagentThreadConfig(subagents) } : {}),
       });
       const response = isRecord(started) ? started : {};
       const thread = isRecord(response['thread']) ? response['thread'] : {};
@@ -263,8 +299,20 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
     }
     const resolvedModel = model ?? 'default model';
 
+    /** Interrupts the turn and every sub-agent turn still running. */
+    async function interruptAll(turn: RunningTurn): Promise<void> {
+      const targets = [...children]
+        .filter(([, child]) => !child.finished && child.turnId !== undefined)
+        .map(([id, child]) => ({ threadId: id, turnId: child.turnId }));
+      if (turn.turnId !== undefined) targets.push({ threadId, turnId: turn.turnId });
+      await Promise.all(
+        targets.map((target) => session.request('turn/interrupt', target).catch(() => undefined)),
+      );
+    }
+
     function runTurn(prompt: string, handlers: AgentTurnHandlers): AgentTurn {
       if (current) throw new Error('A Codex turn is already running in this session');
+      children.clear();
       let settle!: (outcome: TurnOutcome) => void;
       const done = new Promise<{ text: string; identity: AgentIdentity }>((resolve, reject) => {
         settle = (outcome) => {
@@ -273,19 +321,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
           else resolve(outcome);
         };
       });
-      const turn: RunningTurn = {
-        handlers,
-        messages: [],
-        settle,
-        async abort(error) {
-          if (turn.turnId !== undefined) {
-            await session
-              .request('turn/interrupt', { threadId, turnId: turn.turnId })
-              .catch(() => undefined);
-          }
-          settle(error);
-        },
-      };
+      const turn: RunningTurn = { handlers, messages: [], settle };
       current = turn;
       session
         .request('turn/start', {
@@ -308,16 +344,13 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         done,
         async stop() {
           if (current !== turn) return;
-          if (turn.turnId !== undefined) {
-            await session
-              .request('turn/interrupt', { threadId, turnId: turn.turnId })
-              .catch(() => undefined);
-          }
+          await interruptAll(turn);
           const timer = setTimeout(() => {
             settle(new Error('Codex turn interrupted (no completion reported)'));
           }, interruptTimeoutMs);
           await done.catch(() => undefined);
           clearTimeout(timer);
+          for (const id of children.keys()) finishChild(turn.handlers, id, 'interrupted');
         },
       };
     }

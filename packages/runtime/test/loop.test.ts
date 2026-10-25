@@ -422,6 +422,140 @@ describe('question mode', () => {
   });
 });
 
+describe('sub-agents (D13)', () => {
+  const policy = {
+    model: 'gpt-6-luna',
+    effort: 'low',
+    maxConcurrent: 2,
+    forbiddenNames: ['claude', 'haiku', 'gemini', 'opus'],
+  };
+  const started = (overrides: Partial<{ name: string; model: string; effort: string }> = {}) =>
+    ({
+      type: 'started',
+      id: 'sub-1',
+      name: '/root/explorer',
+      model: 'gpt-6-luna',
+      effort: 'low',
+      ...overrides,
+    }) as const;
+  const withPolicy = { subagents: { orchestrator: policy } };
+
+  it('shows a conforming sub-agent with its own label and does not interrupt', async () => {
+    const codex = fakeAgent('Codex', [
+      {
+        answer: 'Fatto con un sotto-agente interno.',
+        subagents: [
+          started(),
+          { type: 'text', id: 'sub-1', text: 'letto il file' },
+          { type: 'activity', id: 'sub-1', kind: 'command', detail: 'Get-Content x.ts' },
+          { type: 'finished', id: 'sub-1', status: 'completed' },
+        ],
+      },
+    ]);
+    const claude = fakeAgent('Claude', []);
+    const { running, harness } = await loop(codex, claude, [], [], withPolicy);
+    expect(await running.done).toMatchObject({ status: 'completed' });
+    expect(codex.stops).toBe(0);
+    const labels = harness.events.flatMap((e) => (e.type === 'subagent' ? [e.label] : []));
+    expect(labels).toEqual([
+      'Codex › /root/explorer · gpt-6-luna · effort low · in corso',
+      'Codex › /root/explorer · gpt-6-luna · effort low · completato',
+    ]);
+    expect(harness.events).toContainEqual({
+      type: 'subagent_text',
+      role: 'orchestrator',
+      id: 'sub-1',
+      text: 'letto il file',
+    });
+    expect(logged().map((e) => e.type)).toContain('subagent_activity');
+  });
+
+  it.each([
+    [
+      'a model other than the imposed one',
+      started({ model: 'gpt-6.1-sol' }),
+      /modello gpt-6.1-sol invece di gpt-6-luna/,
+    ],
+    [
+      'an effort other than the imposed one',
+      started({ effort: 'medium' }),
+      /effort medium invece di low/,
+    ],
+    [
+      'the name of an external agent',
+      started({ name: '/root/claude_review' }),
+      /agente esterno "claude"/,
+    ],
+  ])('interrupts the turn for %s, with a clear error', async (_case, event, reason) => {
+    const codex = fakeAgent('Codex', [{ answer: 'Risposta.', subagents: [event] }]);
+    const claude = fakeAgent('Claude', []);
+    const { running, harness } = await loop(codex, claude, [], [], withPolicy);
+    const outcome = await running.done;
+    expect(outcome).toMatchObject({ status: 'failed', error: reason });
+    expect(outcome).toMatchObject({
+      error: /Sotto-agente non conforme di Codex: .*Turno interrotto/,
+    });
+    expect(codex.stops).toBe(1);
+    expect(harness.events.some((e) => e.type === 'subagent_violation')).toBe(true);
+  });
+
+  it('checks the model a sub-agent reports later, and too many at once', async () => {
+    const late = fakeAgent('Codex', [
+      {
+        answer: 'Risposta.',
+        subagents: [
+          { ...started(), model: null },
+          { type: 'identified', id: 'sub-1', model: 'claude-opus-5-5', effort: null },
+        ],
+      },
+    ]);
+    const { running } = await loop(late, fakeAgent('Claude', []), [], [], withPolicy);
+    expect(await running.done).toMatchObject({ error: /modello claude-opus-5-5/ });
+
+    const many = fakeAgent('Codex', [
+      {
+        answer: 'Risposta.',
+        subagents: ['a', 'b', 'c'].map((id) => ({ ...started(), id, name: `/root/${id}` })),
+      },
+    ]);
+    const second = await loop(many, fakeAgent('Claude', []), [], [], withPolicy);
+    expect(await second.running.done).toMatchObject({ error: /3 sotto-agenti contemporanei/ });
+  });
+
+  it('warns when the conclusion credits an external agent that did not run', async () => {
+    const codex = fakeAgent('Codex', [{ answer: 'La verifica di Claude conferma le proposte.' }]);
+    const claude = fakeAgent('Claude', []);
+    const { running, harness } = await loop(codex, claude, [], [], withPolicy);
+    expect(await running.done).toMatchObject({ status: 'completed' });
+    const warnings = harness.events.filter((e) => e.type === 'attribution_warning');
+    expect(warnings).toMatchObject([{ agent: 'claude', message: /non è stato eseguito/ }]);
+    expect(logged().map((e) => e.type)).toContain('attribution_warning');
+  });
+
+  it('does not warn once the worker has really answered', async () => {
+    const codex = fakeAgent('Codex', [
+      { answer: delegationBlock() },
+      { answer: 'Claude conferma le proposte.' },
+    ]);
+    const claude = fakeAgent('Claude', [{ answer: 'Confermate.' }]);
+    const { running, harness } = await loop(codex, claude, [], [], withPolicy);
+    expect(await running.done).toMatchObject({ status: 'completed', exchanges: 1 });
+    expect(harness.events.some((e) => e.type === 'attribution_warning')).toBe(false);
+  });
+
+  it('stop during a sub-agent interrupts the turn that runs it', async () => {
+    const codex = fakeAgent('Codex', [{ hang: true, subagents: [started()] }]);
+    const claude = fakeAgent('Claude', []);
+    const { running, harness } = await loop(codex, claude, [], [], withPolicy);
+    await codex.turnStarted();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(harness.events.some((e) => e.type === 'subagent')).toBe(true);
+    await running.stop();
+    expect(await running.done).toEqual({ status: 'stopped' });
+    expect(codex.stops).toBe(1);
+  });
+});
+
 describe('event log', () => {
   it('refuses a path inside the workspace, or a relative one', async () => {
     await expect(

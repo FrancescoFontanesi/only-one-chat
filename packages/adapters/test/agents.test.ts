@@ -241,6 +241,10 @@ describe('Codex agent session', () => {
       expect(config[`features.multi_agent_v2.${hint}`]).toContain('REGOLE DEL RUNTIME');
     }
     expect(config['features.multi_agent_v2.multi_agent_mode_hint_text']).toMatch(/esplicitamente/);
+    // Ephemeral threads have no rollout to fork from (real check, second turn).
+    expect(config['features.multi_agent_v2.root_agent_usage_hint_text']).toContain(
+      'fork_turns: "none"',
+    );
     expect(
       Object.keys(config).every((key) => /^(agents|features\.multi_agent_v2)\./.test(key)),
     ).toBe(true);
@@ -433,39 +437,48 @@ describe('Claude agent session', () => {
     forbiddenNames: ['codex'],
   };
 
+  // Real stream (turn-subagent.jsonl): Claude Code 2.1.308, Haiku, one sub-agent.
+  const SUB = 'toolu_01S6DpE6xyR9sryLm3G2Zfrp';
+
   it('reports a sub-agent from the Agent tool call, its messages and the model that ran it', async () => {
-    const session = await claudeWithPolicy(['--subagent']);
+    const session = await claudeWithPolicy(['--scenario=turn-subagent']);
     const h = handlers();
     const { text } = await session.runTurn('usa un sotto-agente', h.value).done;
-    expect(text).toBe('OK');
-    expect(h.subagents).toEqual([
-      { type: 'started', id: 'toolu_sub1', name: 'Explore', model: null, effort: null },
-      { type: 'identified', id: 'toolu_sub1', model: 'claude-haiku-5-5', effort: null },
-      { type: 'text', id: 'toolu_sub1', text: 'letto il file' },
-      {
-        type: 'activity',
-        id: 'toolu_sub1',
-        kind: 'tool',
-        detail: 'Read {"file_path":"x.ts"}',
-      },
-      { type: 'finished', id: 'toolu_sub1', status: 'completed' },
-    ]);
-    expect(h.text).toEqual(['OK']); // the sub-agent's text is not the worker's
+    expect(text).toMatch(/^Il sotto-agente \(haiku-file-reader\) riporta/);
+    expect(h.subagents[0]).toEqual({
+      type: 'started',
+      id: SUB,
+      name: 'haiku-file-reader',
+      model: null,
+      effort: null,
+    });
+    expect(h.subagents[1]).toEqual({
+      type: 'identified',
+      id: SUB,
+      model: 'claude-haiku-5-5',
+      effort: null,
+    });
+    const tools = h.subagents.flatMap((e) =>
+      e.type === 'activity' ? [e.detail.split(' ')[0]] : [],
+    );
+    expect(tools).toEqual(['Grep', 'Read']);
+    expect(h.subagents.some((e) => e.type === 'text' && e.text.includes('withoutApiKeys'))).toBe(
+      true,
+    );
+    expect(h.subagents.at(-1)).toEqual({ type: 'finished', id: SUB, status: 'completed' });
+    // The sub-agent's text is not the worker's own.
+    expect(h.text.join('')).not.toContain('(F:');
   });
 
   it('stop ends the process tree and reports the running sub-agent as interrupted', async () => {
-    const session = await claudeWithPolicy(['--subagent-hang']);
+    const session = await claudeWithPolicy(['--scenario=turn-subagent', '--subagent-hang']);
     const h = handlers();
     const turn = session.runTurn('usa un sotto-agente', h.value);
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(h.subagents[0]).toMatchObject({ type: 'started' });
     await turn.stop();
     await expect(turn.done).rejects.toMatchObject({ kind: 'stopped' });
-    expect(h.subagents.at(-1)).toEqual({
-      type: 'finished',
-      id: 'toolu_sub1',
-      status: 'interrupted',
-    });
+    expect(h.subagents.at(-1)).toEqual({ type: 'finished', id: SUB, status: 'interrupted' });
   });
 
   it('stops a turn whose init reports another permission mode', async () => {

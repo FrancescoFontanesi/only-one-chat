@@ -131,6 +131,14 @@ export interface ClaudeTurnOptions {
   /** Arguments placed before Claude's own, for script-based executables (tests). */
   readonly launcherArgs?: readonly string[];
   readonly onEvent?: (event: ClaudeEvent) => void;
+  /**
+   * Every stream-json object, in order: the prompt sent and each line received.
+   * For diagnostics and transcripts; nothing here is redacted.
+   */
+  readonly onWire?: (
+    direction: 'client' | 'server',
+    message: Readonly<Record<string, unknown>>,
+  ) => void;
   /** Time allowed for a clean exit after the result or stop(), default 5 s. */
   readonly shutdownTimeoutMs?: number;
   /**
@@ -347,6 +355,7 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
           return; // not part of the stream-json protocol
         }
         if (!isRecord(message)) return;
+        options.onWire?.('server', message);
         const type = message['type'];
         if (type === 'system' && message['subtype'] === 'init') {
           sessionId = typeof message['session_id'] === 'string' ? message['session_id'] : '';
@@ -460,9 +469,9 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
         });
       });
 
-      spawned.stdin.write(
-        `${JSON.stringify({ type: 'user', message: { role: 'user', content: options.prompt } })}\n`,
-      );
+      const prompt = { type: 'user', message: { role: 'user', content: options.prompt } };
+      options.onWire?.('client', prompt);
+      spawned.stdin.write(`${JSON.stringify(prompt)}\n`);
     });
   })();
 

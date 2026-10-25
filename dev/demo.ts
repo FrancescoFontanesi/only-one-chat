@@ -24,8 +24,7 @@
 // sub-agents are allowed, shown with their label and held to the policy above.
 // Ctrl+C stops the loop (interrupts the running turn); a second one exits.
 
-import { writeFileSync } from 'node:fs';
-import { homedir, hostname, tmpdir, userInfo } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
@@ -42,11 +41,7 @@ import {
   type Role,
   type ThreadEvent,
 } from '../packages/runtime/src/index.js';
-import {
-  findLeaks,
-  projectCodexConfig,
-  redactTranscript,
-} from '../packages/adapters/dev/redact.js';
+import { Trace, codexVersion } from './trace.js';
 
 const env = process.env;
 const workspace = process.cwd();
@@ -102,50 +97,20 @@ async function readBlock(title: string): Promise<string> {
 }
 
 /** Codex wire traffic for OOC_CODEX_TRACE, kept in memory until it is redacted. */
-const trace: { type: 'message'; dir: 'client' | 'server'; atMs: number; message: unknown }[] = [];
-const traceStarted = Date.now();
+const trace = new Trace();
 
 function writeTrace(path: string, scenario: string): void {
-  const init = trace
-    .map(
-      (entry) =>
-        (entry.message as { result?: { codexHome?: unknown; userAgent?: unknown } }).result,
-    )
-    .find((result) => typeof result?.userAgent === 'string');
-  const codexHome = typeof init?.codexHome === 'string' ? init.codexHome : undefined;
-  const userAgent = typeof init?.userAgent === 'string' ? init.userAgent : 'unknown';
-  const literals = new Map<string, string>();
-  const addPath = (value: string, placeholder: string) => {
-    for (const form of [value, value.replaceAll('\\', '/')]) literals.set(form, placeholder);
-  };
-  addPath(workspace, '<WORKSPACE>');
-  if (codexHome) addPath(codexHome, '<CODEX_HOME>');
-  addPath(tmpdir(), '<TMP>');
-  addPath(homedir(), '<HOME>');
-  literals.set(userInfo().username, '<user>');
-  literals.set(hostname(), '<host>');
-  const meta = {
-    type: 'meta',
-    scenario,
-    codexVersion: /\/(\d+\.\d+\.\d+[\w.-]*)/.exec(userAgent)?.[1] ?? 'unknown',
-    userAgent,
-    recordedAt: new Date().toISOString(),
-    platform: `${process.platform}-${process.arch}`,
-    commands: { recorder: 'OOC_CODEX_TRACE=<file> pnpm demo', model: config.codexModel },
-  };
-  const entries = trace.map((entry) => ({ ...entry, message: projectCodexConfig(entry.message) }));
-  const text = `${redactTranscript([meta, ...entries], [...literals])
-    .map((entry) => JSON.stringify(entry))
-    .join('\n')}\n`;
-  const leaks = findLeaks(text, [userInfo().username, hostname()]);
-  if (leaks.length > 0) {
-    process.stderr.write(
-      `demo: Codex trace not written, possible leaks: ${leaks.map((leak) => leak.kind).join(', ')}\n`,
-    );
-    return;
-  }
-  writeFileSync(path, text);
-  process.stdout.write(`Codex trace (redacted): ${path}\n`);
+  const written = trace.write(
+    path,
+    {
+      scenario,
+      ...codexVersion(trace),
+      platform: `${process.platform}-${process.arch}`,
+      commands: { recorder: 'OOC_CODEX_TRACE=<file> pnpm demo', model: config.codexModel },
+    },
+    workspace,
+  );
+  if (written) process.stdout.write(`Codex trace (redacted): ${path}\n`);
 }
 
 /** Names a sub-agent of the other CLI must never take (its product and model names). */
@@ -268,7 +233,7 @@ async function main(): Promise<void> {
       ...(env['OOC_CODEX_TRACE']
         ? {
             onWire: (dir: 'client' | 'server', message: unknown) => {
-              trace.push({ type: 'message', dir, atMs: Date.now() - traceStarted, message });
+              trace.add(dir, message);
             },
           }
         : {}),

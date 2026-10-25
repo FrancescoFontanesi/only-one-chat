@@ -1,4 +1,4 @@
-// Behaviour of the Codex App Server client against an independent fake server
+﻿// Behaviour of the Codex App Server client against an independent fake server
 // running as a real child process (test/fixtures/fake-app-server.mjs).
 
 import { copyFileSync, linkSync, mkdtempSync, rmSync } from 'node:fs';
@@ -11,13 +11,24 @@ import {
   startAppServer,
   type AppServerClient,
   type AppServerOptions,
+  type ForcedShutdownReport,
 } from '../src/index.js';
+import { selectOrphans } from '../src/codex/process-tree.js';
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-app-server.mjs');
 
 const started: AppServerClient[] = [];
+/** Grandchildren to kill if a test fails before close() deals with them. */
+const strays: number[] = [];
 afterEach(async () => {
   await Promise.all(started.splice(0).map((client) => client.close()));
+  for (const pid of strays.splice(0)) {
+    try {
+      process.kill(pid);
+    } catch {
+      // already gone, as expected
+    }
+  }
 });
 
 async function start(
@@ -100,7 +111,7 @@ describe('handshake', () => {
 describe('framing', () => {
   it('reassembles a message split across many chunks, including split UTF-8 sequences', async () => {
     const client = await start();
-    const value = 'àèìòù € 😀 — split across chunks';
+    const value = 'Ã Ã¨Ã¬Ã²Ã¹ â‚¬ ðŸ˜€ â€” split across chunks';
     expect(await client.request('test/chunked', { value })).toEqual({ value });
   });
 
@@ -249,9 +260,85 @@ describe('close', () => {
   });
 
   it('kills a server that ignores end-of-input once the shutdown timeout expires', async () => {
-    const client = await start({ shutdownTimeoutMs: 200 }, ['--ignore-eof']);
+    const reports: ForcedShutdownReport[] = [];
+    const client = await start(
+      { shutdownTimeoutMs: 200, onForcedShutdown: (report) => reports.push(report) },
+      ['--ignore-eof'],
+    );
     await client.close();
     expect(isAlive(client.pid)).toBe(false);
+    expect(reports).toEqual([{ reason: 'exit-timeout', terminated: [client.pid], errors: [] }]);
+  });
+
+  it('kills the whole tree of a server that ignores end-of-input', async () => {
+    const reports: ForcedShutdownReport[] = [];
+    const client = await start(
+      { shutdownTimeoutMs: 300, onForcedShutdown: (report) => reports.push(report) },
+      ['--ignore-eof'],
+    );
+    const { pid: grandchild } = (await client.request('test/spawnGrandchild')) as { pid: number };
+    strays.push(grandchild);
+    expect(isAlive(grandchild)).toBe(true);
+
+    await client.close();
+    expect(isAlive(client.pid)).toBe(false);
+    expect(isAlive(grandchild)).toBe(false);
+    expect(reports.map((report) => report.reason)).toEqual(['exit-timeout']);
+  });
+
+  it('terminates processes that keep the pipes open after a clean exit, and reports it', async () => {
+    const reports: ForcedShutdownReport[] = [];
+    const client = await start({
+      shutdownTimeoutMs: 300,
+      onForcedShutdown: (report) => reports.push(report),
+    });
+    const { pid: grandchild } = (await client.request('test/spawnGrandchild')) as { pid: number };
+    strays.push(grandchild);
+
+    await client.close(); // the server exits at once; the grandchild holds stdout and stderr
+    expect(isAlive(client.pid)).toBe(false);
+    expect(isAlive(grandchild)).toBe(false);
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({ reason: 'stdio-open', errors: [] });
+    // Windows names each orphan it terminated; POSIX signals the process group as a whole.
+    if (process.platform === 'win32') expect(reports[0]?.terminated).toContain(grandchild);
+    else expect(reports[0]?.terminated).toEqual([]);
+  });
+
+  it('closes a server that already exited without errors or any termination', async () => {
+    const reports: ForcedShutdownReport[] = [];
+    let exited!: () => void;
+    const exit = new Promise<void>((resolve) => (exited = resolve));
+    const client = await start({
+      onExit: () => {
+        exited();
+      },
+      onForcedShutdown: (report) => reports.push(report),
+    });
+    void client.request('test/exit', { code: 0 }).catch(() => undefined);
+    await exit;
+
+    await client.close();
+    await client.close();
+    expect(reports).toEqual([]);
+  });
+});
+
+describe('orphan selection', () => {
+  const rows = [
+    { pid: 10, createdAtMs: 999 }, // older than the server: not its child
+    { pid: 11, createdAtMs: 1_000 },
+    { pid: 12, createdAtMs: 1_500 },
+    { pid: 13, createdAtMs: 2_000 },
+    { pid: 14, createdAtMs: 2_001 }, // created after the exit: child of a reused PID
+  ];
+
+  it('keeps only processes created between the server start and its exit', () => {
+    expect(selectOrphans(rows, 1_000, 2_000)).toEqual([11, 12, 13]);
+  });
+
+  it('selects nothing when every candidate is foreign', () => {
+    expect(selectOrphans(rows, 3_000, 4_000)).toEqual([]);
   });
 });
 

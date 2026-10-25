@@ -225,6 +225,17 @@ const handlers = {
     process.exit(0);
   },
 
+  // A process started by the server that inherits its stdout and stderr and
+  // never exits by itself, like git or a shell command left behind by Codex.
+  'test/spawnGrandchild': () => {
+    const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => undefined, 1000)'], {
+      stdio: ['ignore', 'inherit', 'inherit'],
+      // Windows: otherwise libuv's job object kills it together with this process.
+      detached: process.platform === 'win32',
+    });
+    return { pid: grandchild.pid };
+  },
+
   'test/stderrFlood': ({ bytes }) => {
     writeSync(2, 'x'.repeat(bytes));
     return 'flooded';

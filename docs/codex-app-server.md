@@ -1,10 +1,12 @@
 # Client Codex App Server
 
 Stato: milestone 1. È implementata la connessione (avvio, handshake, richieste,
-notifiche, errori, arresto). Thread, turni e approvazioni non sono ancora implementati.
+notifiche, errori, arresto dell'intero albero di processi), verificata contro Codex CLI
+0.164.0 reale. Thread, turni e approvazioni non sono ancora implementati.
 
-Codice: `packages/adapters/src/codex/` (`app-server.ts`, `executable.ts`).
-Test: `packages/adapters/test/`.
+Codice: `packages/adapters/src/codex/` (`app-server.ts`, `executable.ts`,
+`process-tree.ts`). Test: `packages/adapters/test/`. Registratore di transcript:
+`packages/adapters/dev/`.
 
 ## Protocollo verificato
 
@@ -54,9 +56,23 @@ solo per capire i problemi pratici (shim npm, stderr). Nessun codice è stato ri
   `-32601`; se l'handler fallisce è `-32603`. Il server non resta mai in attesa.
 - **Cancellazione e timeout** agiscono solo localmente, perché il protocollo non ha un
   cancel generico. Una risposta tardiva viene riportata come ID sconosciuto.
-- **`close()`** è idempotente. Rifiuta le richieste pendenti, chiude stdin e attende
-  l'uscita. Dopo `shutdownTimeoutMs` (default 5 s) invia `SIGTERM`, dopo il doppio
-  `SIGKILL`.
+- **`close()`** è idempotente e risolve solo quando il processo è uscito **e** il suo
+  stdio è chiuso, oppure dopo la pulizia. Ogni passo ha `shutdownTimeoutMs` (default 5 s):
+  1. rifiuta le richieste pendenti e chiude stdin (EOF): l'uscita pulita resta la via
+     normale;
+  2. se Codex non esce, termina l'**albero** mentre il processo è ancora vivo: su Windows
+     `taskkill.exe /PID <pid> /T /F` (percorso da `SystemRoot`, senza shell); su POSIX
+     `SIGTERM` al process group, poi `SIGKILL` (Codex è avviato in un proprio gruppo);
+  3. dopo l'uscita attende la chiusura di stdio. Se i pipe restano aperti, un processo
+     avviato da Codex li tiene: su POSIX `SIGKILL` al process group; su Windows cerca i
+     processi con `ParentProcessId` uguale al PID di Codex e creati **tra** l'avvio e
+     l'uscita di Codex (dopo l'uscita il PID può essere riassegnato), poi
+     `taskkill /PID <pid> /T /F` su ciascuno. La ricerca usa `powershell.exe` da
+     `SystemRoot` con `-NoProfile -NonInteractive` e solo in questo percorso lento.
+- **Segnalazione**: se è stato necessario terminare qualcosa, `onForcedShutdown` riceve
+  `{ reason: 'exit-timeout' | 'stdio-open', terminated, errors }`. Un arresto pulito non
+  la chiama. Un processo già uscito con stdio chiuso non avvia alcuna ricerca né
+  terminazione.
 - **Ambiente**: per default `process.env`. Il client non legge e non modifica la
   configurazione né le credenziali di Codex.
 
@@ -109,12 +125,20 @@ Da non usare: `supportsLunaReserve: true` (registra l'esposizione a un esperimen
 - Gli shim npm su Windows non sono supportati: serve il percorso del `codex.exe` nativo.
   TODO(adapters): valutare la risoluzione dello shim verso il binario nativo del
   pacchetto npm.
-- Il kill forzato termina solo il processo diretto. Su Windows libuv mette i processi
-  figli in un job object che li termina quando muore l'extension host, ma i processi
-  avviati da Codex non vengono uccisi da `SIGTERM` o `SIGKILL` su POSIX.
-  TODO(adapters): kill dell'intero albero di processi quando arriveranno i turni.
+- Terminazione dell'albero, limiti residui:
+  - Windows, dopo l'uscita di Codex: si trovano solo i figli **diretti** di Codex (con i
+    loro sottoalberi). Un nipote il cui genitore intermedio è già uscito non è più
+    raggiungibile; se tiene i pipe, il client smette di leggerli (lo segnala in
+    `errors`) e il processo resta vivo fino alla chiusura dell'extension host, quando il
+    job object di libuv lo termina.
+  - La finestra temporale usa i millisecondi osservati da Node: un PID riassegnato e un
+    suo figlio creati entrambi nei pochi millisecondi fra l'uscita reale e l'evento
+    `exit` passerebbero il controllo.
+  - POSIX: un discendente che crea una propria sessione o un proprio gruppo (`setsid`)
+    esce dal process group e non viene raggiunto.
 - Se un processo nipote eredita stdout e resta vivo, l'evento `close` arriva solo
-  quando quel processo esce. Nel frattempo le richieste terminano per timeout.
+  quando quel processo esce o quando `close()` lo termina. Nel frattempo le richieste
+  pendenti terminano per timeout.
 - `startAppServer` passa l'ambiente così com'è. Per usare Codex servono `connectCodex`
   e il suo ambiente in allow-list: vedi [codex-auth.md](codex-auth.md).
 - Nessuna validazione di versione o di schema oltre `userAgent` nella risposta a

@@ -3,10 +3,12 @@
 // shapes without the "jsonrpc" field, `initialize` then `initialized`.
 //
 // Guarantees: every request settles (result, rpc error, timeout, cancellation,
-// process exit or close); close() never leaves the child running.
+// process exit or close); close() resolves only once the child has exited and
+// its stdio is closed, terminating the process tree when it has to.
 
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { OWN_PROCESS_GROUP, terminateOrphans, terminateTree } from './process-tree.js';
 
 export type AppServerErrorKind =
   'not-found' | 'spawn' | 'exited' | 'closed' | 'timeout' | 'cancelled' | 'rpc' | 'protocol';
@@ -44,6 +46,24 @@ export interface ExitInfo {
   readonly signal: NodeJS.Signals | null;
 }
 
+/** Reported when close() had to terminate processes instead of waiting for a clean exit. */
+export interface ForcedShutdownReport {
+  /**
+   * `exit-timeout`: the server did not exit after end of input, so its tree was
+   * terminated. `stdio-open`: it exited, but processes it started kept its pipes
+   * open and were terminated.
+   */
+  readonly reason: 'exit-timeout' | 'stdio-open';
+  /**
+   * PIDs terminated with their subtrees: the server for `exit-timeout`, the
+   * orphans found for `stdio-open` on Windows. Empty for a POSIX process group,
+   * which is signalled as a whole.
+   */
+  readonly terminated: readonly number[];
+  /** Cleanup steps that failed; the shutdown still completes. */
+  readonly errors: readonly string[];
+}
+
 export interface RequestOptions {
   /** Defaults to `AppServerOptions.requestTimeoutMs`. */
   readonly timeoutMs?: number;
@@ -63,7 +83,10 @@ export interface AppServerOptions {
   readonly capabilities?: Readonly<Record<string, unknown>>;
   /** Default 60 s. */
   readonly requestTimeoutMs?: number;
-  /** Time allowed for a clean exit after stdin is closed, default 5 s. */
+  /**
+   * Time allowed for each shutdown step, default 5 s: the exit after stdin is
+   * closed, the end of stdio after the exit, each forced step.
+   */
   readonly shutdownTimeoutMs?: number;
   readonly onNotification?: (method: string, params: unknown) => void;
   /** Answers server-initiated requests. Without it they get "method not found". */
@@ -71,6 +94,8 @@ export interface AppServerOptions {
   /** Lines that are not valid protocol messages; they are skipped. */
   readonly onProtocolError?: (error: AppServerError) => void;
   readonly onExit?: (info: ExitInfo) => void;
+  /** close() had to terminate processes; never called for a clean shutdown. */
+  readonly onForcedShutdown?: (report: ForcedShutdownReport) => void;
 }
 
 export interface AppServerClient {
@@ -106,28 +131,60 @@ function checkTimeout(name: string, ms: number): number {
   return ms;
 }
 
+/** Whether `promise` settles within `ms`. */
+function settlesWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      resolve(false);
+    }, ms);
+    void promise.then(() => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function startAppServer(options: AppServerOptions): Promise<AppServerClient> {
   const requestTimeoutMs = checkTimeout('requestTimeoutMs', options.requestTimeoutMs ?? 60_000);
   const shutdownTimeoutMs = checkTimeout('shutdownTimeoutMs', options.shutdownTimeoutMs ?? 5_000);
 
+  // Taken before the spawn: on Windows, orphans are recognised by being created
+  // between this moment and the observed exit.
+  const startedAtMs = Date.now();
   const child = spawn(options.executable, options.args ?? ['app-server'], {
     cwd: options.cwd,
     env: options.env ?? process.env,
     stdio: 'pipe',
     windowsHide: true,
+    // POSIX: own process group, so the whole tree can be signalled. Never on
+    // Windows, where it would take the child out of libuv's kill-on-close job.
+    detached: OWN_PROCESS_GROUP,
   });
 
   const pending = new Map<Id, Pending>();
   let nextId = 0;
   let stderrTail = '';
   let running = false;
+  let exitedAtMs = 0;
   /** Set once the connection can no longer be used; every later call fails with it. */
   let ended: AppServerError | undefined;
 
   const exited = new Promise<void>((resolve) => {
     child.once('exit', (code, signal) => {
       running = false;
+      exitedAtMs = Date.now();
       options.onExit?.({ code, signal });
+      resolve();
+    });
+  });
+  let stdioOpen = true;
+  const stdioClosed = new Promise<void>((resolve) => {
+    child.once('close', () => {
+      stdioOpen = false;
       resolve();
     });
   });
@@ -274,17 +331,52 @@ export async function startAppServer(options: AppServerOptions): Promise<AppServ
     });
   }
 
+  /** The server ignored end of input: terminate its tree while it is still alive. */
+  async function forceExit(pid: number): Promise<void> {
+    const errors: string[] = [];
+    try {
+      await terminateTree(pid, 'SIGTERM');
+    } catch (error) {
+      errors.push(message(error));
+    }
+    if (errors.length > 0 || !(await settlesWithin(exited, shutdownTimeoutMs))) {
+      try {
+        await terminateTree(pid, 'SIGKILL');
+      } catch (error) {
+        errors.push(message(error));
+      }
+      child.kill('SIGKILL'); // last resort, the direct process only
+      await exited;
+    }
+    options.onForcedShutdown?.({ reason: 'exit-timeout', terminated: [pid], errors });
+  }
+
+  /** The server exited but something it started still holds its pipes. */
+  async function cleanUpOrphans(pid: number): Promise<void> {
+    const cleanup = await terminateOrphans(pid, startedAtMs, exitedAtMs);
+    const { terminated } = cleanup;
+    const errors = [...cleanup.errors];
+    if (!(await settlesWithin(stdioClosed, shutdownTimeoutMs))) {
+      // Whatever still holds the pipes was out of reach: stop reading from them.
+      errors.push('stdio still open after the cleanup; the client stopped reading it');
+      child.stdout.destroy();
+      child.stderr.destroy();
+      await stdioClosed;
+    }
+    options.onForcedShutdown?.({ reason: 'stdio-open', terminated, errors });
+  }
+
   let closing: Promise<void> | undefined;
   function close(): Promise<void> {
     closing ??= (async () => {
       fail(new AppServerError('closed', 'The app-server client was closed'));
-      if (!running) return;
-      child.stdin.end(); // the server shuts down on end of input
-      const term = setTimeout(() => child.kill('SIGTERM'), shutdownTimeoutMs);
-      const forced = setTimeout(() => child.kill('SIGKILL'), 2 * shutdownTimeoutMs);
-      await exited;
-      clearTimeout(term);
-      clearTimeout(forced);
+      const pid = child.pid;
+      if (pid === undefined || !stdioOpen) return; // never started, or already fully ended
+      if (running) {
+        child.stdin.end(); // the server shuts down on end of input
+        if (!(await settlesWithin(exited, shutdownTimeoutMs))) await forceExit(pid);
+      }
+      if (!(await settlesWithin(stdioClosed, shutdownTimeoutMs))) await cleanUpOrphans(pid);
     })();
     return closing;
   }

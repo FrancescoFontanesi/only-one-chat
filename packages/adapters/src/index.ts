@@ -13,6 +13,7 @@ export {
   type AppServerOptions,
   type ClientInfo,
   type ExitInfo,
+  type ForcedShutdownReport,
   type InitializeResponse,
   type RequestOptions,
 } from './codex/app-server.js';

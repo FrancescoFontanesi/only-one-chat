@@ -28,3 +28,22 @@ Il primo adapter parla con `codex app-server`. Dettagli del protocollo e fonti s
 - Su Windows bisogna indicare il `codex.exe` nativo se il CLI è stato installato via npm.
 - Lo strato adapter dovrà aggiungere il filtraggio dell'ambiente e il kill dell'albero di
   processi prima di eseguire turni reali.
+
+## Nota (2026-10-25): terminazione dell'albero
+
+Contro Codex 0.164.0 reale, `codex app-server` esce pulito subito dopo l'EOF ma lascia
+vivi i processi che ha avviato (allora `git`, per la sincronizzazione dei plugin), che
+tengono aperti i suoi pipe. Il contratto di `close()` cambia così:
+
+- `close()` risolve solo quando il processo è uscito **e** il suo stdio è chiuso, oppure
+  dopo la pulizia; prima risolveva all'uscita del processo diretto.
+- Se Codex non esce entro `shutdownTimeoutMs`, si termina l'albero mentre è vivo
+  (Windows `taskkill /T /F`, POSIX process group); se esce ma i pipe restano aperti, si
+  terminano i discendenti (Windows: figli per `ParentProcessId` creati tra avvio e
+  uscita; POSIX: process group).
+- Su POSIX Codex viene avviato `detached`, cioè in un proprio process group; su Windows
+  no, per restare nel job object di libuv.
+- Ogni terminazione è segnalata con `onForcedShutdown`; restano invariati l'idempotenza
+  e l'ordine EOF, uscita pulita, terminazione forzata.
+
+Dettagli e limiti residui in [../codex-app-server.md](../codex-app-server.md).

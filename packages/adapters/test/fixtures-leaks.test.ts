@@ -1,4 +1,4 @@
-// Recorded Codex transcripts are committed to a public repository: every
+// Recorded CLI transcripts (Codex, Claude) are committed to a public repository: every
 // fixture must be free of secrets, e-mail addresses and personal paths. The
 // scanner is checked against a sample built to trip every rule.
 
@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { findLeaks, redactTranscript } from '../dev/redact.js';
 
-const FIXTURES = join(import.meta.dirname, 'fixtures', 'codex');
+const FIXTURES = join(import.meta.dirname, 'fixtures');
 const LOCAL = [userInfo().username, hostname()];
 
 function fixtureFiles(): string[] {
@@ -17,9 +17,11 @@ function fixtureFiles(): string[] {
     .map((path) => join(FIXTURES, path));
 }
 
-describe('recorded Codex fixtures', () => {
-  it('exist', () => {
-    expect(fixtureFiles().length).toBeGreaterThan(0);
+describe('recorded CLI fixtures', () => {
+  it('exist for every CLI', () => {
+    for (const cli of ['codex', 'claude']) {
+      expect(fixtureFiles().some((path) => path.includes(join('fixtures', cli)))).toBe(true);
+    }
   });
 
   it.each(fixtureFiles().map((path) => [path.slice(FIXTURES.length + 1), path]))(

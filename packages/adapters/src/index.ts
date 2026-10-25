@@ -34,3 +34,22 @@ export {
   type CodexSessionOptions,
 } from './codex/session.js';
 export { API_KEY_VARIABLES, withoutApiKeys } from './environment.js';
+export {
+  ExecutableNotFoundError,
+  resolveNativeExecutable,
+  type ResolveExecutableOptions,
+} from './executable.js';
+export { resolveClaudeExecutable } from './claude/executable.js';
+export {
+  ClaudeError,
+  READ_ONLY_TOOLS,
+  checkClaudeBilling,
+  claudeTurnArgs,
+  startClaudeTurn,
+  type ClaudeBilling,
+  type ClaudeErrorKind,
+  type ClaudeEvent,
+  type ClaudeTurn,
+  type ClaudeTurnOptions,
+  type ClaudeTurnResult,
+} from './claude/turn.js';

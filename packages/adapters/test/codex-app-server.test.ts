@@ -1,4 +1,4 @@
-﻿// Behaviour of the Codex App Server client against an independent fake server
+// Behaviour of the Codex App Server client against an independent fake server
 // running as a real child process (test/fixtures/fake-app-server.mjs).
 
 import { copyFileSync, linkSync, mkdtempSync, rmSync } from 'node:fs';
@@ -13,7 +13,7 @@ import {
   type AppServerOptions,
   type ForcedShutdownReport,
 } from '../src/index.js';
-import { selectOrphans } from '../src/codex/process-tree.js';
+import { selectOrphans } from '../src/process-tree.js';
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-app-server.mjs');
 

@@ -1,4 +1,4 @@
-// Redaction for recorded Codex transcripts, which are committed to a public
+// Redaction for recorded CLI transcripts (Codex, Claude), committed to a public
 // repository. `redactTranscript` runs before anything is written to disk;
 // `findLeaks` is the independent check the fixture test applies afterwards.
 // Dev tooling only: nothing here ships in the extension.
@@ -20,14 +20,31 @@ const KEY_LABELS: Readonly<Record<string, string>> = {
   chatgptAccountId: 'account-id',
   chatgptUserId: 'user-id',
   workspaceId: 'workspace-id',
+  // Claude stream-json
+  session_id: 'session-id',
+  uuid: 'uuid',
+  request_id: 'request-id',
 };
 /** Keys replaced by a fixed placeholder. */
 const KEY_FIXED: Readonly<Record<string, string>> = {
   serverName: '<host>',
   codexHome: '<CODEX_HOME>',
 };
+/**
+ * Lists that describe the user's own setup (Claude's installed skills, plugins,
+ * agents and commands): personal, and irrelevant to the protocol.
+ */
+const PERSONAL_LISTS = new Set([
+  'slash_commands',
+  'terminal_slash_commands',
+  'skills',
+  'agents',
+  'plugins',
+]);
 
 const SECRET_KEY = /token|secret|password|api_?key|authorization|cookie|credential/i;
+/** Names that match SECRET_KEY but hold a label the tests need, not a secret. */
+const NOT_SECRET = new Set(['apiKeySource']);
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const JWT = /eyJ[\w-]{4,}\.[\w-]{4,}\.[\w-]{4,}/g;
 const URL_PATTERN = /https?:\/\/[^\s"'<>]+/g;
@@ -88,7 +105,7 @@ export function redactTranscript(
           numbered.set(`${label}\0${item}`, `<${label}-${String(n)}>`);
         }
         found.set(item, numbered.get(`${label}\0${item}`) ?? '<redacted>');
-      } else if (SECRET_KEY.test(key)) {
+      } else if (SECRET_KEY.test(key) && !NOT_SECRET.has(key)) {
         found.set(item, '<redacted>');
       }
     });
@@ -119,7 +136,9 @@ export function redactTranscript(
           (typeof item === 'string' ? numbered.get(`${label}\0${item}`) : undefined) ??
           `<${label}>`;
       else if (fixed !== undefined) out[key] = fixed;
-      else if (SECRET_KEY.test(key) && typeof item === 'string') out[key] = '<redacted>';
+      else if (PERSONAL_LISTS.has(key) && Array.isArray(item)) out[key] = ['<redacted>'];
+      else if (SECRET_KEY.test(key) && !NOT_SECRET.has(key) && typeof item === 'string')
+        out[key] = '<redacted>';
       else out[key] = redact(item);
     }
     return out;

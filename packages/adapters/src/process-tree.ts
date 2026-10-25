@@ -1,4 +1,4 @@
-// Termination of a child's whole process tree, for app-server shutdown.
+// Termination of a child's whole process tree, for the CLI adapters (Codex app-server, Claude).
 //
 // - Windows: `taskkill.exe /PID <pid> /T /F` from %SystemRoot%\System32, no shell.
 //   Once the root has exited its children can no longer be reached through it,

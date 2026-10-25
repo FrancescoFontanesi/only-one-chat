@@ -8,7 +8,7 @@
 
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { OWN_PROCESS_GROUP, terminateOrphans, terminateTree } from './process-tree.js';
+import { OWN_PROCESS_GROUP, terminateOrphans, terminateTree } from '../process-tree.js';
 
 export type AppServerErrorKind =
   'not-found' | 'spawn' | 'exited' | 'closed' | 'timeout' | 'cancelled' | 'rpc' | 'protocol';

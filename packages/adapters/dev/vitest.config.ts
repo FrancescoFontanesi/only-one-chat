@@ -5,7 +5,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   root: import.meta.dirname,
   test: {
-    include: ['record-codex.ts', 'diagnose.ts'],
+    include: ['record-codex.ts', 'record-claude.ts', 'diagnose.ts'],
     environment: 'node',
   },
 });

@@ -5,7 +5,7 @@ notifiche, errori, arresto dell'intero albero di processi), verificata contro Co
 0.164.0 reale. Thread, turni e approvazioni non sono ancora implementati.
 
 Codice: `packages/adapters/src/codex/` (`app-server.ts`, `executable.ts`,
-`process-tree.ts`). Test: `packages/adapters/test/`. Registratore di transcript:
+`../process-tree.ts`). Test: `packages/adapters/test/`. Registratore di transcript:
 `packages/adapters/dev/`.
 
 ## Protocollo verificato
@@ -104,7 +104,7 @@ solo per capire i problemi pratici (shim npm, stderr). Nessun codice è stato ri
   `prepareCodexLaunch`, lo stesso lancio di `connectCodex`. Ogni file inizia con una riga
   `meta` (versione, `userAgent`, data, comandi). Solo interazioni senza quota del
   modello. La redaction avviene in memoria prima della scrittura e il file non viene
-  scritto se lo scanner trova ancora qualcosa; `test/codex-fixtures.test.ts` ripete il
+  scritto se lo scanner trova ancora qualcosa; `test/fixtures-leaks.test.ts` ripete il
   controllo su tutte le fixture.
 - **Contract test** (`test/codex-contract.test.ts`): i parser e i controlli del client
   sui messaggi reali, e la parità del fake: i messaggi del client registrati vengono

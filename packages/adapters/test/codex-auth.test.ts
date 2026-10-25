@@ -1,13 +1,14 @@
-// Subscription-only authentication for Codex, checked against the independent
-// fake server. The fake logs every message it receives to a file, so the tests
-// can prove what did (and did not) reach the server.
+// Account policy and launch of Codex in the user's own profile, checked against
+// the independent fake server. The fake logs every message it receives to a
+// file, so the tests can prove what did (and did not) reach the server.
 
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  API_KEY_VARIABLES,
   CodexAuthError,
   connectCodex,
   type CodexSession,
@@ -38,7 +39,6 @@ async function connect(
   const session = await connectCodex({
     executable: process.execPath,
     launcherArgs: [FAKE, `--account=${account}`, `--log=${log}`, ...fakeFlags],
-    codexHome: join(dir, 'dedicated codex home'),
     clientInfo: { name: 'only-one-chat-tests', version: '0.0.0' },
     requestTimeoutMs: 5_000,
     ...overrides,
@@ -66,6 +66,8 @@ async function authFailure(promise: Promise<unknown>): Promise<CodexAuthError> {
   return error as CodexAuthError;
 }
 
+const PROXY = ['--provider=headroom', '--provider-name=Headroom persistent proxy'];
+
 describe('account verification', () => {
   it('verifies the account right after the handshake, before anything else', async () => {
     await connect('chatgpt');
@@ -82,21 +84,24 @@ describe('account verification', () => {
     expect(await session.request('turn/start')).toEqual({ turn: { id: 'turn-1' } });
   });
 
-  it('rejects an API key account and never forwards model requests', async () => {
-    const session = await connect('apiKey');
-    expect(session.auth).toMatchObject({ status: 'rejected', reason: 'api_key' });
+  it.each(['apiKey', 'customProviderApiKey'])(
+    'rejects the API key account %s and never forwards model requests',
+    async (kind) => {
+      const session = await connect(kind, { allowUnverifiedProvider: true }, PROXY);
+      expect(session.auth).toMatchObject({ status: 'rejected', reason: 'api_key' });
 
-    const error = await authFailure(session.request('turn/start'));
-    expect(error.state).toMatchObject({ status: 'rejected', reason: 'api_key' });
-    expect(receivedMethods()).not.toContain('turn/start');
-  });
+      const error = await authFailure(session.request('turn/start'));
+      expect(error.state).toMatchObject({ status: 'rejected', reason: 'api_key' });
+      expect(receivedMethods()).not.toContain('turn/start');
+    },
+  );
 
-  it('reports login_required for a missing account, without any fallback', async () => {
+  it('reports login_required and points to the CLI login, without starting one', async () => {
     const session = await connect('none');
     expect(session.auth).toEqual({ status: 'login_required' });
 
     const error = await authFailure(session.request('turn/start'));
-    expect(error.state).toEqual({ status: 'login_required' });
+    expect(error.message).toMatch(/codex login/);
     expect(receivedMethods()).not.toContain('turn/start');
     expect(receivedMethods()).not.toContain('account/login/start');
   });
@@ -106,15 +111,6 @@ describe('account verification', () => {
     expect(session.auth).toMatchObject({ status: 'rejected', reason: 'unsupported_mode' });
     await authFailure(session.request('turn/start'));
   });
-
-  it.each(['customProvider', 'customProviderChatgpt'])(
-    'refuses %s: the active provider does not require OpenAI auth, so the plan cannot be verified',
-    async (kind) => {
-      const session = await connect(kind);
-      expect(session.auth).toMatchObject({ status: 'rejected', reason: 'provider_not_verified' });
-      await authFailure(session.request('turn/start'));
-    },
-  );
 
   it('grants nothing when account/read fails', async () => {
     const session = await connect('readError');
@@ -127,6 +123,55 @@ describe('account verification', () => {
     const session = await connect('missingField');
     expect(session.auth).toMatchObject({ status: 'rejected', reason: 'read_failed' });
     await authFailure(session.request('turn/start'));
+  });
+});
+
+describe('providers that cannot be verified', () => {
+  it.each(['customProvider', 'customProviderChatgpt'])(
+    'refuses %s by default, naming the provider and how to allow it',
+    async (kind) => {
+      const session = await connect(kind, {}, PROXY);
+      const provider = { id: 'headroom', name: 'Headroom persistent proxy' };
+      expect(session.auth).toMatchObject({
+        status: 'rejected',
+        reason: 'provider_not_verified',
+        provider,
+      });
+      const error = await authFailure(session.request('turn/start'));
+      expect(error.message).toMatch(/Headroom persistent proxy/);
+      expect(error.message).toMatch(/allowUnverifiedProvider/);
+      expect(receivedMethods()).toEqual([
+        'initialize',
+        'initialized',
+        'account/read',
+        'config/read',
+        'account/read',
+        'config/read',
+      ]);
+    },
+  );
+
+  it('accepts it as unverified_provider when allowUnverifiedProvider is on', async () => {
+    const session = await connect('customProvider', { allowUnverifiedProvider: true }, PROXY);
+    expect(session.auth).toEqual({
+      status: 'unverified_provider',
+      provider: { id: 'headroom', name: 'Headroom persistent proxy' },
+    });
+    expect(await session.request('turn/start')).toEqual({ turn: { id: 'turn-1' } });
+  });
+
+  it('still decides when config/read fails, with an unknown provider', async () => {
+    const session = await connect('customProvider', {}, ['--provider=readError']);
+    expect(session.auth).toMatchObject({
+      status: 'rejected',
+      reason: 'provider_not_verified',
+      provider: { id: 'unknown', name: null },
+    });
+  });
+
+  it('does not read the configuration for a provider with OpenAI authentication', async () => {
+    await connect('chatgpt', {}, PROXY);
+    expect(receivedMethods()).not.toContain('config/read');
   });
 });
 
@@ -155,52 +200,46 @@ describe('account changes', () => {
   });
 });
 
-describe('child process environment and profile', () => {
-  const hostile = {
+describe('launch in the user profile', () => {
+  const userEnv = {
     OPENAI_API_KEY: 'sk-should-not-leak',
-    CODEX_API_KEY: 'sk-should-not-leak',
+    codex_api_key: 'sk-should-not-leak',
     CODEX_ACCESS_TOKEN: 'token-should-not-leak',
-    AZURE_OPENAI_API_KEY: 'should-not-leak',
     ANTHROPIC_API_KEY: 'should-not-leak',
+    ANTHROPIC_AUTH_TOKEN: 'should-not-leak',
+    GEMINI_API_KEY: 'should-not-leak',
+    GOOGLE_API_KEY: 'should-not-leak',
+    // The user's own setup, which must keep working:
     OPENAI_BASE_URL: 'http://127.0.0.1:8787/v1',
-    CODEX_OSS_BASE_URL: 'http://127.0.0.1:11434/v1',
-    CODEX_REFRESH_TOKEN_URL_OVERRIDE: 'http://127.0.0.1:9/refresh',
-    HTTPS_PROXY: 'http://127.0.0.1:8787',
-    https_proxy: 'http://127.0.0.1:8787',
-    ALL_PROXY: 'socks5://127.0.0.1:1080',
-    CODEX_HOME: join(homedir(), 'personal codex home'),
+    ANTHROPIC_BASE_URL: 'http://127.0.0.1:8787',
+    HTTPS_PROXY: 'http://127.0.0.1:3128',
+    CODEX_HOME: 'C:\\profiles\\codex',
+    RTK_ENABLED: '1',
   };
 
-  it('passes only allow-listed variables, with CODEX_HOME set to the dedicated profile', async () => {
-    const session = await connect('chatgpt', { baseEnv: { ...process.env, ...hostile } });
+  it('passes the user environment minus the API key variables, whatever their case', async () => {
+    const session = await connect('chatgpt', { baseEnv: { ...process.env, ...userEnv } });
     const env = (await session.request('test/env')) as Record<string, string>;
 
-    for (const name of Object.keys(hostile).filter((key) => key !== 'CODEX_HOME')) {
-      expect(Object.keys(env).map((key) => key.toUpperCase())).not.toContain(name.toUpperCase());
-    }
+    const names = Object.keys(env).map((key) => key.toUpperCase());
+    for (const name of API_KEY_VARIABLES) expect(names).not.toContain(name);
     expect(JSON.stringify(env)).not.toContain('should-not-leak');
-    expect(env['CODEX_HOME']).toBe(join(dir, 'dedicated codex home'));
-    expect(Object.keys(env).some((key) => key.toUpperCase() === 'PATH')).toBe(true);
+    for (const name of [
+      'OPENAI_BASE_URL',
+      'ANTHROPIC_BASE_URL',
+      'HTTPS_PROXY',
+      'CODEX_HOME',
+      'RTK_ENABLED',
+    ] as const) {
+      expect(env[name]).toBe(userEnv[name]);
+    }
   });
 
-  it('creates the dedicated profile directory', async () => {
-    await connect('chatgpt');
-    expect(existsSync(join(dir, 'dedicated codex home'))).toBe(true);
-  });
-
-  it('pins the provider, base URL and login method on the command line, before app-server', async () => {
+  it('launches plain app-server: no override of provider, base URL or login method', async () => {
     const session = await connect('chatgpt');
     const argv = (await session.request('test/argv')) as string[];
-    const codexArgs = argv.slice(argv.findIndex((arg) => arg === '-c'));
-    expect(codexArgs).toEqual([
-      '-c',
-      'forced_login_method="chatgpt"',
-      '-c',
-      'model_provider="openai"',
-      '-c',
-      'openai_base_url=""',
-      'app-server',
-    ]);
+    expect(argv.slice(argv.indexOf('--log=' + log) + 1)).toEqual(['app-server']);
+    expect(argv).not.toContain('-c');
   });
 
   it('adds the isolated-profile overrides only when asked, before app-server', async () => {
@@ -213,7 +252,9 @@ describe('child process environment and profile', () => {
       expect(at).toBeLessThan(argv.indexOf('app-server'));
     }
   });
+});
 
+describe('methods never sent', () => {
   it('never declares the experimentalApi capability that remote control needs', async () => {
     await expect(connect('chatgpt', { capabilities: { experimentalApi: true } })).rejects.toThrow(
       /experimentalApi/,
@@ -223,61 +264,21 @@ describe('child process environment and profile', () => {
     expect(JSON.stringify(received[0]?.params)).not.toContain('experimentalApi');
   });
 
-  it.each(['remoteControl/enable', 'remoteControl/status/read', 'remoteControl/pairing/start'])(
-    'refuses %s without sending it, even when authorized',
-    async (method) => {
-      const session = await connect('chatgpt');
-      await expect(session.request(method, {})).rejects.toThrow(/remote control/);
-      expect(receivedMethods()).not.toContain(method);
-    },
-  );
-
   it.each([
-    ['the personal ~/.codex profile', join(homedir(), '.codex')],
-    ['the CODEX_HOME of the parent environment', join(homedir(), 'personal codex home')],
-    ['a relative path', 'codex-home'],
-  ])('refuses %s as the dedicated profile', async (_label, codexHome) => {
-    await expect(
-      connect('chatgpt', {
-        codexHome,
-        baseEnv: { ...process.env, CODEX_HOME: hostile.CODEX_HOME },
-      }),
-    ).rejects.toThrow(/profile/i);
-    expect(receivedMethods()).toEqual([]);
-  });
-});
-
-describe('official login methods', () => {
-  it('starts the browser ChatGPT login and returns the authorization URL', async () => {
-    const session = await connect('none');
-    expect(await session.startLogin('chatgpt')).toEqual({
-      type: 'chatgpt',
-      loginId: 'login-1',
-      authUrl: 'https://auth.openai.com/oauth/authorize?x=1',
-    });
-  });
-
-  it('starts the device-code login and returns the code to show the user', async () => {
-    const session = await connect('none');
-    expect(await session.startLogin('chatgptDeviceCode')).toEqual({
-      type: 'chatgptDeviceCode',
-      loginId: 'login-1',
-      verificationUrl: 'https://auth.openai.com/codex/device',
-      userCode: 'ABCD-1234',
-    });
-  });
-
-  it('refuses a login URL that is not https', async () => {
-    const session = await connect('none', {}, ['--login-url=javascript:alert(1)']);
-    await expect(session.startLogin('chatgpt')).rejects.toThrow(/https/);
-  });
-
-  it('cannot be used to start any other login type, such as an API key', async () => {
-    const session = await connect('none');
-    await expect(session.startLogin('apiKey' as 'chatgpt')).rejects.toThrow(/login method/);
-    await expect(
-      session.request('account/login/start', { type: 'apiKey', apiKey: 'sk-x' }),
-    ).rejects.toThrow(/startLogin/);
-    expect(receivedMethods()).not.toContain('account/login/start');
+    ['remoteControl/enable', /remote control/],
+    ['remoteControl/status/read', /remote control/],
+    ['remoteControl/pairing/start', /remote control/],
+    ['account/rateLimitResetCredit/consume', /credit/],
+    ['account/sendAddCreditsNudgeEmail', /e-mail/],
+    ['feedback/upload', /feedback/],
+    ['plugin/share/save', /publishes/],
+    ['plugin/share/updateTargets', /shared/],
+    ['account/login/start', /Codex CLI/],
+    ['account/login/cancel', /Codex CLI/],
+    ['account/logout', /sign/],
+  ])('refuses %s without sending it, even when authorized', async (method, reason) => {
+    const session = await connect('chatgpt');
+    await expect(session.request(method, {})).rejects.toThrow(reason);
+    expect(receivedMethods()).not.toContain(method);
   });
 });

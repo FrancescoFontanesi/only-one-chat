@@ -12,7 +12,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { afterEach, describe, expect, it } from 'vitest';
-import { interpretAccountRead, parseLoginStart, type CodexLoginMethod } from '../src/codex/auth.js';
+import { interpretAccountRead, providerFromConfig } from '../src/codex/auth.js';
 
 type Json = Record<string, unknown>;
 type Entry =
@@ -64,14 +64,14 @@ function exchanges(entries: Entry[]): { request: Json; response: Json }[] {
 }
 
 const startup = load('startup');
-const loginCancel = load('login-cancel');
+const customProvider = load('custom-provider');
 
 describe(`recorded Codex ${RECORDED_VERSION}: what the client accepts`, () => {
-  const all = [startup, loginCancel].filter((t): t is Entry[] => t !== undefined);
+  const all = [startup, customProvider].filter((t): t is Entry[] => t !== undefined);
 
   it('has the transcripts to check', () => {
     expect(startup).toBeDefined();
-    expect(loginCancel).toBeDefined();
+    expect(customProvider).toBeDefined();
   });
 
   it('answers every request with a result or a well-formed error, never both', () => {
@@ -114,28 +114,36 @@ describe(`recorded Codex ${RECORDED_VERSION}: what the client accepts`, () => {
     });
   });
 
+  const result = (entries: Entry[] | undefined, method: string): unknown =>
+    exchanges(entries ?? []).find((e) => e.request['method'] === method && 'result' in e.response)
+      ?.response['result'];
+
   it('reports a fresh profile as login_required, with nothing else needed', () => {
-    const reads = all
-      .flatMap(exchanges)
-      .filter((e) => e.request['method'] === 'account/read' && 'result' in e.response);
-    expect(reads.length).toBeGreaterThan(0);
-    for (const { response } of reads) {
-      expect(interpretAccountRead(response['result'])).toEqual({ status: 'login_required' });
-    }
+    expect(
+      interpretAccountRead(result(startup, 'account/read'), { allowUnverifiedProvider: false }),
+    ).toEqual({ status: 'login_required' });
   });
 
-  it('starts both official logins with results parseLoginStart accepts', () => {
-    const starts = exchanges(loginCancel ?? []).filter(
-      (e) => e.request['method'] === 'account/login/start',
-    );
-    expect(starts.map((e) => (e.request['params'] as Json)['type']).sort()).toEqual([
-      'chatgpt',
-      'chatgptDeviceCode',
-    ]);
-    for (const { request, response } of starts) {
-      const method = (request['params'] as Json)['type'] as CodexLoginMethod;
-      expect(parseLoginStart(method, response['result']).type).toBe(method);
-    }
+  it('reads the default provider from a profile without one configured', () => {
+    expect(providerFromConfig(result(startup, 'config/read'))).toEqual({
+      id: 'openai',
+      name: null,
+    });
+  });
+
+  it('names a custom provider and refuses it unless allowed', () => {
+    const provider = providerFromConfig(result(customProvider, 'config/read'));
+    expect(provider).toEqual({ id: 'recorder-proxy', name: 'Recorder proxy' });
+    const read = result(customProvider, 'account/read');
+    expect(interpretAccountRead(read, { allowUnverifiedProvider: false, provider })).toMatchObject({
+      status: 'rejected',
+      reason: 'provider_not_verified',
+      provider,
+    });
+    expect(interpretAccountRead(read, { allowUnverifiedProvider: true, provider })).toEqual({
+      status: 'unverified_provider',
+      provider,
+    });
   });
 });
 
@@ -148,8 +156,8 @@ afterEach(() => {
 });
 
 /** Replays the recorded client messages against the fake and returns its answers in order. */
-async function replayOnFake(entries: Entry[], account: string): Promise<Json[]> {
-  const child = spawn(process.execPath, [FAKE, 'app-server', `--account=${account}`]);
+async function replayOnFake(entries: Entry[], flags: readonly string[]): Promise<Json[]> {
+  const child = spawn(process.execPath, [FAKE, 'app-server', ...flags]);
   children.push(child);
   const received: Json[] = [];
   const waiters = new Map<unknown, () => void>();
@@ -241,13 +249,46 @@ function shape(value: unknown, key = ''): unknown {
   return typeof value;
 }
 
+/**
+ * config/read returns the whole effective configuration (over a hundred keys);
+ * the client reads only the provider, so parity is checked on that projection.
+ */
+function project(message: Json): Json {
+  const result = message['result'];
+  if (typeof result !== 'object' || result === null || !('config' in result)) return message;
+  const config = (result as Json)['config'] as Json;
+  const providers = (config['model_providers'] ?? {}) as Record<string, Json>;
+  return {
+    ...message,
+    result: {
+      config: {
+        model_provider: config['model_provider'],
+        model_providers: Object.fromEntries(
+          Object.entries(providers).map(([id, p]) => [
+            id,
+            {
+              name: p['name'],
+              base_url: p['base_url'],
+              requires_openai_auth: p['requires_openai_auth'],
+            },
+          ]),
+        ),
+      },
+    },
+  };
+}
+
 describe.each([
-  ['startup', startup, 'none'],
-  ['login-cancel', loginCancel, 'none'],
-] as const)('fake app-server matches the recorded %s', (_name, entries, account) => {
+  ['startup', startup, ['--account=none']],
+  [
+    'custom-provider',
+    customProvider,
+    ['--account=customProvider', '--provider=recorder-proxy', '--provider-name=Recorder proxy'],
+  ],
+] as const)('fake app-server matches the recorded %s', (_name, entries, flags) => {
   it.runIf(entries !== undefined)('with the same messages, in the same order', async () => {
-    const recorded = messages(entries ?? [], 'server').map((m) => shape(m));
-    const fake = (await replayOnFake(entries ?? [], account)).map((m) => shape(m));
+    const recorded = messages(entries ?? [], 'server').map((m) => shape(project(m)));
+    const fake = (await replayOnFake(entries ?? [], flags)).map((m) => shape(project(m)));
     expect(fake).toEqual(recorded);
   });
 });

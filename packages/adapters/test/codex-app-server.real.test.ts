@@ -16,14 +16,14 @@ const configuredPath = process.env['CODEX_EXECUTABLE'];
 const RECORDED_VERSIONS = readdirSync(join(import.meta.dirname, 'fixtures', 'codex'));
 
 describe.runIf(configuredPath)('real codex app-server (CODEX_EXECUTABLE)', () => {
-  it('handshakes in a fresh dedicated profile, reports login_required and shuts down', async () => {
+  it('handshakes in a fresh throwaway profile, reports login_required and shuts down', async () => {
     const codexHome = mkdtempSync(join(tmpdir(), 'codex home '));
     try {
       const executable = await resolveCodexExecutable({ configuredPath: configuredPath ?? '' });
       const exits: unknown[] = [];
       const session = await connectCodex({
         executable,
-        codexHome,
+        baseEnv: { ...process.env, CODEX_HOME: codexHome },
         configOverrides: ISOLATED_PROFILE_OVERRIDES,
         clientInfo: { name: 'only-one-chat-real-check', version: '0.0.0' },
         requestTimeoutMs: 30_000,
@@ -44,9 +44,8 @@ describe.runIf(configuredPath)('real codex app-server (CODEX_EXECUTABLE)', () =>
     const codexHome = mkdtempSync(join(tmpdir(), 'codex home '));
     try {
       const executable = await resolveCodexExecutable({ configuredPath: configuredPath ?? '' });
-      const launch = await prepareCodexLaunch(
-        codexHome,
-        process.env,
+      const launch = prepareCodexLaunch(
+        { ...process.env, CODEX_HOME: codexHome },
         [],
         ISOLATED_PROFILE_OVERRIDES,
       );

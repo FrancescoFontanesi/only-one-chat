@@ -139,7 +139,8 @@ Da non usare: `supportsLunaReserve: true` (registra l'esposizione a un esperimen
 - Se un processo nipote eredita stdout e resta vivo, l'evento `close` arriva solo
   quando quel processo esce o quando `close()` lo termina. Nel frattempo le richieste
   pendenti terminano per timeout.
-- `startAppServer` passa l'ambiente così com'è. Per usare Codex servono `connectCodex`
-  e il suo ambiente in allow-list: vedi [codex-auth.md](codex-auth.md).
+- `startAppServer` passa l'ambiente così com'è. Per usare Codex serve `connectCodex`,
+  che toglie le chiavi API e applica la policy dell'account: vedi
+  [codex-auth.md](codex-auth.md).
 - Nessuna validazione di versione o di schema oltre `userAgent` nella risposta a
   `initialize`.

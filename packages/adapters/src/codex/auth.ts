@@ -1,19 +1,45 @@
-// Codex account state, interpreted fail-closed: only a ChatGPT-plan login on a
-// provider that uses OpenAI authentication authorizes model use. Shapes follow
-// codex-rs app-server-protocol v2 (GetAccountResponse, AccountUpdatedNotification,
-// LoginAccountResponse); see docs/codex-auth.md.
-
-import { AppServerError } from './app-server.js';
+// Codex account state, interpreted fail-closed. Codex runs in the user's own
+// profile (docs/decisions/0006): a ChatGPT login on a provider that uses OpenAI
+// authentication is a verified subscription; a provider that does not (a custom
+// proxy, for example) cannot be verified and is usable only when the caller
+// opts in; an API key is always refused. Shapes follow codex-rs
+// app-server-protocol v2 (GetAccountResponse, AccountUpdatedNotification); see
+// docs/codex-auth.md.
 
 export type CodexRejection =
   'api_key' | 'unsupported_mode' | 'provider_not_verified' | 'read_failed';
 
+/** The model provider Codex is configured with, as `config/read` reports it. */
+export interface CodexProvider {
+  readonly id: string;
+  /** Display name from the provider's configuration, when it has one. */
+  readonly name: string | null;
+}
+
 export type CodexAuthState =
   | { readonly status: 'authorized'; readonly email: string | null; readonly planType: string }
+  | {
+      /** Allowed by `allowUnverifiedProvider`: the subscription cannot be checked. */
+      readonly status: 'unverified_provider';
+      readonly provider: CodexProvider;
+    }
   | { readonly status: 'login_required' }
-  | { readonly status: 'rejected'; readonly reason: CodexRejection; readonly detail: string };
+  | {
+      readonly status: 'rejected';
+      readonly reason: CodexRejection;
+      readonly detail: string;
+      readonly provider?: CodexProvider;
+    };
 
-export type CodexUnauthorizedState = Exclude<CodexAuthState, { status: 'authorized' }>;
+export type CodexUsableState = Extract<
+  CodexAuthState,
+  { status: 'authorized' } | { status: 'unverified_provider' }
+>;
+export type CodexUnauthorizedState = Exclude<CodexAuthState, CodexUsableState>;
+
+export function isUsable(state: CodexAuthState): state is CodexUsableState {
+  return state.status === 'authorized' || state.status === 'unverified_provider';
+}
 
 export class CodexAuthError extends Error {
   override readonly name = 'CodexAuthError';
@@ -21,22 +47,50 @@ export class CodexAuthError extends Error {
   constructor(readonly state: CodexUnauthorizedState) {
     super(
       state.status === 'login_required'
-        ? 'Codex needs a ChatGPT login before it can be used'
+        ? 'Codex is not signed in: run `codex login` in a terminal, then try again'
         : `Codex account not allowed (${state.reason}): ${state.detail}`,
     );
   }
 }
 
-export function rejected(reason: CodexRejection, detail: string): CodexUnauthorizedState {
-  return { status: 'rejected', reason, detail };
+export function rejected(
+  reason: CodexRejection,
+  detail: string,
+  provider?: CodexProvider,
+): CodexUnauthorizedState {
+  return provider
+    ? { status: 'rejected', reason, detail, provider }
+    : { status: 'rejected', reason, detail };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** Whether an `account/read` result needs the provider (from `config/read`) to be judged. */
+export function needsProvider(result: unknown): boolean {
+  return isRecord(result) && result['requiresOpenaiAuth'] === false;
+}
+
+/** Extracts the active provider from a `config/read` result; null when it is not there. */
+export function providerFromConfig(result: unknown): CodexProvider | null {
+  if (!isRecord(result) || !isRecord(result['config'])) return null;
+  const config = result['config'];
+  const id = typeof config['model_provider'] === 'string' ? config['model_provider'] : 'openai';
+  const providers = isRecord(config['model_providers']) ? config['model_providers'] : {};
+  const entry = providers[id];
+  const name = isRecord(entry) && typeof entry['name'] === 'string' ? entry['name'] : null;
+  return { id, name };
+}
+
+export interface AccountPolicy {
+  readonly allowUnverifiedProvider: boolean;
+  /** Needed when `requiresOpenaiAuth` is false; see `needsProvider`. */
+  readonly provider?: CodexProvider | null;
+}
+
 /** Interprets an `account/read` result. Anything unexpected is a rejection. */
-export function interpretAccountRead(result: unknown): CodexAuthState {
+export function interpretAccountRead(result: unknown, policy: AccountPolicy): CodexAuthState {
   if (
     !isRecord(result) ||
     typeof result['requiresOpenaiAuth'] !== 'boolean' ||
@@ -44,16 +98,27 @@ export function interpretAccountRead(result: unknown): CodexAuthState {
   ) {
     return rejected('read_failed', 'Malformed account/read response');
   }
+  const account = result['account'];
+  if (account !== null && !isRecord(account)) {
+    return rejected('read_failed', 'Malformed account in account/read response');
+  }
+  // An API key is refused whatever the provider says.
+  if (account?.['type'] === 'apiKey') {
+    return rejected('api_key', 'API key authentication is not allowed; sign in with ChatGPT');
+  }
   if (!result['requiresOpenaiAuth']) {
+    const provider = policy.provider ?? { id: 'unknown', name: null };
+    if (policy.allowUnverifiedProvider) return { status: 'unverified_provider', provider };
+    const label = provider.name ? `${provider.name} (${provider.id})` : provider.id;
     return rejected(
       'provider_not_verified',
-      'The active model provider does not use OpenAI authentication, so a ChatGPT plan cannot be verified',
+      `Codex uses the model provider ${label}, which does not use OpenAI authentication, ` +
+        'so the ChatGPT subscription cannot be verified. Enable allowUnverifiedProvider ' +
+        'to use it anyway.',
+      provider,
     );
   }
-  const account = result['account'];
   if (account === null) return { status: 'login_required' };
-  if (!isRecord(account))
-    return rejected('read_failed', 'Malformed account in account/read response');
 
   switch (account['type']) {
     case 'chatgpt': {
@@ -63,8 +128,6 @@ export function interpretAccountRead(result: unknown): CodexAuthState {
       const email = account['email'];
       return { status: 'authorized', email: typeof email === 'string' ? email : null, planType };
     }
-    case 'apiKey':
-      return rejected('api_key', 'API key authentication is not allowed; sign in with ChatGPT');
     default:
       return rejected(
         'unsupported_mode',
@@ -89,50 +152,4 @@ export function downgradeFromAccountUpdated(params: unknown): CodexUnauthorizedS
     'unsupported_mode',
     `The account switched to auth mode ${JSON.stringify(authMode)}`,
   );
-}
-
-export type CodexLoginMethod = 'chatgpt' | 'chatgptDeviceCode';
-
-export type CodexLoginStart =
-  | { readonly type: 'chatgpt'; readonly loginId: string; readonly authUrl: string }
-  | {
-      readonly type: 'chatgptDeviceCode';
-      readonly loginId: string;
-      readonly verificationUrl: string;
-      readonly userCode: string;
-    };
-
-function httpsUrl(value: unknown, field: string): string {
-  if (typeof value === 'string') {
-    try {
-      if (new URL(value).protocol === 'https:') return value;
-    } catch {
-      // reported below
-    }
-  }
-  throw new AppServerError(
-    'protocol',
-    `account/login/start returned a ${field} that is not an https URL`,
-  );
-}
-
-function text(value: unknown, field: string): string {
-  if (typeof value === 'string' && value !== '') return value;
-  throw new AppServerError('protocol', `account/login/start returned no ${field}`);
-}
-
-/** Validates an `account/login/start` result against the method that was requested. */
-export function parseLoginStart(method: CodexLoginMethod, result: unknown): CodexLoginStart {
-  if (!isRecord(result) || result['type'] !== method) {
-    throw new AppServerError('protocol', `account/login/start did not answer with type ${method}`);
-  }
-  const loginId = text(result['loginId'], 'loginId');
-  return method === 'chatgpt'
-    ? { type: method, loginId, authUrl: httpsUrl(result['authUrl'], 'authUrl') }
-    : {
-        type: method,
-        loginId,
-        verificationUrl: httpsUrl(result['verificationUrl'], 'verificationUrl'),
-        userCode: text(result['userCode'], 'userCode'),
-      };
 }

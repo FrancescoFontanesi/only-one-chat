@@ -10,7 +10,7 @@
 //
 // Flags: app-server (required) | --ignore-eof | --exit-at-start | --fail-initialize
 //        --account=<kind> (see ACCOUNTS) | --log=<file> (received messages, JSONL)
-//        --login-url=<url> (URL returned by account/login/start)
+//        --provider=<id> --provider-name=<name> (config/read; `readError` fails it)
 // Unknown arguments (such as Codex `-c key=value` overrides) are ignored.
 
 import { spawn } from 'node:child_process';
@@ -63,6 +63,11 @@ const ACCOUNTS = {
   // A custom model provider (proxy, local model): Codex reports no OpenAI auth requirement.
   customProvider: { account: null, requiresOpenaiAuth: false, workspaceRouting: null },
   customProviderChatgpt: { account: chatgpt, requiresOpenaiAuth: false, workspaceRouting: null },
+  customProviderApiKey: {
+    account: { type: 'apiKey' },
+    requiresOpenaiAuth: false,
+    workspaceRouting: null,
+  },
   missingField: { account: chatgpt },
 };
 // AuthMode values of `account/updated` (lowercase on the wire, e.g. "apikey").
@@ -77,10 +82,6 @@ function setAccount(kind) {
     planType: kind === 'chatgpt' ? 'plus' : null,
   });
 }
-
-/** Logins started and not yet cancelled: loginId -> type. */
-const activeLogins = new Map();
-let nextLogin = 1;
 
 const handlers = {
   'test/received': () => received,
@@ -107,46 +108,22 @@ const handlers = {
     return ACCOUNTS[accountKind];
   },
 
-  'account/login/start': ({ type }, id) => {
-    const url = option('login-url');
-    const loginId = `login-${String(nextLogin++)}`;
-    if (type === 'chatgpt') {
-      activeLogins.set(loginId, type);
-      return {
-        type,
-        loginId,
-        authUrl: url ?? 'https://auth.openai.com/oauth/authorize?x=1',
-      };
+  // Only the fields the client reads; the contract test compares that projection.
+  'config/read': (_params, id) => {
+    if (option('provider') === 'readError') {
+      return send({ id, error: { code: -32603, message: 'failed to read config' } });
     }
-    if (type === 'chatgptDeviceCode') {
-      activeLogins.set(loginId, type);
-      return {
-        type,
-        loginId,
-        verificationUrl: url ?? 'https://auth.openai.com/codex/device',
-        userCode: 'ABCD-1234',
-      };
-    }
-    return send({ id, error: { code: -32600, message: `unsupported login type ${String(type)}` } });
-  },
-
-  // As recorded: the response first, then account/login/completed with success false.
-  'account/login/cancel': ({ loginId }, id) => {
-    const type = activeLogins.get(loginId);
-    if (type === undefined) {
-      return send({ id, error: { code: -32600, message: `invalid login id: ${String(loginId)}` } });
-    }
-    activeLogins.delete(loginId);
-    send({ id, result: { status: 'canceled' } });
-    notify('account/login/completed', {
-      loginId,
-      success: false,
-      error:
-        type === 'chatgpt'
-          ? 'Login server error: Login was not completed'
-          : 'Login was not completed',
-      onboardingEntrypoint: null,
-    });
+    const provider = option('provider');
+    if (provider === undefined) return { config: { model_provider: null, model_providers: {} } };
+    const name = option('provider-name') ?? null;
+    return {
+      config: {
+        model_provider: provider,
+        model_providers: {
+          [provider]: { name, base_url: 'http://127.0.0.1:9/v1', requires_openai_auth: false },
+        },
+      },
+    };
   },
 
   'account/rateLimits/read': (_params, id) => {

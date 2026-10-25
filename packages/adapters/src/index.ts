@@ -20,10 +20,17 @@ export {
 export { resolveCodexExecutable, type ResolveCodexOptions } from './codex/executable.js';
 export {
   CodexAuthError,
+  isUsable,
   type CodexAuthState,
-  type CodexLoginMethod,
-  type CodexLoginStart,
+  type CodexProvider,
   type CodexRejection,
   type CodexUnauthorizedState,
+  type CodexUsableState,
 } from './codex/auth.js';
-export { connectCodex, type CodexSession, type CodexSessionOptions } from './codex/session.js';
+export {
+  connectCodex,
+  deniedReason,
+  type CodexSession,
+  type CodexSessionOptions,
+} from './codex/session.js';
+export { API_KEY_VARIABLES, withoutApiKeys } from './environment.js';

@@ -1,6 +1,6 @@
 # 0005. Solo abbonamenti: gate di autenticazione e profilo Codex dedicato
 
-- Stato: Accettata (2026-10-20)
+- Stato: Sostituita da [0006](0006-personal-cli-profiles.md) (2026-10-25)
 
 ## Contesto
 

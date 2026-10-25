@@ -3,17 +3,17 @@
 //
 // It speaks the wire format itself instead of going through the client under
 // test, so a client bug cannot shape the recording. The launch (arguments and
-// allow-listed environment) comes from `prepareCodexLaunch`, the same function
-// `connectCodex` uses. Everything is redacted in memory before it is written.
+// filtered environment) comes from `prepareCodexLaunch`, the same function
+// `connectCodex` uses, in a throwaway CODEX_HOME with the isolated-profile
+// overrides. Everything is redacted in memory before it is written.
 //
 // Only interactions that use no model quota are scripted: initialize,
-// account/read, starting and cancelling a login, a completed login done by a
-// person, and account/rateLimits/read (two GETs, see docs/codex-app-server.md).
+// account/read, config/read and account/rateLimits/read (which answers before
+// any network call without a login, see docs/codex-app-server.md).
 //
 // Usage (PowerShell):
 //   $env:CODEX_EXECUTABLE = 'F:\...\codex.exe'
-//   $env:CODEX_RECORD_SCENARIO = 'startup' | 'login-cancel' | 'login-complete'
-//   $env:CODEX_RECORD_HOME = 'F:\...\profile'   # required for login-complete only
+//   $env:CODEX_RECORD_SCENARIO = 'startup' | 'custom-provider'
 //   pnpm record:codex
 // Runs under Vitest only to execute TypeScript without new dependencies.
 
@@ -47,7 +47,7 @@ type Entry =
       readonly stdioClosedAtMs: number | null;
     };
 
-const SCENARIOS = ['startup', 'login-cancel', 'login-complete'] as const;
+const SCENARIOS = ['startup', 'custom-provider'] as const;
 type Scenario = (typeof SCENARIOS)[number];
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'test', 'fixtures', 'codex');
@@ -205,6 +205,7 @@ const scenarios: Record<Scenario, (wire: WireRecorder) => Promise<Json>> = {
     const init = await handshake(wire);
     await wire.request('initialize', { clientInfo: CLIENT_INFO }); // "Already initialized"
     await wire.request('account/read', {});
+    await wire.request('config/read', {});
     await wire.request('only-one-chat/unknownMethod', {});
     // Without a login Codex answers before any network call (account_processor.rs:1154).
     await wire.request('account/rateLimits/read', {});
@@ -212,37 +213,25 @@ const scenarios: Record<Scenario, (wire: WireRecorder) => Promise<Json>> = {
     return init;
   },
 
-  /** Starts both official login flows and cancels them; no account is created. */
-  async ['login-cancel'](wire) {
+  /** A custom provider without OpenAI auth: what an unverifiable setup looks like. */
+  async ['custom-provider'](wire) {
     const init = await handshake(wire);
     await wire.request('account/read', {});
-    for (const type of ['chatgptDeviceCode', 'chatgpt']) {
-      const start = result(await wire.request('account/login/start', { type }));
-      await wire.request('account/login/cancel', { loginId: start['loginId'] });
-      await wire.waitForNotification('account/login/completed', 5_000);
-      await wire.idle(500);
-    }
-    await wire.request('account/login/cancel', { loginId: 'only-one-chat-unknown-login' });
+    await wire.request('config/read', {});
     return init;
   },
+};
 
-  /** A person completes a device-code login; then account and rate limits are read. */
-  async ['login-complete'](wire) {
-    const init = await handshake(wire);
-    await wire.request('account/read', {});
-    const start = result(await wire.request('account/login/start', { type: 'chatgptDeviceCode' }));
-    // Shown on the terminal only; the transcript keeps placeholders.
-    console.log(
-      `\n  Open ${String(start['verificationUrl'])}\n  and enter the code ${String(start['userCode'])}\n`,
-    );
-    const done = await wire.waitForNotification('account/login/completed', 15 * 60_000);
-    if (!done) throw new Error('No account/login/completed within 15 minutes');
-    await wire.idle(1_000); // account/updated usually follows
-    await wire.request('account/read', {});
-    await wire.request('account/rateLimits/read', {});
-    await wire.idle(1_500);
-    return init;
-  },
+/** Extra overrides per scenario, on top of the isolated-profile ones. */
+const SCENARIO_OVERRIDES: Record<Scenario, readonly string[]> = {
+  startup: [],
+  // A local endpoint that is never contacted: no turn is started.
+  ['custom-provider']: [
+    'model_provider="recorder-proxy"',
+    'model_providers.recorder-proxy.name="Recorder proxy"',
+    'model_providers.recorder-proxy.base_url="http://127.0.0.1:9/v1"',
+    'model_providers.recorder-proxy.requires_openai_auth=false',
+  ],
 };
 
 function localLiterals(codexHome: string): RedactionLiterals {
@@ -273,20 +262,16 @@ describe.runIf(configuredPath && scenario)('record codex app-server transcript',
       if (!scenario || !SCENARIOS.includes(scenario)) {
         throw new Error(`CODEX_RECORD_SCENARIO must be one of ${SCENARIOS.join(', ')}`);
       }
-      const persistentHome = process.env['CODEX_RECORD_HOME'];
-      if (scenario === 'login-complete' && !persistentHome) {
-        throw new Error('login-complete needs CODEX_RECORD_HOME (a dedicated test profile)');
-      }
-      const codexHome = persistentHome ?? mkdtempSync(join(tmpdir(), 'codex record '));
+      // Always a throwaway profile: recordings never touch the user's own.
+      const codexHome = mkdtempSync(join(tmpdir(), 'codex record '));
       try {
         const executable = await resolveCodexExecutable({ configuredPath: configuredPath ?? '' });
-        const launch = await prepareCodexLaunch(
-          codexHome,
-          process.env,
+        const launch = prepareCodexLaunch(
+          { ...process.env, CODEX_HOME: codexHome },
           [],
-          ISOLATED_PROFILE_OVERRIDES,
+          [...ISOLATED_PROFILE_OVERRIDES, ...SCENARIO_OVERRIDES[scenario]],
         );
-        const literals = localLiterals(codexHome); // after the profile exists, for its real path
+        const literals = localLiterals(codexHome);
         const child = spawn(executable, launch.args, {
           env: launch.env,
           stdio: 'pipe',
@@ -308,9 +293,7 @@ describe.runIf(configuredPath && scenario)('record codex app-server transcript',
           commands: {
             recorder: `CODEX_RECORD_SCENARIO=${scenario} pnpm record:codex`,
             codex: ['<CODEX_EXECUTABLE>', ...launch.args],
-            profile: persistentHome
-              ? 'dedicated test profile (CODEX_RECORD_HOME)'
-              : 'fresh temporary CODEX_HOME',
+            profile: 'fresh temporary CODEX_HOME',
           },
         };
         const text = `${redactTranscript([meta, ...wire.entries], literals)
@@ -328,7 +311,7 @@ describe.runIf(configuredPath && scenario)('record codex app-server transcript',
         writeFileSync(out, text);
         console.log(`wrote ${out}`);
       } finally {
-        if (!persistentHome) rmSync(codexHome, { recursive: true, force: true, maxRetries: 10 });
+        rmSync(codexHome, { recursive: true, force: true, maxRetries: 10 });
       }
     },
     20 * 60_000,

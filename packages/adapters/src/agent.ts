@@ -34,4 +34,16 @@ export interface AgentSession {
   close(): Promise<void>;
 }
 
-export type AgentFactory = (options: { readonly instructions: string }) => Promise<AgentSession>;
+/** Policy for the agent's own sub-agents and the runtime's rules text (D13). */
+export interface AgentSubagentOptions {
+  readonly model: string;
+  readonly effort: string;
+  readonly maxConcurrent: number;
+  readonly forbiddenNames: readonly string[];
+  readonly rules: string;
+}
+
+export type AgentFactory = (options: {
+  readonly instructions: string;
+  readonly subagents?: AgentSubagentOptions;
+}) => Promise<AgentSession>;

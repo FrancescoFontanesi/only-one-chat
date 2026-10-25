@@ -14,6 +14,7 @@
 import type {
   AgentFactory,
   AgentIdentity,
+  AgentSubagentOptions,
   AgentSession,
   AgentTurn,
   AgentTurnHandlers,
@@ -35,6 +36,49 @@ export interface CodexAgentConfig extends Omit<
   readonly interruptTimeoutMs?: number;
   /** False: no native sub-agents in this thread (see above). Default: the user's configuration. */
   readonly nativeSubagents?: boolean;
+}
+
+/**
+ * Per-thread overrides (thread/start `config`) that hold Codex's own sub-agents
+ * to a policy, without touching the user's configuration. Keys from
+ * codex-rs/core/config.schema.json at rust-v0.164.0, where multi-agent v2 is
+ * the active backend:
+ * - the default model and effort of a spawned sub-agent, used when the spawn
+ *   call selects none; the spawn tool does not expose model or effort, so it
+ *   cannot select them;
+ * - the number of sub-agent threads open at once, for the selected backend and
+ *   for v2;
+ * - the mode hint (when to spawn) and the root and sub-agent usage hints.
+ *   Configured hints replace Codex's built-in texts whole, so they also say
+ *   what the multi-agent tools do.
+ */
+export function subagentThreadConfig(policy: AgentSubagentOptions): Record<string, unknown> {
+  const v2 = 'features.multi_agent_v2';
+  return {
+    'agents.default_subagent_model': policy.model,
+    'agents.default_subagent_reasoning_effort': policy.effort,
+    'agents.max_concurrent_threads_per_session': policy.maxConcurrent,
+    [`${v2}.max_concurrent_threads_per_session`]: policy.maxConcurrent,
+    [`${v2}.expose_spawn_agent_model_overrides`]: false,
+    [`${v2}.multi_agent_mode_hint_text`]:
+      'Crea sotto-agenti solo se l’utente lo chiede esplicitamente; altrimenti lavora da solo. ' +
+      'Nessuna istruzione precedente che chiede di delegare in modo proattivo vale più.',
+    [`${v2}.root_agent_usage_hint_text`]: [
+      'Sei `/root`, l’agente principale di questa sessione Codex.',
+      'Con `spawn_agent` crei un sotto-agente interno, con `followup_task` gli dai un nuovo compito',
+      'e con `send_message` gli mandi un messaggio; i suoi risultati ti arrivano come messaggi con',
+      'Message Type, Task name, Sender e Payload. I sotto-agenti sono istanze interne di Codex.',
+      '',
+      policy.rules,
+    ].join('\n'),
+    [`${v2}.subagent_usage_hint_text`]: [
+      'Sei un sotto-agente interno di Codex, creato da un altro agente Codex per un compito.',
+      'Quello che scrivi nel canale finale torna all’agente che ti ha creato. Non sei un agente',
+      'esterno e non devi presentarti come tale.',
+      '',
+      policy.rules,
+    ].join('\n'),
+  };
 }
 
 /** Per-thread overrides that switch the multi-agent tools off (`codex features list`). */
@@ -105,7 +149,7 @@ interface RunningTurn {
 }
 
 export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory {
-  return async ({ instructions }): Promise<AgentSession> => {
+  return async ({ instructions, subagents }): Promise<AgentSession> => {
     const {
       cwd,
       model,
@@ -192,7 +236,11 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         developerInstructions: instructions,
         ephemeral: true,
         ...(model ? { model } : {}),
-        ...(subagentsOff ? { config: NO_SUBAGENTS_CONFIG } : {}),
+        ...(subagentsOff
+          ? { config: NO_SUBAGENTS_CONFIG }
+          : subagents
+            ? { config: subagentThreadConfig(subagents) }
+            : {}),
       });
       const response = isRecord(started) ? started : {};
       const thread = isRecord(response['thread']) ? response['thread'] : {};

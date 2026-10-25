@@ -151,6 +151,48 @@ describe('Codex agent session', () => {
     );
   });
 
+  it('holds sub-agents to the policy with per-thread overrides only', async () => {
+    const received = join(dir, 'received.jsonl');
+    const session = await createCodexAgentFactory({
+      executable: process.execPath,
+      launcherArgs: [FAKE_CODEX, '--account=chatgpt', `--log=${received}`],
+      cwd: dir,
+      model: 'gpt-6-luna',
+      effort: 'low',
+      requestTimeoutMs: 5_000,
+    })({
+      instructions: 'Sei l’orchestratore.',
+      subagents: {
+        model: 'gpt-6-luna',
+        effort: 'low',
+        maxConcurrent: 2,
+        forbiddenNames: ['claude'],
+        rules: 'REGOLE DEL RUNTIME',
+      },
+    });
+    sessions.push(session);
+    const start = readFileSync(received, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+      .find((m) => m.method === 'thread/start');
+    const config = start?.params?.['config'] as Record<string, unknown>;
+    expect(config).toMatchObject({
+      'agents.default_subagent_model': 'gpt-6-luna',
+      'agents.default_subagent_reasoning_effort': 'low',
+      'agents.max_concurrent_threads_per_session': 2,
+      'features.multi_agent_v2.max_concurrent_threads_per_session': 2,
+      'features.multi_agent_v2.expose_spawn_agent_model_overrides': false,
+    });
+    for (const hint of ['root_agent_usage_hint_text', 'subagent_usage_hint_text']) {
+      expect(config[`features.multi_agent_v2.${hint}`]).toContain('REGOLE DEL RUNTIME');
+    }
+    expect(config['features.multi_agent_v2.multi_agent_mode_hint_text']).toMatch(/esplicitamente/);
+    expect(
+      Object.keys(config).every((key) => /^(agents|features\.multi_agent_v2)\./.test(key)),
+    ).toBe(true);
+  });
+
   it('passes no thread config when sub-agents follow the user configuration', async () => {
     const received = join(dir, 'received.jsonl');
     const session = await codex('chatgpt', {

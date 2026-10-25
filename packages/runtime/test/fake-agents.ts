@@ -5,6 +5,7 @@
 import type {
   AgentFactory,
   AgentSession,
+  AgentSessionOptions,
   AgentTurn,
   AgentTurnHandlers,
   ApprovalDecision,
@@ -20,6 +21,8 @@ export interface FakeAgent {
   /** Prompts received, in order. */
   readonly prompts: string[];
   readonly instructions: string[];
+  /** Session options received by the factory, in order. */
+  readonly options: AgentSessionOptions[];
   readonly decisions: ApprovalDecision[];
   readonly stops: number;
   readonly closed: boolean;
@@ -34,6 +37,7 @@ export function fakeAgent(
 ): FakeAgent {
   const prompts: string[] = [];
   const instructions: string[] = [];
+  const options: AgentSessionOptions[] = [];
   const decisions: ApprovalDecision[] = [];
   let stops = 0;
   let closed = false;
@@ -90,12 +94,14 @@ export function fakeAgent(
     },
   };
   return {
-    factory: (options) => {
-      instructions.push(options.instructions);
+    factory: (sessionOptions) => {
+      instructions.push(sessionOptions.instructions);
+      options.push(sessionOptions);
       return Promise.resolve(session);
     },
     prompts,
     instructions,
+    options,
     decisions,
     get stops() {
       return stops;

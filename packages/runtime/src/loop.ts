@@ -15,6 +15,7 @@ import type {
   AgentTurnResult,
   ApprovalRequest,
   ApprovalDecision,
+  SubagentPolicy,
 } from './agent.js';
 import {
   delegationTemplate,
@@ -126,6 +127,11 @@ export interface LoopOptions {
    * to the worker by id, one answer, one correction of a malformed block at most.
    */
   readonly mode?: 'loop' | 'question';
+  /** Policies for the agents' own sub-agents (D13), per role. */
+  readonly subagents?: {
+    readonly orchestrator?: SubagentPolicy;
+    readonly worker?: SubagentPolicy;
+  };
 }
 
 export interface Loop {
@@ -135,6 +141,20 @@ export interface Loop {
 }
 
 export const MAX_EXCHANGES = 3;
+
+/**
+ * Sub-agent and attribution rules shared by every role (D13). The policy
+ * values (model, effort, number) go in subagentRules, passed to the adapter.
+ */
+const AGENT_RULES = [
+  'Sotto-agenti: puoi creare sotto-agenti solo se l’utente lo chiede esplicitamente. Sono istanze',
+  'interne del tuo stesso CLI, non altri agenti. Gli altri agenti di Only One Chat sono esterni:',
+  'li raggiungi solo con il blocco di delega, mai con un sotto-agente. Un sotto-agente non deve mai',
+  'chiamarsi come un agente esterno o come un suo modello (per esempio claude, haiku, gemini, opus)',
+  'né presentarsi come tale.',
+  'Attribuzione: attribuisci a un agente esterno solo ciò che il runtime ti ha restituito come sua',
+  'risposta; il lavoro tuo o dei tuoi sotto-agenti è tuo.',
+];
 
 export const ORCHESTRATOR_INSTRUCTIONS = [
   "Sei l'orchestratore di Only One Chat e coordini un altro agente, il worker.",
@@ -149,6 +169,8 @@ export const ORCHESTRATOR_INSTRUCTIONS = [
   'e nessuna vuota (scrivi "Nessuna" se non ci sono domande aperte); nessun altro testo dentro il',
   'blocco. Quando ricevi il risultato del worker valutalo: se serve un altro passaggio scrivi un',
   'nuovo blocco nello stesso formato, altrimenti scrivi la conclusione per l’utente senza blocchi.',
+  '',
+  ...AGENT_RULES,
 ].join('\n');
 
 export const WORKER_INSTRUCTIONS = [
@@ -157,6 +179,10 @@ export const WORKER_INSTRUCTIONS = [
   'Lavori in sola lettura: puoi leggere e cercare nei file del workspace, non modificarli.',
   "Rispondi seguendo l'Output atteso, rispondi alle Domande aperte e indica le assunzioni che non",
   'hai potuto verificare.',
+  'L’orchestratore è un agente esterno: ti scrive solo tramite il runtime. I tuoi sotto-agenti',
+  'sono interni e vanno creati solo se servono al compito.',
+  '',
+  ...AGENT_RULES.slice(2),
 ].join('\n');
 
 /** Role instructions for `question` mode: ask, do not answer. */
@@ -171,8 +197,21 @@ export function questionInstructions(workerId: string): string {
     'Regole: le righe di apertura e di chiusura del blocco stanno da sole sulla propria riga; le',
     `sezioni sono esattamente ${DELEGATION_SECTIONS.join(', ')}, in quest'ordine, ciascuna con un`,
     'titolo "## " e nessuna vuota (scrivi "Nessuna" se non ci sono domande aperte); la domanda va in',
-    'Obiettivo. Non leggere file e non eseguire comandi: la risposta la dà l’altro agente. Non usare',
-    'sotto-agenti. Fuori dal blocco scrivi al massimo una riga.',
+    'Obiettivo. Non leggere file e non eseguire comandi: la risposta la dà l’altro agente. Fuori dal',
+    'blocco scrivi al massimo una riga.',
+    '',
+    ...AGENT_RULES,
+  ].join('\n');
+}
+
+/** The policy values in words, for the adapter's sub-agent hints. */
+export function subagentRules(policy: SubagentPolicy): string {
+  return [
+    `I sotto-agenti usano sempre il modello ${policy.model} con effort ${policy.effort}: non`,
+    `sceglierne altri. Al massimo ${String(policy.maxConcurrent)} sotto-agenti alla volta. Nomi`,
+    `vietati per un sotto-agente: ${policy.forbiddenNames.join(', ')}.`,
+    '',
+    ...AGENT_RULES,
   ].join('\n');
 }
 
@@ -184,6 +223,12 @@ export function agentLabel(identity: AgentIdentity): string {
     `effort ${identity.effort ?? 'predefinito'}`,
     `sessione ${identity.sessionId}`,
   ].join(' · ');
+}
+
+function sessionOptions(instructions: string, policy: SubagentPolicy | undefined) {
+  return policy
+    ? { instructions, subagents: { ...policy, rules: subagentRules(policy) } }
+    : { instructions };
 }
 
 class Stopped extends Error {}
@@ -338,12 +383,15 @@ export function runLoop(options: LoopOptions): Loop {
     });
     // A question names its recipient, so the worker session exists first.
     let worker: AgentSession | undefined = question
-      ? await options.worker({ instructions: WORKER_INSTRUCTIONS })
+      ? await options.worker(sessionOptions(WORKER_INSTRUCTIONS, options.subagents?.worker))
       : undefined;
     if (worker) sessions.push(worker);
-    const orchestrator = await options.orchestrator({
-      instructions: worker ? questionInstructions(worker.id) : ORCHESTRATOR_INSTRUCTIONS,
-    });
+    const orchestrator = await options.orchestrator(
+      sessionOptions(
+        worker ? questionInstructions(worker.id) : ORCHESTRATOR_INSTRUCTIONS,
+        options.subagents?.orchestrator,
+      ),
+    );
     sessions.push(orchestrator);
 
     let answer = (await turn(orchestrator, 'orchestrator', requestPrompt(options.request))).text;
@@ -393,7 +441,9 @@ export function runLoop(options: LoopOptions): Loop {
       }
 
       exchange++;
-      worker ??= await options.worker({ instructions: WORKER_INSTRUCTIONS });
+      worker ??= await options.worker(
+        sessionOptions(WORKER_INSTRUCTIONS, options.subagents?.worker),
+      );
       if (!sessions.includes(worker)) sessions.push(worker);
       const approved = await intercept({
         kind: 'delegation',

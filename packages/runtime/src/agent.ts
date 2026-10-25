@@ -58,9 +58,30 @@ export interface AgentSession {
   close(): Promise<void>;
 }
 
+/**
+ * What an agent's own sub-agents are held to (D13): internal instances of the
+ * same CLI, created only on explicit request, with the model and effort set
+ * here, at most `maxConcurrent` at a time, never named after an external agent.
+ */
+export interface SubagentPolicy {
+  /** Exact model id the CLI must report for every sub-agent, e.g. "gpt-6-luna". */
+  readonly model: string;
+  /** Effort every sub-agent must run with, e.g. "low". */
+  readonly effort: string;
+  readonly maxConcurrent: number;
+  /** Names of external agents and their models; matched as whole words, any case. */
+  readonly forbiddenNames: readonly string[];
+}
+
 export interface AgentSessionOptions {
   /** Role instructions from the runtime, never read from repository files. */
   readonly instructions: string;
+  /**
+   * The policy for the agent's own sub-agents and the rules text written by the
+   * runtime; the adapter applies them with its CLI's own mechanisms. Absent:
+   * the user's configuration applies.
+   */
+  readonly subagents?: SubagentPolicy & { readonly rules: string };
 }
 
 /** Creates a session for one role; model and effort are the factory's configuration. */

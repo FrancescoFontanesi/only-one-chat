@@ -38,6 +38,7 @@ export type {
   AgentApprovalRequest,
   AgentFactory,
   AgentIdentity,
+  AgentSubagentOptions,
   AgentSession,
   AgentTurn,
   AgentTurnHandlers,
@@ -45,6 +46,7 @@ export type {
 export {
   CodexSubagentError,
   NO_SUBAGENTS_CONFIG,
+  subagentThreadConfig,
   createCodexAgentFactory,
   declineResponse,
   type CodexAgentConfig,

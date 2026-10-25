@@ -30,6 +30,7 @@ export type {
   AgentTurnResult,
   ApprovalDecision,
   ApprovalRequest,
+  SubagentPolicy,
 } from './agent.js';
 export {
   DELEGATION_END,
@@ -50,6 +51,7 @@ export {
   agentLabel,
   fixPrompt,
   questionInstructions,
+  subagentRules,
   requestPrompt,
   reviewPrompt,
   runLoop,

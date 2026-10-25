@@ -105,6 +105,39 @@ describe('a valid delegation', () => {
     expect(claude.instructions[0]).toMatch(/sola lettura/);
   });
 
+  it('states the sub-agent and attribution rules in both roles (D13)', async () => {
+    const codex = fakeAgent('Codex', [{ answer: 'Fine.' }]);
+    const claude = fakeAgent('Claude', []);
+    await (
+      await loop(codex, claude)
+    ).running.done;
+    expect(codex.instructions[0]).toMatch(/solo se l’utente lo chiede esplicitamente/);
+    expect(codex.instructions[0]).toMatch(/solo con il blocco di delega/);
+    expect(codex.instructions[0]).toMatch(/Attribuzione/);
+    expect(codex.options[0]).not.toHaveProperty('subagents');
+  });
+
+  it('passes each role its sub-agent policy with the rules written by the runtime', async () => {
+    const codex = fakeAgent('Codex', [{ answer: delegationBlock() }, { answer: 'Fine.' }]);
+    const claude = fakeAgent('Claude', [{ answer: 'Ok.' }]);
+    const orchestrator = {
+      model: 'gpt-6-luna',
+      effort: 'low',
+      maxConcurrent: 2,
+      forbiddenNames: ['claude', 'haiku'],
+    };
+    const worker = { ...orchestrator, model: 'claude-haiku-5-5', forbiddenNames: ['codex'] };
+    await (
+      await loop(codex, claude, [], [], { subagents: { orchestrator, worker } })
+    ).running.done;
+    expect(codex.options[0]?.subagents).toMatchObject(orchestrator);
+    expect(codex.options[0]?.subagents?.rules).toMatch(/gpt-6-luna con effort low/);
+    expect(codex.options[0]?.subagents?.rules).toMatch(/Al massimo 2/);
+    expect(codex.options[0]?.subagents?.rules).toMatch(/claude, haiku/);
+    expect(claude.options[0]?.subagents).toMatchObject(worker);
+    expect(claude.instructions[0]).toMatch(/L’orchestratore è un agente esterno/);
+  });
+
   it('streams text and logs every message, decision and the outcome as JSONL', async () => {
     const codex = fakeAgent('Codex', [{ answer: delegationBlock() }, { answer: 'Fine.' }]);
     const claude = fakeAgent('Claude', [{ answer: 'Verificato.' }]);

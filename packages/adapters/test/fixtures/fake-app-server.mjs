@@ -4,6 +4,10 @@
 // behaviour; everything is written with fs.writeSync so chunk boundaries and
 // pipe back-pressure are real.
 //
+// Real behaviour wins: shapes, error codes and message order follow the
+// transcripts recorded from Codex in test/fixtures/codex/<version>/, and
+// test/codex-contract.test.ts fails when the two diverge.
+//
 // Flags: app-server (required) | --ignore-eof | --exit-at-start | --fail-initialize
 //        --account=<kind> (see ACCOUNTS) | --log=<file> (received messages, JSONL)
 //        --login-url=<url> (URL returned by account/login/start)
@@ -27,7 +31,12 @@ if (flags.has('--exit-at-start')) {
 }
 
 const out = (text) => writeSync(1, text);
-const send = (message) => out(`${JSON.stringify(message)}\n`);
+// Returns nothing: handlers `return send(...)` to mean "already answered".
+const send = (message) => {
+  out(`${JSON.stringify(message)}\n`);
+};
+// Real notifications carry emittedAtMs next to method and params, not inside params.
+const notify = (method, params) => send({ method, params, emittedAtMs: Date.now() });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const received = [];
@@ -38,17 +47,22 @@ let nextServerRequestId = 1000;
 // `account/read` results, shaped like codex-rs GetAccountResponse.
 const chatgpt = { type: 'chatgpt', email: 'user@example.com', planType: 'plus' };
 const ACCOUNTS = {
-  chatgpt: { account: chatgpt, requiresOpenaiAuth: true },
-  apiKey: { account: { type: 'apiKey' }, requiresOpenaiAuth: true },
-  none: { account: null, requiresOpenaiAuth: true },
+  chatgpt: { account: chatgpt, requiresOpenaiAuth: true, workspaceRouting: null },
+  apiKey: { account: { type: 'apiKey' }, requiresOpenaiAuth: true, workspaceRouting: null },
+  none: { account: null, requiresOpenaiAuth: true, workspaceRouting: null },
   bedrock: {
     account: { type: 'amazonBedrock', usesCodexManagedCredentials: false },
     requiresOpenaiAuth: true,
+    workspaceRouting: null,
   },
-  futureMode: { account: { type: 'quantumToken' }, requiresOpenaiAuth: true },
+  futureMode: {
+    account: { type: 'quantumToken' },
+    requiresOpenaiAuth: true,
+    workspaceRouting: null,
+  },
   // A custom model provider (proxy, local model): Codex reports no OpenAI auth requirement.
-  customProvider: { account: null, requiresOpenaiAuth: false },
-  customProviderChatgpt: { account: chatgpt, requiresOpenaiAuth: false },
+  customProvider: { account: null, requiresOpenaiAuth: false, workspaceRouting: null },
+  customProviderChatgpt: { account: chatgpt, requiresOpenaiAuth: false, workspaceRouting: null },
   missingField: { account: chatgpt },
 };
 // AuthMode values of `account/updated` (lowercase on the wire, e.g. "apikey").
@@ -58,11 +72,15 @@ let accountKind = option('account') ?? 'none';
 
 function setAccount(kind) {
   accountKind = kind;
-  send({
-    method: 'account/updated',
-    params: { authMode: AUTH_MODE[kind] ?? kind, planType: kind === 'chatgpt' ? 'plus' : null },
+  notify('account/updated', {
+    authMode: AUTH_MODE[kind] ?? kind,
+    planType: kind === 'chatgpt' ? 'plus' : null,
   });
 }
+
+/** Logins started and not yet cancelled: loginId -> type. */
+const activeLogins = new Map();
+let nextLogin = 1;
 
 const handlers = {
   'test/received': () => received,
@@ -91,22 +109,58 @@ const handlers = {
 
   'account/login/start': ({ type }, id) => {
     const url = option('login-url');
+    const loginId = `login-${String(nextLogin++)}`;
     if (type === 'chatgpt') {
+      activeLogins.set(loginId, type);
       return {
         type,
-        loginId: 'login-1',
+        loginId,
         authUrl: url ?? 'https://auth.openai.com/oauth/authorize?x=1',
       };
     }
     if (type === 'chatgptDeviceCode') {
+      activeLogins.set(loginId, type);
       return {
         type,
-        loginId: 'login-2',
+        loginId,
         verificationUrl: url ?? 'https://auth.openai.com/codex/device',
         userCode: 'ABCD-1234',
       };
     }
     return send({ id, error: { code: -32600, message: `unsupported login type ${String(type)}` } });
+  },
+
+  // As recorded: the response first, then account/login/completed with success false.
+  'account/login/cancel': ({ loginId }, id) => {
+    const type = activeLogins.get(loginId);
+    if (type === undefined) {
+      return send({ id, error: { code: -32600, message: `invalid login id: ${String(loginId)}` } });
+    }
+    activeLogins.delete(loginId);
+    send({ id, result: { status: 'canceled' } });
+    notify('account/login/completed', {
+      loginId,
+      success: false,
+      error:
+        type === 'chatgpt'
+          ? 'Login server error: Login was not completed'
+          : 'Login was not completed',
+      onboardingEntrypoint: null,
+    });
+  },
+
+  'account/rateLimits/read': (_params, id) => {
+    if (accountKind === 'apiKey') {
+      return send({
+        id,
+        error: { code: -32600, message: 'chatgpt authentication required to read rate limits' },
+      });
+    }
+    // TODO(adapters): a logged-in result needs the recorded login-complete transcript.
+    return send({
+      id,
+      error: { code: -32600, message: 'codex account authentication required to read rate limits' },
+    });
   },
 
   'test/echo': async ({ value, delayMs = 0 }) => {
@@ -127,7 +181,7 @@ const handlers = {
   'test/batch': ({ count }, id) => {
     let text = '';
     for (let i = 0; i < count; i++)
-      text += `${JSON.stringify({ method: 'test/tick', params: { i } })}\n`;
+      text += `${JSON.stringify({ method: 'test/tick', params: { i }, emittedAtMs: Date.now() })}\n`;
     out(`${text}${JSON.stringify({ id, result: 'batched' })}\n`);
   },
 
@@ -210,21 +264,38 @@ async function handle(line) {
       return send({ id, error: { code: -32603, message: 'fake initialize failure' } });
     }
     initialized = true;
-    return send({
+    // Codex puts the client name first: "<name>/<version> (<os>; <arch>) <terminal> (<name>; <version>)".
+    const name = String(params?.clientInfo?.name);
+    send({
       id,
       result: {
-        userAgent: `fake-codex/0.0.0 (${String(params?.clientInfo?.name)})`,
+        userAgent: `${name}/0.0.0-fake (fake-os; ${process.arch}) unknown (${name}; ${String(params?.clientInfo?.version)})`,
         codexHome: '/fake/codex-home',
         platformFamily: process.platform === 'win32' ? 'windows' : 'unix',
-        platformOs: process.platform,
+        platformOs: process.platform === 'win32' ? 'windows' : process.platform,
       },
+    });
+    // Unsolicited, right after the handshake and before any later response.
+    return notify('remoteControl/status/changed', {
+      status: 'disabled',
+      serverName: 'fake-host',
+      installationId: 'fake-installation',
+      environmentId: null,
     });
   }
   if (!initialized) return send({ id, error: { code: -32600, message: 'Not initialized' } });
 
   const handler = handlers[method];
-  if (!handler)
-    return send({ id, error: { code: -32601, message: `Method not found: ${method}` } });
+  // Codex rejects unknown methods while deserializing the request: -32600, not -32601.
+  if (!handler) {
+    return send({
+      id,
+      error: {
+        code: -32600,
+        message: `Invalid request: unknown variant \`${method}\`, expected one of \`initialize\`, …`,
+      },
+    });
+  }
   const result = await handler(params ?? {}, id);
   if (result !== undefined) send({ id, result });
 }

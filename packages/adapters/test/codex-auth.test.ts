@@ -242,7 +242,7 @@ describe('official login methods', () => {
     const session = await connect('none');
     expect(await session.startLogin('chatgptDeviceCode')).toEqual({
       type: 'chatgptDeviceCode',
-      loginId: 'login-2',
+      loginId: 'login-1',
       verificationUrl: 'https://auth.openai.com/codex/device',
       userCode: 'ABCD-1234',
     });

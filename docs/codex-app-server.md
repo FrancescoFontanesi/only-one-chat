@@ -22,6 +22,10 @@ Test: `packages/adapters/test/`.
 | stderr                  | va letto: se il pipe si riempie il trasporto si blocca                                               | `connection_handling_stdio_tests.rs:88-96`                                                              |
 | Arresto                 | la fine di stdin (EOF) avvia lo spegnimento                                                          | `connection_handling_stdio_tests.rs` (`Shutdown::Eof`)                                                  |
 | Cancellazione           | non esiste una cancellazione generica delle richieste                                                | ricerca in `app-server-protocol/src`                                                                    |
+| Metodo sconosciuto      | errore `-32600` "Invalid request: unknown variant …", non `-32601`                                   | transcript 0.164.0 (`startup.jsonl`)                                                                    |
+| Notifiche               | `emittedAtMs` (ms Unix) accanto a `method` e `params`, non dentro `params`                           | transcript 0.164.0; `protocol/common.rs:2101-2114`                                                      |
+| Dopo l'handshake        | notifica non richiesta `remoteControl/status/changed`, prima delle risposte successive               | transcript 0.164.0                                                                                      |
+| `userAgent`             | `<clientInfo.name>/<versione Codex> (<os>; <arch>) <terminale> (<name>; <version>)`                  | transcript 0.164.0                                                                                      |
 
 Documentazione ufficiale: <https://developers.openai.com/codex/app-server>, che oggi
 reindirizza a <https://learn.chatgpt.com/docs/app-server> (consultata il 2026-10-20).
@@ -76,7 +80,29 @@ solo per capire i problemi pratici (shim npm, stderr). Nessun codice è stato ri
   la back-pressure dei pipe sono reali.
 - **Codex reale** (`test/codex-app-server.real.test.ts`): opt-in, impostando
   `CODEX_EXECUTABLE=<percorso di codex.exe>`. Usa un `CODEX_HOME` temporaneo e non
-  effettua chiamate al modello.
+  effettua chiamate al modello. Segnala con un avviso e uno _skip_ motivato quando la
+  versione installata non è fra quelle registrate nelle fixture.
+- **Transcript reali** (`test/fixtures/codex/<versione>/*.jsonl`): registrati da
+  `dev/record-codex.ts` (`pnpm record:codex`, scenario in `CODEX_RECORD_SCENARIO`), che
+  parla il protocollo da solo, senza passare dal client in prova, e avvia Codex con
+  `prepareCodexLaunch`, lo stesso lancio di `connectCodex`. Ogni file inizia con una riga
+  `meta` (versione, `userAgent`, data, comandi). Solo interazioni senza quota del
+  modello. La redaction avviene in memoria prima della scrittura e il file non viene
+  scritto se lo scanner trova ancora qualcosa; `test/codex-fixtures.test.ts` ripete il
+  controllo su tutte le fixture.
+- **Contract test** (`test/codex-contract.test.ts`): i parser e i controlli del client
+  sui messaggi reali, e la parità del fake: i messaggi del client registrati vengono
+  rigiocati contro il fake e le risposte devono avere la stessa forma, gli stessi codici
+  d'errore e lo stesso ordine di quelle reali. Se divergono, si corregge il fake.
+
+## Rate limit
+
+`account/rateLimits/read` (parametri vuoti) non usa quota del modello: legge
+`GET /wham/usage` e `GET /wham/rate-limit-reset-credits` (`backend-client/src/client/
+rate_limit_resets.rs:73-85`, `app-server/src/request_processors/account_processor.rs:
+1150-1190`, tag `rust-v0.164.0`). Senza login risponde `-32600` prima di qualsiasi rete.
+Da non usare: `supportsLunaReserve: true` (registra l'esposizione a un esperimento) e
+`account/rateLimitResetCredit/consume` (`POST`, consuma un credito di reset).
 
 ## Limiti noti
 

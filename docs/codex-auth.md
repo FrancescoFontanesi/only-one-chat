@@ -98,8 +98,23 @@ override presenti prima di `app-server`; profilo personale rifiutato; login `cha
 Mutation test: 14 mutazioni sui controlli di sicurezza, tutte rilevate (vedi il messaggio
 di commit di M1.2).
 
-Con Codex reale: test opt-in (`CODEX_EXECUTABLE`), che si aspetta `login_required` in un
-profilo nuovo. **Non è stato eseguito**, perché nessun `codex.exe` nativo è installato.
+Con Codex CLI 0.164.0 reale (release ufficiale `rust-v0.164.0`, Windows x64), nel profilo
+dedicato e senza login:
+
+- handshake riuscito; `account/read` risponde
+  `{ account: null, requiresOpenaiAuth: true, workspaceRouting: null }`, quindi
+  `login_required` (test opt-in `codex-app-server.real.test.ts`, verde);
+- una richiesta prima di `initialize` riceve `-32600 Not initialized`; un secondo
+  `initialize` riceve `-32600 Already initialized`;
+- `account/login/start` restituisce `{ type, loginId, verificationUrl, userCode }` per
+  `chatgptDeviceCode` e `{ type, loginId, authUrl }` per `chatgpt`, entrambi https e
+  accettati da `parseLoginStart`; `account/login/cancel` risponde
+  `{ status: "canceled" }` e poi notifica `account/login/completed` con `success: false`;
+  un `loginId` sconosciuto riceve `-32600 invalid login id`;
+- `account/rateLimits/read` senza login: `-32600`, senza rete.
+
+Transcript in `packages/adapters/test/fixtures/codex/0.164.0/`. Il caso "autorizzato"
+(login completato) richiede un account reale e non è ancora registrato.
 
 ## Limiti residui
 

@@ -60,7 +60,7 @@ describe('handshake', () => {
     const client = await start();
 
     expect(client.initializeResponse).toMatchObject({
-      userAgent: 'fake-codex/0.0.0 (only-one-chat-tests)',
+      userAgent: expect.stringMatching(/^only-one-chat-tests\/0\.0\.0-fake /) as string,
       codexHome: '/fake/codex-home',
     });
     const received = await client.request('test/received');

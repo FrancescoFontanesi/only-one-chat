@@ -4,13 +4,15 @@
 // directory, so the user's configuration and credentials are never read or
 // changed, no login is started and no model call is made.
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { connectCodex, resolveCodexExecutable } from '../src/index.js';
+import { connectCodex, resolveCodexExecutable, startAppServer } from '../src/index.js';
+import { prepareCodexLaunch } from '../src/codex/session.js';
 
 const configuredPath = process.env['CODEX_EXECUTABLE'];
+const RECORDED_VERSIONS = readdirSync(join(import.meta.dirname, 'fixtures', 'codex'));
 
 describe.runIf(configuredPath)('real codex app-server (CODEX_EXECUTABLE)', () => {
   it('handshakes in a fresh dedicated profile, reports login_required and shuts down', async () => {
@@ -29,6 +31,34 @@ describe.runIf(configuredPath)('real codex app-server (CODEX_EXECUTABLE)', () =>
 
       await session.close();
       expect(exits).toHaveLength(1);
+    } finally {
+      rmSync(codexHome, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  // A different version is not a failure, but the contract tests then describe
+  // another Codex: re-record the fixtures (pnpm record:codex) and compare.
+  it('runs the Codex version the fixtures were recorded with', async (context) => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex home '));
+    try {
+      const executable = await resolveCodexExecutable({ configuredPath: configuredPath ?? '' });
+      const launch = await prepareCodexLaunch(codexHome);
+      const client = await startAppServer({
+        executable,
+        args: launch.args,
+        env: launch.env,
+        clientInfo: { name: 'only-one-chat-real-check', version: '0.0.0' },
+      });
+      const { userAgent } = client.initializeResponse;
+      await client.close();
+      const installed = /\/(\d+\.\d+\.\d+[\w.-]*)/.exec(userAgent)?.[1] ?? userAgent;
+      if (!RECORDED_VERSIONS.includes(installed)) {
+        const note =
+          `Installed Codex ${installed} differs from the recorded fixtures ` +
+          `(${RECORDED_VERSIONS.join(', ')}): re-record with pnpm record:codex`;
+        console.warn(`\n!!! ${note}\n`);
+        context.skip(note);
+      }
     } finally {
       rmSync(codexHome, { recursive: true, force: true });
     }

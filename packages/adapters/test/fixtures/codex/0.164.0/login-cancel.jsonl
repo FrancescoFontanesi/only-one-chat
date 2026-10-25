@@ -1,0 +1,20 @@
+{"type":"meta","scenario":"login-cancel","codexVersion":"0.164.0","userAgent":"only-one-chat-recorder/0.164.0 (Windows 10.0.26200; x86_64) unknown (only-one-chat-recorder; 0.0.0)","recordedAt":"2026-10-24T22:38:48.444Z","platform":"win32-x64","commands":{"recorder":"CODEX_RECORD_SCENARIO=login-cancel pnpm record:codex","codex":["<CODEX_EXECUTABLE>","-c","forced_login_method=\"chatgpt\"","-c","model_provider=\"openai\"","-c","openai_base_url=\"\"","-c","features.plugins=false","app-server"],"profile":"fresh temporary CODEX_HOME"}}
+{"type":"message","dir":"client","atMs":2,"message":{"id":0,"method":"initialize","params":{"clientInfo":{"name":"only-one-chat-recorder","title":"Only One Chat recorder","version":"0.0.0"}}}}
+{"type":"message","dir":"server","atMs":342,"message":{"id":0,"result":{"userAgent":"only-one-chat-recorder/0.164.0 (Windows 10.0.26200; x86_64) unknown (only-one-chat-recorder; 0.0.0)","codexHome":"<CODEX_HOME>","platformFamily":"windows","platformOs":"windows"}}}
+{"type":"message","dir":"client","atMs":342,"message":{"method":"initialized"}}
+{"type":"message","dir":"client","atMs":342,"message":{"id":1,"method":"account/read","params":{}}}
+{"type":"message","dir":"server","atMs":342,"message":{"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"<host>","installationId":"<installation-id-1>","environmentId":null},"emittedAtMs":1792881527016}}
+{"type":"message","dir":"server","atMs":345,"message":{"id":1,"result":{"account":null,"requiresOpenaiAuth":true,"workspaceRouting":null}}}
+{"type":"message","dir":"client","atMs":346,"message":{"id":2,"method":"account/login/start","params":{"type":"chatgptDeviceCode"}}}
+{"type":"message","dir":"server","atMs":710,"message":{"id":2,"result":{"type":"chatgptDeviceCode","loginId":"<login-id-1>","verificationUrl":"https://auth.openai.com/codex/device","userCode":"<user-code-1>"}}}
+{"type":"message","dir":"client","atMs":710,"message":{"id":3,"method":"account/login/cancel","params":{"loginId":"<login-id-1>"}}}
+{"type":"message","dir":"server","atMs":711,"message":{"id":3,"result":{"status":"canceled"}}}
+{"type":"message","dir":"server","atMs":711,"message":{"method":"account/login/completed","params":{"loginId":"<login-id-1>","success":false,"error":"Login was not completed","onboardingEntrypoint":null},"emittedAtMs":1792881527387}}
+{"type":"message","dir":"client","atMs":1212,"message":{"id":4,"method":"account/login/start","params":{"type":"chatgpt"}}}
+{"type":"message","dir":"server","atMs":1213,"message":{"id":4,"result":{"type":"chatgpt","loginId":"<login-id-2>","authUrl":"https://auth.openai.com/oauth/authorize?response_type=<redacted>&client_id=<redacted>&redirect_uri=<redacted>&code_challenge=<redacted>&code_challenge_method=<redacted>&state=<redacted>&scope=<redacted>&id_token_add_organizations=<redacted>&codex_cli_simplified_flow=<redacted>&originator=<redacted>"}}}
+{"type":"message","dir":"client","atMs":1213,"message":{"id":5,"method":"account/login/cancel","params":{"loginId":"<login-id-2>"}}}
+{"type":"message","dir":"server","atMs":1213,"message":{"id":5,"result":{"status":"canceled"}}}
+{"type":"message","dir":"server","atMs":1213,"message":{"method":"account/login/completed","params":{"loginId":"<login-id-2>","success":false,"error":"Login server error: Login was not completed","onboardingEntrypoint":null},"emittedAtMs":1792881527888}}
+{"type":"message","dir":"client","atMs":1729,"message":{"id":6,"method":"account/login/cancel","params":{"loginId":"<login-id-3>"}}}
+{"type":"message","dir":"server","atMs":1730,"message":{"error":{"code":-32600,"message":"invalid login id: <login-id-3>"},"id":6}}
+{"type":"exit","atMs":1769,"code":0,"signal":null,"stdioClosedAtMs":1769}

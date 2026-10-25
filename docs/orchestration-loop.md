@@ -50,8 +50,7 @@ obbligatorio (`<<<DELEGA @<id>`), senza rispondere da solo. Il blocco è interce
 sempre; dopo la risposta del worker il ciclo termina con `answered` (domanda approvata,
 risposta, etichetta), senza review. Una sola correzione di un blocco malformato è
 ammessa (`canAskOrchestrator` diventa falso); se l'orchestratore risponde senza
-delegare, l'esito è `failed`. Nella demo: `pnpm demo --question`, con i sotto-agenti
-nativi di Codex disattivati per il thread.
+delegare, l'esito è `failed`. Nella demo: `pnpm demo --question`.
 
 ## Etichette
 
@@ -92,12 +91,9 @@ poi l'estensione).
 - I turni Codex del fake seguono un turno reale (`question-turn.jsonl`, registrato dalla
   demo con `OOC_CODEX_TRACE` e redatto), confrontato sui campi che il client legge. Il fake
   non emette hook, stati di avvio MCP, uso dei token e rate limit.
-- **Sotto-agenti nativi di Codex** (`subAgentActivity`, `collabAgentToolCall`): scavalcano
-  intercettazione ed effort configurato. Con `nativeSubagents: false` l'adapter li
-  disattiva per il solo thread (`thread/start` `config`: `features.multi_agent` e
-  `features.multi_agent_v2` a `false`) e interrompe il turno con `CodexSubagentError` se
-  ne compare uno. Nel ciclo normale seguono ancora la configurazione dell'utente: il
-  modello da adottare è ancora da decidere.
+- **Sotto-agenti** di ciascun CLI (D13, [subagents.md](subagents.md)): visibili nel thread
+  sotto il turno che li crea, con etichetta del runtime, vincolati dalla policy del ruolo
+  (`LoopOptions.subagents`) e controllati a posteriori; non sono intercettati.
 - La risposta finale di un turno Codex è la concatenazione dei messaggi `agentMessage`
   completati nel turno.
 - Le approvazioni non sono ancora mediate: arriveranno con le prossime iterazioni.

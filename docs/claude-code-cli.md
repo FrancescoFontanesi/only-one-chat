@@ -96,6 +96,15 @@ trasforma in `ClaudeError` `usage_limit`, con un messaggio chiaro e **nessun nuo
 tentativo**; il ciclo si ferma con `failed`. Fixture reale e redatta:
 `turn-usage-limit.jsonl`.
 
+## Sotto-agenti
+
+Con una policy del runtime l'adapter aggiunge lo strumento `Agent` (in `init` compare come
+`Task`) e `--forward-subagent-text`, e impone modello, effort e profondità con l'ambiente del
+processo figlio. Lo stream reale (`turn-subagent.jsonl`) ha il `tool_use` `Agent`, i
+messaggi del sotto-agente con `parent_tool_use_id`, `agent_id` e `subagent_type`, gli eventi
+`system` `task_started`, `task_progress`, `task_updated` e `task_notification`, e il
+`tool_result` finale. Dettagli e verifica: [subagents.md](subagents.md).
+
 ## Etichetta
 
 Ogni risposta porta l'identità osservata dall'adapter, non quella che il modello dichiara:

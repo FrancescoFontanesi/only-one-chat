@@ -43,6 +43,10 @@ const received = [];
 const awaitingClient = new Map();
 let initialized = false;
 let nextServerRequestId = 1000;
+const threads = new Map();
+const turns = [];
+const hanging = new Map();
+let nextTurn = 1;
 
 // `account/read` results, shaped like codex-rs GetAccountResponse.
 const chatgpt = { type: 'chatgpt', email: 'user@example.com', planType: 'plus' };
@@ -87,7 +91,74 @@ const handlers = {
   'test/received': () => received,
   'test/env': () => process.env,
   'test/argv': () => process.argv.slice(2),
-  'turn/start': () => ({ turn: { id: 'turn-1' } }),
+  // Turns follow the v2 protocol shapes (thread.rs, turn.rs, item.rs at
+  // rust-v0.164.0); no real turn has been recorded yet. Markers in the prompt
+  // pick the behaviour: [approval] asks for a command approval first, [hang]
+  // runs until turn/interrupt, [fail] ends with status failed.
+  'thread/start': (params) => {
+    threads.set('thread-1', params);
+    return {
+      thread: { id: 'thread-1' },
+      model: params.model ?? 'fake-model',
+      modelProvider: 'openai',
+      cwd: params.cwd ?? process.cwd(),
+      approvalPolicy: params.approvalPolicy ?? 'on-request',
+      approvalsReviewer: params.approvalsReviewer ?? 'user',
+      sandbox: { type: params.sandbox === 'read-only' ? 'readOnly' : 'workspaceWrite' },
+      reasoningEffort: null,
+    };
+  },
+
+  'turn/start': async (params, id) => {
+    if (params.threadId === undefined) return { turn: { id: 'turn-1' } }; // gate tests
+    const turnId = `turn-${String(nextTurn++)}`;
+    const threadId = params.threadId;
+    const text = params.input?.[0]?.text ?? '';
+    turns.push({ turnId, params });
+    send({ id, result: { turn: { id: turnId, status: 'inProgress', items: [], error: null } } });
+    notify('turn/started', { threadId, turn: { id: turnId, status: 'inProgress', items: [] } });
+    const complete = (status, error = null) =>
+      notify('turn/completed', {
+        threadId,
+        turn: { id: turnId, status, items: [], error: error && { message: error } },
+      });
+    if (text.includes('[hang]')) {
+      hanging.set(turnId, () => complete('interrupted'));
+      return;
+    }
+    if (text.includes('[fail]')) return complete('failed', 'boom');
+    let answer = `Risposta: ${text}`;
+    if (text.includes('[approval]')) {
+      const serverId = nextServerRequestId++;
+      const reply = new Promise((resolve) => awaitingClient.set(serverId, resolve));
+      send({
+        id: serverId,
+        method: 'item/commandExecution/requestApproval',
+        params: { threadId, turnId, itemId: 'cmd-1', command: 'git push', reason: 'needs network' },
+      });
+      answer = `decision=${JSON.stringify((await reply).result ?? (await reply).error)}`;
+    }
+    const itemId = `msg-${turnId}`;
+    const half = Math.ceil(answer.length / 2);
+    for (const delta of [answer.slice(0, half), answer.slice(half)]) {
+      notify('item/agentMessage/delta', { threadId, turnId, itemId, delta });
+    }
+    notify('item/completed', {
+      threadId,
+      turnId,
+      item: { type: 'agentMessage', id: itemId, text: answer },
+    });
+    complete('completed');
+  },
+
+  'turn/interrupt': ({ turnId }) => {
+    const stop = hanging.get(turnId);
+    hanging.delete(turnId);
+    setTimeout(() => stop?.(), 10);
+    return {};
+  },
+
+  'test/turns': () => ({ threads: Object.fromEntries(threads), turns }),
 
   // Switches the account and emits account/updated before responding.
   'test/setAccount': ({ kind }) => {

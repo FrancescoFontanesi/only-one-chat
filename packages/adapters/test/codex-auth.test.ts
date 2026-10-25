@@ -13,6 +13,7 @@ import {
   type CodexSession,
   type CodexSessionOptions,
 } from '../src/index.js';
+import { ISOLATED_PROFILE_OVERRIDES } from '../dev/isolated-profile.js';
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-app-server.mjs');
 
@@ -198,20 +199,38 @@ describe('child process environment and profile', () => {
       'model_provider="openai"',
       '-c',
       'openai_base_url=""',
-      '-c',
-      'features.plugins=false',
       'app-server',
     ]);
   });
 
-  it('disables plugins, and with them the startup sync from GitHub, before app-server', async () => {
-    const session = await connect('chatgpt');
+  it('adds the isolated-profile overrides only when asked, before app-server', async () => {
+    const session = await connect('chatgpt', { configOverrides: ISOLATED_PROFILE_OVERRIDES });
     const argv = (await session.request('test/argv')) as string[];
-    const at = argv.indexOf('features.plugins=false');
-    expect(at).toBeGreaterThan(0);
-    expect(argv[at - 1]).toBe('-c');
-    expect(at).toBeLessThan(argv.indexOf('app-server'));
+    for (const override of ISOLATED_PROFILE_OVERRIDES) {
+      const at = argv.indexOf(override);
+      expect(at).toBeGreaterThan(0);
+      expect(argv[at - 1]).toBe('-c');
+      expect(at).toBeLessThan(argv.indexOf('app-server'));
+    }
   });
+
+  it('never declares the experimentalApi capability that remote control needs', async () => {
+    await expect(connect('chatgpt', { capabilities: { experimentalApi: true } })).rejects.toThrow(
+      /experimentalApi/,
+    );
+    const session = await connect('chatgpt');
+    const received = (await session.request('test/received')) as { params?: unknown }[];
+    expect(JSON.stringify(received[0]?.params)).not.toContain('experimentalApi');
+  });
+
+  it.each(['remoteControl/enable', 'remoteControl/status/read', 'remoteControl/pairing/start'])(
+    'refuses %s without sending it, even when authorized',
+    async (method) => {
+      const session = await connect('chatgpt');
+      await expect(session.request(method, {})).rejects.toThrow(/remote control/);
+      expect(receivedMethods()).not.toContain(method);
+    },
+  );
 
   it.each([
     ['the personal ~/.codex profile', join(homedir(), '.codex')],

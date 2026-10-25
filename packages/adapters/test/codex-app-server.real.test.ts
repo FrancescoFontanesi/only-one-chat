@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { connectCodex, resolveCodexExecutable, startAppServer } from '../src/index.js';
 import { prepareCodexLaunch } from '../src/codex/session.js';
+import { ISOLATED_PROFILE_OVERRIDES } from '../dev/isolated-profile.js';
 
 const configuredPath = process.env['CODEX_EXECUTABLE'];
 const RECORDED_VERSIONS = readdirSync(join(import.meta.dirname, 'fixtures', 'codex'));
@@ -23,6 +24,7 @@ describe.runIf(configuredPath)('real codex app-server (CODEX_EXECUTABLE)', () =>
       const session = await connectCodex({
         executable,
         codexHome,
+        configOverrides: ISOLATED_PROFILE_OVERRIDES,
         clientInfo: { name: 'only-one-chat-real-check', version: '0.0.0' },
         requestTimeoutMs: 30_000,
         onExit: (info) => exits.push(info),
@@ -42,7 +44,12 @@ describe.runIf(configuredPath)('real codex app-server (CODEX_EXECUTABLE)', () =>
     const codexHome = mkdtempSync(join(tmpdir(), 'codex home '));
     try {
       const executable = await resolveCodexExecutable({ configuredPath: configuredPath ?? '' });
-      const launch = await prepareCodexLaunch(codexHome);
+      const launch = await prepareCodexLaunch(
+        codexHome,
+        process.env,
+        [],
+        ISOLATED_PROFILE_OVERRIDES,
+      );
       const client = await startAppServer({
         executable,
         args: launch.args,

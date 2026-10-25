@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'vitest';
 import { resolveCodexExecutable } from '../src/codex/executable.js';
 import { prepareCodexLaunch } from '../src/codex/session.js';
+import { ISOLATED_PROFILE_OVERRIDES } from './isolated-profile.js';
 import { findLeaks, redactTranscript, type RedactionLiterals } from './redact.js';
 
 type Json = Record<string, unknown>;
@@ -279,7 +280,12 @@ describe.runIf(configuredPath && scenario)('record codex app-server transcript',
       const codexHome = persistentHome ?? mkdtempSync(join(tmpdir(), 'codex record '));
       try {
         const executable = await resolveCodexExecutable({ configuredPath: configuredPath ?? '' });
-        const launch = await prepareCodexLaunch(codexHome);
+        const launch = await prepareCodexLaunch(
+          codexHome,
+          process.env,
+          [],
+          ISOLATED_PROFILE_OVERRIDES,
+        );
         const literals = localLiterals(codexHome); // after the profile exists, for its real path
         const child = spawn(executable, launch.args, {
           env: launch.env,

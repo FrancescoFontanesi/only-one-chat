@@ -28,6 +28,11 @@ export interface CodexSessionOptions extends Omit<AppServerOptions, 'args' | 'en
   readonly baseEnv?: NodeJS.ProcessEnv;
   /** Arguments placed before Codex's own, for script-based executables (tests). */
   readonly launcherArgs?: readonly string[];
+  /**
+   * Extra `-c key=value` overrides. Only for isolated test and recorder profiles
+   * (reproducible, no network); production launches pass none.
+   */
+  readonly configOverrides?: readonly string[];
 }
 
 export interface CodexSession {
@@ -50,11 +55,13 @@ const PROFILE_ARGS = [
   'model_provider="openai"',
   '-c',
   'openai_base_url=""',
-  // No plugin startup sync: it fetches github.com/openai/plugins with the user's git
-  // (and ~/.gitconfig), loads content we did not choose and can outlive the server.
-  '-c',
-  'features.plugins=false',
 ];
+
+/**
+ * Remote control lets paired ChatGPT clients drive this app-server from outside.
+ * It stays the user's feature in their profile; this client never asks for it.
+ */
+const REMOTE_CONTROL_PREFIX = 'remoteControl/';
 
 /** Checked at runtime too: callers may pass untyped data. */
 const LOGIN_METHODS: ReadonlySet<string> = new Set(['chatgpt', 'chatgptDeviceCode']);
@@ -144,6 +151,7 @@ export async function prepareCodexLaunch(
   codexHome: string,
   baseEnv: NodeJS.ProcessEnv = process.env,
   launcherArgs: readonly string[] = [],
+  configOverrides: readonly string[] = [],
 ): Promise<CodexLaunch> {
   if (!isAbsolute(codexHome)) {
     throw new Error(`The dedicated Codex profile must be an absolute path: ${codexHome}`);
@@ -154,14 +162,30 @@ export async function prepareCodexLaunch(
   }
   await mkdir(codexHome, { recursive: true });
   return {
-    args: [...launcherArgs, ...PROFILE_ARGS, 'app-server'],
+    args: [
+      ...launcherArgs,
+      ...PROFILE_ARGS,
+      ...configOverrides.flatMap((override) => ['-c', override]),
+      'app-server',
+    ],
     env: childEnvironment(baseEnv, codexHome),
   };
 }
 
 export async function connectCodex(options: CodexSessionOptions): Promise<CodexSession> {
-  const { codexHome, baseEnv = process.env, launcherArgs = [], onNotification, ...rest } = options;
-  const launch = await prepareCodexLaunch(codexHome, baseEnv, launcherArgs);
+  const {
+    codexHome,
+    baseEnv = process.env,
+    launcherArgs = [],
+    configOverrides = [],
+    onNotification,
+    ...rest
+  } = options;
+  // Experimental methods (remote control among them) need this capability: never declared.
+  if (rest.capabilities && 'experimentalApi' in rest.capabilities) {
+    throw new Error('The experimentalApi capability is not allowed');
+  }
+  const launch = await prepareCodexLaunch(codexHome, baseEnv, launcherArgs, configOverrides);
 
   let state: CodexAuthState = rejected('read_failed', 'The account has not been verified yet');
   /** True until a read completes with no account change in between. */
@@ -218,6 +242,9 @@ export async function connectCodex(options: CodexSessionOptions): Promise<CodexS
     async request(method, params, requestOptions) {
       if (method === 'account/login/start') {
         throw new Error('Use startLogin() to start an official ChatGPT login');
+      }
+      if (method.startsWith(REMOTE_CONTROL_PREFIX)) {
+        throw new Error(`${method} is not allowed: remote control is never driven by this client`);
       }
       if (!UNGATED_METHODS.has(method)) await ensureAuthorized();
       return client.request(method, params, requestOptions);

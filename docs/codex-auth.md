@@ -65,13 +65,16 @@ futura UI.
   - `-c model_provider="openai"`: il provider integrato;
   - `-c openai_base_url=""`: una stringa vuota equivale ad assente, quindi si usa
     l'endpoint ufficiale (`core/src/config/mod.rs:3946`).
-  - `-c features.plugins=false`: niente plugin. All'avvio, anche senza login, Codex
-    sincronizzerebbe il catalogo da `https://github.com/openai/plugins.git` con il `git`
-    del `PATH` e chiederebbe i plugin "featured" a `chatgpt.com`. Il profilo dedicato non
-    deve scaricare né caricare contenuti che non abbiamo scelto. Fonti al tag
-    `rust-v0.164.0`: `core-plugins/src/manager.rs:763`, `manager.rs:1286`,
-    `core/src/config/mod.rs:1793`; verificato con il binario reale (nessun processo `git`
-    e nessuna richiesta ai plugin all'avvio).
+- **Profili isolati di test e registratore**: solo lì si aggiungono
+  `-c features.plugins=false` e `-c skills.bundled.enabled=false`
+  (`dev/isolated-profile.ts`), per avere registrazioni riproducibili e senza rete. Senza il
+  primo, all'avvio Codex sincronizza il catalogo da `https://github.com/openai/plugins.git`
+  con il `git` del `PATH` (`core-plugins/src/manager.rs:763`, tag `rust-v0.164.0`). Nei
+  lanci di produzione plugin e skill sono scelte dell'utente.
+- **Remote control**: `session.request()` rifiuta ogni metodo `remoteControl/*` senza
+  inviarlo, e `initialize` non dichiara mai la capability `experimentalApi`, che quei
+  metodi richiedono. La funzione resta dell'utente: nulla viene disattivato nella sua
+  configurazione.
 - **Ambiente in allow-list**: passano solo `PATH`, le variabili di sistema di Windows e
   POSIX, `LANG`, `LC_*`, `TZ`, `TERM`, `XDG_*` e `DBUS_SESSION_BUS_ADDRESS`, più
   `CODEX_HOME`. Restano quindi esclusi per costruzione:

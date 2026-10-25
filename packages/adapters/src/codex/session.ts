@@ -50,6 +50,10 @@ const PROFILE_ARGS = [
   'model_provider="openai"',
   '-c',
   'openai_base_url=""',
+  // No plugin startup sync: it fetches github.com/openai/plugins with the user's git
+  // (and ~/.gitconfig), loads content we did not choose and can outlive the server.
+  '-c',
+  'features.plugins=false',
 ];
 
 /** Checked at runtime too: callers may pass untyped data. */
@@ -125,7 +129,22 @@ function samePath(a: string, b: string): boolean {
   return windows ? x.toLowerCase() === y.toLowerCase() : x === y;
 }
 
-async function prepareProfile(codexHome: string, baseEnv: NodeJS.ProcessEnv): Promise<void> {
+export interface CodexLaunch {
+  /** Arguments for the Codex executable, ending with `app-server`. */
+  readonly args: readonly string[];
+  readonly env: NodeJS.ProcessEnv;
+}
+
+/**
+ * Checks and creates the dedicated profile, then returns how `connectCodex`
+ * launches Codex in it. Exported for dev tools (transcript recorder) so they
+ * cannot drift from the real launch.
+ */
+export async function prepareCodexLaunch(
+  codexHome: string,
+  baseEnv: NodeJS.ProcessEnv = process.env,
+  launcherArgs: readonly string[] = [],
+): Promise<CodexLaunch> {
   if (!isAbsolute(codexHome)) {
     throw new Error(`The dedicated Codex profile must be an absolute path: ${codexHome}`);
   }
@@ -134,11 +153,15 @@ async function prepareProfile(codexHome: string, baseEnv: NodeJS.ProcessEnv): Pr
     throw new Error(`Refusing to use the personal Codex profile ${codexHome}; use a dedicated one`);
   }
   await mkdir(codexHome, { recursive: true });
+  return {
+    args: [...launcherArgs, ...PROFILE_ARGS, 'app-server'],
+    env: childEnvironment(baseEnv, codexHome),
+  };
 }
 
 export async function connectCodex(options: CodexSessionOptions): Promise<CodexSession> {
   const { codexHome, baseEnv = process.env, launcherArgs = [], onNotification, ...rest } = options;
-  await prepareProfile(codexHome, baseEnv);
+  const launch = await prepareCodexLaunch(codexHome, baseEnv, launcherArgs);
 
   let state: CodexAuthState = rejected('read_failed', 'The account has not been verified yet');
   /** True until a read completes with no account change in between. */
@@ -148,8 +171,8 @@ export async function connectCodex(options: CodexSessionOptions): Promise<CodexS
 
   const client = await startAppServer({
     ...rest,
-    args: [...launcherArgs, ...PROFILE_ARGS, 'app-server'],
-    env: childEnvironment(baseEnv, codexHome),
+    args: launch.args,
+    env: launch.env,
     onNotification(method, params) {
       if (method === 'account/updated' || method === 'account/login/completed') {
         generation++;

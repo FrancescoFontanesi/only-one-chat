@@ -198,8 +198,19 @@ describe('child process environment and profile', () => {
       'model_provider="openai"',
       '-c',
       'openai_base_url=""',
+      '-c',
+      'features.plugins=false',
       'app-server',
     ]);
+  });
+
+  it('disables plugins, and with them the startup sync from GitHub, before app-server', async () => {
+    const session = await connect('chatgpt');
+    const argv = (await session.request('test/argv')) as string[];
+    const at = argv.indexOf('features.plugins=false');
+    expect(at).toBeGreaterThan(0);
+    expect(argv[at - 1]).toBe('-c');
+    expect(at).toBeLessThan(argv.indexOf('app-server'));
   });
 
   it.each([

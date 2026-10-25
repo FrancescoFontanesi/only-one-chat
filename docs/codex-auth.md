@@ -65,6 +65,13 @@ futura UI.
   - `-c model_provider="openai"`: il provider integrato;
   - `-c openai_base_url=""`: una stringa vuota equivale ad assente, quindi si usa
     l'endpoint ufficiale (`core/src/config/mod.rs:3946`).
+  - `-c features.plugins=false`: niente plugin. All'avvio, anche senza login, Codex
+    sincronizzerebbe il catalogo da `https://github.com/openai/plugins.git` con il `git`
+    del `PATH` e chiederebbe i plugin "featured" a `chatgpt.com`. Il profilo dedicato non
+    deve scaricare né caricare contenuti che non abbiamo scelto. Fonti al tag
+    `rust-v0.164.0`: `core-plugins/src/manager.rs:763`, `manager.rs:1286`,
+    `core/src/config/mod.rs:1793`; verificato con il binario reale (nessun processo `git`
+    e nessuna richiesta ai plugin all'avvio).
 - **Ambiente in allow-list**: passano solo `PATH`, le variabili di sistema di Windows e
   POSIX, `LANG`, `LC_*`, `TZ`, `TERM`, `XDG_*` e `DBUS_SESSION_BUS_ADDRESS`, più
   `CODEX_HOME`. Restano quindi esclusi per costruzione:
@@ -110,6 +117,12 @@ profilo nuovo. **Non è stato eseguito**, perché nessun `codex.exe` nativo è i
 - **Archivio delle credenziali.** Dove Codex salva il login del profilo dedicato (file nel
   profilo oppure keyring di sistema) dipende da Codex. Non lo verifichiamo, per non
   leggere le credenziali.
+- **Configurazione globale dei processi lanciati da Codex.** Il filtro dell'ambiente
+  vale per Codex, non per la configurazione su disco dei programmi che Codex avvia: oggi
+  `git` per la sincronizzazione dei plugin (disattivata dall'override), domani i comandi
+  eseguiti durante i turni. Questi leggono la configurazione globale dell'utente, per
+  esempio `~/.gitconfig` con `http.proxy`, `url.*.insteadOf` o i credential helper.
+  Non è sotto il nostro controllo.
 - **Proxy aziendali.** Un ambiente che richiede `HTTPS_PROXY` per uscire non funziona:
   oggi le variabili proxy vengono sempre escluse. Serve un opt-in esplicito futuro.
 - **Piano.** Non viene fatta alcuna distinzione fra i piani ChatGPT (`free`, `plus`,

@@ -12,6 +12,7 @@
 //
 // Usage (PowerShell):
 //   $env:CLAUDE_RECORD_FROM = 'C:\...\capture.jsonl'; $env:CLAUDE_RECORD_ARGS = '<args as JSON>'
+//   $env:CLAUDE_RECORD_SCENARIO = 'turn-usage-limit'   # optional, default turn-ok
 //   pnpm record:claude
 
 import { spawn } from 'node:child_process';
@@ -68,6 +69,8 @@ async function liveCapture(executable: string, args: readonly string[]): Promise
 }
 
 const from = process.env['CLAUDE_RECORD_FROM'];
+/** Fixture name: turn-ok, or turn-usage-limit for a capture rejected with 429. */
+const scenario = process.env['CLAUDE_RECORD_SCENARIO'] ?? 'turn-ok';
 const live =
   process.env['CLAUDE_RECORD_LIVE'] === '1' ? process.env['CLAUDE_EXECUTABLE'] : undefined;
 
@@ -97,7 +100,7 @@ describe.runIf(from ?? live)('record a Claude stream-json fixture', () => {
       typeof init?.['claude_code_version'] === 'string' ? init['claude_code_version'] : 'unknown';
     const meta = {
       type: 'meta',
-      scenario: 'turn-ok',
+      scenario,
       claudeVersion: version,
       recordedAt: new Date().toISOString(),
       platform: `${process.platform}-${process.arch}`,
@@ -118,7 +121,7 @@ describe.runIf(from ?? live)('record a Claude stream-json fixture', () => {
         `Fixture not written, possible leaks: ${leaks.map((l) => `${l.kind} ${l.match}`).join('; ')}`,
       );
     }
-    const out = join(FIXTURES, version, 'turn-ok.jsonl');
+    const out = join(FIXTURES, version, `${scenario}.jsonl`);
     mkdirSync(dirname(out), { recursive: true });
     writeFileSync(out, text);
     console.log(`wrote ${out}`);

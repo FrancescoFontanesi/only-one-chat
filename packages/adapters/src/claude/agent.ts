@@ -3,7 +3,7 @@
 // Claude session, so the worker keeps its context across exchanges.
 
 import type { AgentFactory, AgentSession, AgentTurn, AgentTurnHandlers } from '../agent.js';
-import { startClaudeTurn, type ClaudeTurn, type ClaudeTurnOptions } from './turn.js';
+import { ClaudeError, startClaudeTurn, type ClaudeTurn, type ClaudeTurnOptions } from './turn.js';
 
 export type ClaudeAgentConfig = Omit<
   ClaudeTurnOptions,
@@ -31,7 +31,7 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
           } else if (event.type === 'init') {
             handlers.onActivity?.({
               kind: 'session',
-              detail: `${event.model} (${event.sessionId})`,
+              detail: `${event.model} (${event.sessionId}), permission mode ${event.permissionMode}`,
             });
           }
         },
@@ -41,6 +41,12 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
         sessionId = result.sessionId;
         for (const denial of result.permissionDenials) {
           handlers.onActivity?.({ kind: 'permission_denied', detail: JSON.stringify(denial) });
+        }
+        if (result.isError && result.apiErrorStatus === 429) {
+          throw new ClaudeError(
+            'usage_limit',
+            `Claude usage limit reached: ${result.text}. Not retried: try again after the reset.`,
+          );
         }
         if (result.isError) throw new Error(`Claude turn failed: ${result.text}`);
         return { text: result.text };

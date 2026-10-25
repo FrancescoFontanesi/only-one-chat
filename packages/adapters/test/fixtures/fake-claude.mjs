@@ -8,6 +8,8 @@
 //        --logged-out | --auth-method=<m> | --api-provider=<p> | --auth-malformed
 //        --api-key-source=<s> (in the init event) | --echo (answer with the prompt)
 //        --hang (no result; a grandchild keeps the pipes open) | --exit-early
+//        --scenario=<fixture> (default turn-ok; turn-usage-limit is a 429 rejection)
+//        --permission-mode-reported=<m> (in the init event; default: the -p argument)
 // Real Claude arguments (-p, --model, …) are accepted and ignored.
 
 import { spawn } from 'node:child_process';
@@ -47,7 +49,8 @@ if (argv.includes('auth') && argv.includes('status')) {
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), 'claude');
 const version = readdirSync(fixtures).sort().at(-1);
-const recorded = readFileSync(join(fixtures, version, 'turn-ok.jsonl'), 'utf8')
+const scenario = option('scenario') ?? 'turn-ok';
+const recorded = readFileSync(join(fixtures, version, `${scenario}.jsonl`), 'utf8')
   .split('\n')
   .filter(Boolean)
   .map((line) => JSON.parse(line))
@@ -66,6 +69,10 @@ input.on('line', (line) => {
     if (message.type === 'system' && message.subtype === 'init') {
       message.cwd = process.cwd();
       if (option('api-key-source')) message.apiKeySource = option('api-key-source');
+      const mode = argv[argv.indexOf('--permission-mode') + 1];
+      message.permissionMode =
+        option('permission-mode-reported') ??
+        (argv.includes('--permission-mode') ? mode : 'default');
       send(message);
       if (flag('exit-early')) process.exit(4);
       if (flag('hang')) {

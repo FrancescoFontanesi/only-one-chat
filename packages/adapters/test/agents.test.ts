@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  ClaudeError,
   CodexAuthError,
   createClaudeAgentFactory,
   createCodexAgentFactory,
@@ -151,10 +152,10 @@ describe('Codex agent session', () => {
 describe('Claude agent session', () => {
   const log = () => join(dir, 'claude.jsonl');
 
-  function claude() {
+  function claude(fakeFlags: string[] = ['--echo']) {
     return createClaudeAgentFactory({
       executable: process.execPath,
-      launcherArgs: [FAKE_CLAUDE, `--log=${log()}`, '--echo'],
+      launcherArgs: [FAKE_CLAUDE, `--log=${log()}`, ...fakeFlags],
       cwd: dir,
       model: 'haiku',
       effort: 'low',
@@ -182,7 +183,29 @@ describe('Claude agent session', () => {
 
     const [first, second] = turnArgs();
     expect(first?.[first.indexOf('--append-system-prompt') + 1]).toBe('Sei il worker.');
+    expect(first?.[first.indexOf('--permission-mode') + 1]).toBe('default');
     expect(first).not.toContain('--resume');
     expect(second?.[second.indexOf('--resume') + 1]).toBe('<session-id-1>');
+  });
+
+  it('stops a turn whose init reports another permission mode', async () => {
+    const session = await claude(['--permission-mode-reported=acceptEdits']);
+    sessions.push(session);
+    const error: unknown = await session
+      .runTurn('domanda', handlers().value)
+      .done.catch((reason: unknown) => reason);
+    expect(error).toMatchObject({ kind: 'permission_mode' });
+  });
+
+  it('stops on the recorded usage limit (429) with a clear error and no retry', async () => {
+    const session = await claude(['--scenario=turn-usage-limit']);
+    sessions.push(session);
+    const error: unknown = await session
+      .runTurn('delega', handlers().value)
+      .done.catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ClaudeError);
+    expect(error).toMatchObject({ kind: 'usage_limit' });
+    expect((error as Error).message).toMatch(/usage limit reached: You've hit your session limit/);
+    expect(turnArgs()).toHaveLength(1);
   });
 });

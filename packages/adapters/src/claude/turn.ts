@@ -7,6 +7,8 @@
 //    claude.ai login on the first-party API, or the prompt is never sent;
 // 2. the `system/init` event must report `apiKeySource: "none"`, or the
 //    process tree is terminated at once.
+// The permission mode is passed explicitly (`default`, whatever the user's
+// settings say) and the turn is stopped the same way if init reports another.
 // A custom base URL (ANTHROPIC_BASE_URL, e.g. a local proxy) cannot be verified
 // and needs `allowUnverifiedProvider`, as for Codex.
 
@@ -23,16 +25,21 @@ export type ClaudeErrorKind =
   | 'auth_check_failed'
   | 'spawn'
   | 'exited'
-  | 'stopped';
+  | 'stopped'
+  /** init reported a permission mode other than the one passed. */
+  | 'permission_mode'
+  /** The subscription's usage limit is exhausted (HTTP 429); never retried here. */
+  | 'usage_limit';
 
 export class ClaudeError extends Error {
   override readonly name = 'ClaudeError';
 
-  constructor(
-    readonly kind: ClaudeErrorKind,
-    message: string,
-  ) {
+  readonly kind: ClaudeErrorKind;
+
+  // A plain field rather than a parameter property: runnable with Node's type stripping.
+  constructor(kind: ClaudeErrorKind, message: string) {
     super(message);
+    this.kind = kind;
   }
 }
 
@@ -49,6 +56,9 @@ const DENIED_TOOLS = [
   'WebSearch',
 ];
 
+/** Accepted by Claude Code 2.1.308 although --help lists only the other modes. */
+export const PERMISSION_MODE = 'default';
+
 export type ClaudeBilling = 'subscription' | 'unverified_provider';
 
 export type ClaudeEvent =
@@ -57,6 +67,7 @@ export type ClaudeEvent =
       readonly sessionId: string;
       readonly model: string;
       readonly apiKeySource: string;
+      readonly permissionMode: string;
       readonly tools: readonly string[];
     }
   | { readonly type: 'text'; readonly text: string }
@@ -66,9 +77,13 @@ export type ClaudeEvent =
 
 export interface ClaudeTurnResult {
   readonly sessionId: string;
+  /** Model reported by the init event (e.g. `claude-haiku-5-5`). */
+  readonly model: string;
   /** Final answer (`result` of the stream). */
   readonly text: string;
   readonly isError: boolean;
+  /** HTTP status of the API error that ended the turn (`api_error_status`), if any. */
+  readonly apiErrorStatus: number | null;
   readonly billing: ClaudeBilling;
   readonly permissionDenials: readonly unknown[];
 }
@@ -142,6 +157,9 @@ export function claudeTurnArgs(options: ClaudeTurnOptions): string[] {
     // Anything that would ask for permission is denied: nobody answers in -p mode.
     '--permission-prompts',
     'none',
+    // Explicit, so the user's defaultMode (acceptEdits, bypassPermissions, …) never applies.
+    '--permission-mode',
+    PERMISSION_MODE,
     ...(options.model ? ['--model', options.model] : []),
     ...(options.effort ? ['--effort', options.effort] : []),
     ...(options.appendSystemPrompt ? ['--append-system-prompt', options.appendSystemPrompt] : []),
@@ -249,6 +267,7 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
 
     return new Promise<ClaudeTurnResult>((resolve, reject) => {
       let sessionId = '';
+      let model = '';
       let settled = false;
       const settle = (outcome: () => void) => {
         if (settled) return;
@@ -273,21 +292,32 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
         if (type === 'system' && message['subtype'] === 'init') {
           sessionId = typeof message['session_id'] === 'string' ? message['session_id'] : '';
           const apiKeySource = String(message['apiKeySource']);
+          const permissionMode = String(message['permissionMode']);
+          model = String(message['model']);
           options.onEvent?.({
             type: 'init',
             sessionId,
-            model: String(message['model']),
+            model,
             apiKeySource,
+            permissionMode,
             tools: Array.isArray(message['tools']) ? message['tools'].map(String) : [],
           });
-          if (apiKeySource !== 'none') {
-            const error = new ClaudeError(
-              'api_key',
-              `Claude reported the API key source ${JSON.stringify(apiKeySource)}; the turn was stopped`,
-            );
+          const refusal =
+            apiKeySource !== 'none'
+              ? new ClaudeError(
+                  'api_key',
+                  `Claude reported the API key source ${JSON.stringify(apiKeySource)}; the turn was stopped`,
+                )
+              : permissionMode !== PERMISSION_MODE
+                ? new ClaudeError(
+                    'permission_mode',
+                    `Claude reported the permission mode ${JSON.stringify(permissionMode)} instead of "${PERMISSION_MODE}"; the turn was stopped`,
+                  )
+                : undefined;
+          if (refusal) {
             settled = true;
             void terminate().then(() => {
-              reject(error);
+              reject(refusal);
             });
           }
         } else if (type === 'assistant' && isRecord(message['message'])) {
@@ -312,8 +342,11 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
           const result: ClaudeTurnResult = {
             sessionId:
               typeof message['session_id'] === 'string' ? message['session_id'] : sessionId,
+            model,
             text: typeof message['result'] === 'string' ? message['result'] : '',
             isError: message['is_error'] === true,
+            apiErrorStatus:
+              typeof message['api_error_status'] === 'number' ? message['api_error_status'] : null,
             billing,
             permissionDenials: Array.isArray(message['permission_denials'])
               ? message['permission_denials']

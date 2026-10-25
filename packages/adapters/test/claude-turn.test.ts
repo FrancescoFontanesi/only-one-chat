@@ -139,8 +139,10 @@ describe('a turn', () => {
 
     expect(result).toEqual({
       sessionId: '<session-id-1>',
+      model: 'claude-haiku-5-5',
       text: 'OK',
       isError: false,
+      apiErrorStatus: null,
       billing: 'subscription',
       permissionDenials: [],
     });

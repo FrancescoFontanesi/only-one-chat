@@ -15,7 +15,6 @@ import {
   downgradeFromAccountUpdated,
   interpretAccountRead,
   isUsable,
-  needsProvider,
   providerFromConfig,
   rejected,
   type CodexAuthState,
@@ -43,12 +42,21 @@ export interface CodexSessionOptions extends Omit<AppServerOptions, 'args' | 'en
 export interface CodexSession {
   /** Latest known account state. */
   readonly auth: CodexAuthState;
+  /**
+   * The model provider from the last `config/read`, with its base URL and
+   * whether that is a proxy rather than OpenAI; null when it could not be read.
+   * Informational (a "via proxy" indicator): the account state decides access.
+   */
+  readonly provider: CodexProvider | null;
   /** Reads the account again (`account/read`). */
   verifyAccount(): Promise<CodexAuthState>;
   /** Sends a request; anything but the account read requires a usable account. */
   request(method: string, params?: unknown, options?: RequestOptions): Promise<unknown>;
   close(): Promise<void>;
 }
+
+/** Account reads attempted at startup while concurrent changes discard them. */
+const STARTUP_READS = 3;
 
 /** Methods that only read the account: allowed before it is verified. */
 const UNGATED_METHODS = new Set(['account/read']);
@@ -145,20 +153,29 @@ export async function connectCodex(options: CodexSessionOptions): Promise<CodexS
     }
   }
 
-  async function verifyAccount(): Promise<CodexAuthState> {
+  let provider: CodexProvider | null = null;
+
+  /** Reads the account; false when a concurrent change discarded the answer. */
+  async function readAccount(): Promise<boolean> {
     const started = generation;
     let next: CodexAuthState;
     try {
       const result = await client.request('account/read', {});
-      const provider = needsProvider(result) ? await readProvider() : null;
+      // Read every time, so the provider and its base URL are always known.
+      provider = await readProvider();
       next = interpretAccountRead(result, { allowUnverifiedProvider, provider });
     } catch (error) {
       next = rejected('read_failed', error instanceof Error ? error.message : String(error));
     }
     // A change arrived while reading: the answer may predate it, so stay stale.
-    if (generation !== started) return state;
+    if (generation !== started) return false;
     state = next;
     stale = false;
+    return true;
+  }
+
+  async function verifyAccount(): Promise<CodexAuthState> {
+    await readAccount();
     return state;
   }
 
@@ -169,12 +186,18 @@ export async function connectCodex(options: CodexSessionOptions): Promise<CodexS
       throw new CodexAuthError(rejected('read_failed', 'The account changed during verification'));
   }
 
-  // The account check precedes anything else sent on this connection.
-  await verifyAccount();
+  // The account check precedes anything else sent on this connection. Codex
+  // announces the account (account/updated) once at startup, often while the
+  // first read is in flight: read again, a bounded number of times, until one
+  // read completes with no change in between.
+  for (let attempt = 0; attempt < STARTUP_READS && !(await readAccount()); attempt++);
 
   return {
     get auth() {
       return state;
+    },
+    get provider() {
+      return provider;
     },
     verifyAccount,
     async request(method, params, requestOptions) {

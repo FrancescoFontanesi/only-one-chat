@@ -67,11 +67,41 @@ async function authFailure(promise: Promise<unknown>): Promise<CodexAuthError> {
 }
 
 const PROXY = ['--provider=headroom', '--provider-name=Headroom persistent proxy'];
+const HEADROOM = {
+  id: 'headroom',
+  name: 'Headroom persistent proxy',
+  baseUrl: 'http://127.0.0.1:9/v1',
+  unofficialBaseUrl: true,
+};
 
 describe('account verification', () => {
   it('verifies the account right after the handshake, before anything else', async () => {
-    await connect('chatgpt');
-    expect(receivedMethods()).toEqual(['initialize', 'initialized', 'account/read']);
+    await connect('none');
+    expect(receivedMethods()).toEqual(['initialize', 'initialized', 'account/read', 'config/read']);
+  });
+
+  it('reads again when the startup announcement of the account races the first read', async () => {
+    const notifications: string[] = [];
+    const session = await connect('chatgpt', {
+      onNotification: (method) => notifications.push(method),
+    });
+    expect(notifications).toContain('account/updated');
+    expect(session.auth).toMatchObject({ status: 'authorized', planType: 'plus' });
+    expect(receivedMethods()).toEqual([
+      'initialize',
+      'initialized',
+      'account/read',
+      'config/read',
+      'account/read',
+      'config/read',
+    ]);
+  });
+
+  it('gives up after three startup reads that all raced with a change', async () => {
+    const session = await connect('updateOnEveryRead');
+    expect(session.auth).toMatchObject({ status: 'rejected', reason: 'read_failed' });
+    expect(receivedMethods().filter((method) => method === 'account/read')).toHaveLength(3);
+    await authFailure(session.request('turn/start'));
   });
 
   it('authorizes a ChatGPT account and then lets requests through', async () => {
@@ -131,7 +161,7 @@ describe('providers that cannot be verified', () => {
     'refuses %s by default, naming the provider and how to allow it',
     async (kind) => {
       const session = await connect(kind, {}, PROXY);
-      const provider = { id: 'headroom', name: 'Headroom persistent proxy' };
+      const provider = HEADROOM;
       expect(session.auth).toMatchObject({
         status: 'rejected',
         reason: 'provider_not_verified',
@@ -140,23 +170,15 @@ describe('providers that cannot be verified', () => {
       const error = await authFailure(session.request('turn/start'));
       expect(error.message).toMatch(/Headroom persistent proxy/);
       expect(error.message).toMatch(/allowUnverifiedProvider/);
-      expect(receivedMethods()).toEqual([
-        'initialize',
-        'initialized',
-        'account/read',
-        'config/read',
-        'account/read',
-        'config/read',
-      ]);
+      // A rejected state is read again before refusing the request.
+      expect(receivedMethods().slice(-2)).toEqual(['account/read', 'config/read']);
+      expect(receivedMethods()).not.toContain('turn/start');
     },
   );
 
   it('accepts it as unverified_provider when allowUnverifiedProvider is on', async () => {
     const session = await connect('customProvider', { allowUnverifiedProvider: true }, PROXY);
-    expect(session.auth).toEqual({
-      status: 'unverified_provider',
-      provider: { id: 'headroom', name: 'Headroom persistent proxy' },
-    });
+    expect(session.auth).toEqual({ status: 'unverified_provider', provider: HEADROOM });
     expect(await session.request('turn/start')).toEqual({ turn: { id: 'turn-1' } });
   });
 
@@ -165,13 +187,25 @@ describe('providers that cannot be verified', () => {
     expect(session.auth).toMatchObject({
       status: 'rejected',
       reason: 'provider_not_verified',
-      provider: { id: 'unknown', name: null },
+      provider: { id: 'unknown', name: null, baseUrl: null, unofficialBaseUrl: true },
     });
+    expect(session.provider).toBeNull();
   });
 
-  it('does not read the configuration for a provider with OpenAI authentication', async () => {
-    await connect('chatgpt', {}, PROXY);
-    expect(receivedMethods()).not.toContain('config/read');
+  it('exposes the provider and its proxy base URL with OpenAI authentication too', async () => {
+    const session = await connect('chatgpt', {}, PROXY);
+    expect(session.auth).toMatchObject({ status: 'authorized' });
+    expect(session.provider).toEqual(HEADROOM);
+  });
+
+  it('marks the built-in OpenAI provider as official', async () => {
+    const session = await connect('chatgpt');
+    expect(session.provider).toEqual({
+      id: 'openai',
+      name: null,
+      baseUrl: null,
+      unofficialBaseUrl: false,
+    });
   });
 });
 
@@ -188,8 +222,11 @@ describe('account changes', () => {
   it('re-reads the account after an update instead of trusting the notification', async () => {
     const session = await connect('chatgpt');
     await session.request('test/setAccount', { kind: 'chatgpt' });
+    const before = receivedMethods().filter((method) => method === 'account/read').length;
     await session.request('turn/start');
-    expect(receivedMethods().filter((method) => method === 'account/read')).toHaveLength(2);
+    expect(receivedMethods().filter((method) => method === 'account/read')).toHaveLength(
+      before + 1,
+    );
   });
 
   it('does not keep an authorization that was read while the account was changing', async () => {

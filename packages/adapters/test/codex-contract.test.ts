@@ -12,6 +12,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { afterEach, describe, expect, it } from 'vitest';
+import { projectCodexConfig } from '../dev/redact.js';
 import { interpretAccountRead, providerFromConfig } from '../src/codex/auth.js';
 
 type Json = Record<string, unknown>;
@@ -63,15 +64,26 @@ function exchanges(entries: Entry[]): { request: Json; response: Json }[] {
     });
 }
 
+/** Result of the first successful exchange of `method` in a transcript. */
+function result(entries: Entry[] | undefined, method: string): unknown {
+  return exchanges(entries ?? []).find(
+    (e) => e.request['method'] === method && 'result' in e.response,
+  )?.response['result'];
+}
+
 const startup = load('startup');
 const customProvider = load('custom-provider');
+const personalStartup = load('personal-startup');
 
 describe(`recorded Codex ${RECORDED_VERSION}: what the client accepts`, () => {
-  const all = [startup, customProvider].filter((t): t is Entry[] => t !== undefined);
+  const all = [startup, customProvider, personalStartup].filter(
+    (t): t is Entry[] => t !== undefined,
+  );
 
   it('has the transcripts to check', () => {
     expect(startup).toBeDefined();
     expect(customProvider).toBeDefined();
+    expect(personalStartup).toBeDefined();
   });
 
   it('answers every request with a result or a well-formed error, never both', () => {
@@ -114,10 +126,6 @@ describe(`recorded Codex ${RECORDED_VERSION}: what the client accepts`, () => {
     });
   });
 
-  const result = (entries: Entry[] | undefined, method: string): unknown =>
-    exchanges(entries ?? []).find((e) => e.request['method'] === method && 'result' in e.response)
-      ?.response['result'];
-
   it('reports a fresh profile as login_required, with nothing else needed', () => {
     expect(
       interpretAccountRead(result(startup, 'account/read'), { allowUnverifiedProvider: false }),
@@ -128,12 +136,19 @@ describe(`recorded Codex ${RECORDED_VERSION}: what the client accepts`, () => {
     expect(providerFromConfig(result(startup, 'config/read'))).toEqual({
       id: 'openai',
       name: null,
+      baseUrl: null,
+      unofficialBaseUrl: false,
     });
   });
 
   it('names a custom provider and refuses it unless allowed', () => {
     const provider = providerFromConfig(result(customProvider, 'config/read'));
-    expect(provider).toEqual({ id: 'recorder-proxy', name: 'Recorder proxy' });
+    expect(provider).toEqual({
+      id: 'recorder-proxy',
+      name: 'Recorder proxy',
+      baseUrl: 'http://127.0.0.1:9/v1',
+      unofficialBaseUrl: true,
+    });
     const read = result(customProvider, 'account/read');
     expect(interpretAccountRead(read, { allowUnverifiedProvider: false, provider })).toMatchObject({
       status: 'rejected',
@@ -144,6 +159,48 @@ describe(`recorded Codex ${RECORDED_VERSION}: what the client accepts`, () => {
       status: 'unverified_provider',
       provider,
     });
+  });
+});
+
+describe('recorded personal profile (signed in with ChatGPT, behind Headroom)', () => {
+  const server = () => messages(personalStartup ?? [], 'server');
+
+  it('announces the account while the first account/read is in flight', () => {
+    const order = server().map((m) => m['method'] ?? `response ${String(m['id'])}`);
+    const firstRead = (personalStartup ?? [])
+      .filter((e) => e.type === 'message' && e.dir === 'client')
+      .map((e) => (e as { message: Json }).message)
+      .find((m) => m['method'] === 'account/read');
+    expect(order.indexOf('account/updated')).toBeLessThan(
+      order.indexOf(`response ${String(firstRead?.['id'])}`),
+    );
+    expect(order.filter((m) => m === 'account/updated')).toHaveLength(1);
+    expect(server().find((m) => m['method'] === 'account/updated')?.['params']).toEqual({
+      authMode: 'chatgpt',
+      planType: 'plus',
+    });
+  });
+
+  it('keeps remote control disabled', () => {
+    expect(
+      server().find((m) => m['method'] === 'remoteControl/status/changed')?.['params'],
+    ).toMatchObject({ status: 'disabled', environmentId: null });
+  });
+
+  it('authorizes the subscription and shows the proxy base URL', () => {
+    const provider = providerFromConfig(result(personalStartup, 'config/read'));
+    expect(provider).toEqual({
+      id: 'headroom',
+      name: 'Headroom persistent proxy',
+      baseUrl: 'http://127.0.0.1:8787/v1',
+      unofficialBaseUrl: true,
+    });
+    expect(
+      interpretAccountRead(result(personalStartup, 'account/read'), {
+        allowUnverifiedProvider: false,
+        provider,
+      }),
+    ).toEqual({ status: 'authorized', email: '<email-1>', planType: 'plus' });
   });
 });
 
@@ -229,7 +286,16 @@ function restore(message: Json, substitutions: Map<string, string>): Json {
 }
 
 /** Values compared exactly; anything else only by type. */
-const EXACT = new Set(['id', 'method', 'type', 'status', 'success', 'requiresOpenaiAuth', 'code']);
+const EXACT = new Set([
+  'id',
+  'method',
+  'type',
+  'status',
+  'success',
+  'requiresOpenaiAuth',
+  'code',
+  'authMode',
+]);
 
 function shape(value: unknown, key = ''): unknown {
   if (value === null) return null;
@@ -254,28 +320,7 @@ function shape(value: unknown, key = ''): unknown {
  * the client reads only the provider, so parity is checked on that projection.
  */
 function project(message: Json): Json {
-  const result = message['result'];
-  if (typeof result !== 'object' || result === null || !('config' in result)) return message;
-  const config = (result as Json)['config'] as Json;
-  const providers = (config['model_providers'] ?? {}) as Record<string, Json>;
-  return {
-    ...message,
-    result: {
-      config: {
-        model_provider: config['model_provider'],
-        model_providers: Object.fromEntries(
-          Object.entries(providers).map(([id, p]) => [
-            id,
-            {
-              name: p['name'],
-              base_url: p['base_url'],
-              requires_openai_auth: p['requires_openai_auth'],
-            },
-          ]),
-        ),
-      },
-    },
-  };
+  return projectCodexConfig(message) as Json;
 }
 
 describe.each([
@@ -284,6 +329,11 @@ describe.each([
     'custom-provider',
     customProvider,
     ['--account=customProvider', '--provider=recorder-proxy', '--provider-name=Recorder proxy'],
+  ],
+  [
+    'personal-startup',
+    personalStartup,
+    ['--account=chatgpt', '--provider=headroom', '--provider-name=Headroom persistent proxy'],
   ],
 ] as const)('fake app-server matches the recorded %s', (_name, entries, flags) => {
   it.runIf(entries !== undefined)('with the same messages, in the same order', async () => {

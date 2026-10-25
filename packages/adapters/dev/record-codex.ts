@@ -5,7 +5,9 @@
 // test, so a client bug cannot shape the recording. The launch (arguments and
 // filtered environment) comes from `prepareCodexLaunch`, the same function
 // `connectCodex` uses, in a throwaway CODEX_HOME with the isolated-profile
-// overrides. Everything is redacted in memory before it is written.
+// overrides; personal-startup alone reads the user's own signed-in profile
+// (account and configuration only, config/read reduced to the provider).
+// Everything is redacted in memory before it is written.
 //
 // Only interactions that use no model quota are scripted: initialize,
 // account/read, config/read and account/rateLimits/read (which answers before
@@ -13,7 +15,7 @@
 //
 // Usage (PowerShell):
 //   $env:CODEX_EXECUTABLE = 'F:\...\codex.exe'
-//   $env:CODEX_RECORD_SCENARIO = 'startup' | 'custom-provider'
+//   $env:CODEX_RECORD_SCENARIO = 'startup' | 'custom-provider' | 'personal-startup'
 //   pnpm record:codex
 // Runs under Vitest only to execute TypeScript without new dependencies.
 
@@ -27,7 +29,12 @@ import { describe, it } from 'vitest';
 import { resolveCodexExecutable } from '../src/codex/executable.js';
 import { prepareCodexLaunch } from '../src/codex/session.js';
 import { ISOLATED_PROFILE_OVERRIDES } from './isolated-profile.js';
-import { findLeaks, redactTranscript, type RedactionLiterals } from './redact.js';
+import {
+  findLeaks,
+  projectCodexConfig,
+  redactTranscript,
+  type RedactionLiterals,
+} from './redact.js';
 
 type Json = Record<string, unknown>;
 
@@ -47,7 +54,7 @@ type Entry =
       readonly stdioClosedAtMs: number | null;
     };
 
-const SCENARIOS = ['startup', 'custom-provider'] as const;
+const SCENARIOS = ['startup', 'custom-provider', 'personal-startup'] as const;
 type Scenario = (typeof SCENARIOS)[number];
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'test', 'fixtures', 'codex');
@@ -220,11 +227,33 @@ const scenarios: Record<Scenario, (wire: WireRecorder) => Promise<Json>> = {
     await wire.request('config/read', {});
     return init;
   },
+
+  /**
+   * The user's own signed-in profile, as connectCodex sees it: Codex announces
+   * the account (account/updated) while the first read is in flight.
+   */
+  async ['personal-startup'](wire) {
+    const init = await handshake(wire);
+    await wire.request('account/read', {});
+    await wire.request('config/read', {});
+    await wire.request('account/read', {});
+    await wire.request('config/read', {});
+    await wire.idle(1_500);
+    return init;
+  },
 };
+
+/**
+ * Scenarios run in the user's own profile instead of a throwaway one: only
+ * requests that read (account, configuration), never a turn, a login or a
+ * change. config/read is reduced to the provider before anything is written.
+ */
+const PERSONAL: ReadonlySet<Scenario> = new Set(['personal-startup']);
 
 /** Extra overrides per scenario, on top of the isolated-profile ones. */
 const SCENARIO_OVERRIDES: Record<Scenario, readonly string[]> = {
   startup: [],
+  ['personal-startup']: [],
   // A local endpoint that is never contacted: no turn is started.
   ['custom-provider']: [
     'model_provider="recorder-proxy"',
@@ -234,16 +263,18 @@ const SCENARIO_OVERRIDES: Record<Scenario, readonly string[]> = {
   ],
 };
 
-function localLiterals(codexHome: string): RedactionLiterals {
+function localLiterals(...codexHomes: readonly string[]): RedactionLiterals {
   const literals = new Map<string, string>();
   const addPath = (path: string, placeholder: string) => {
     for (const form of [path, path.replaceAll('\\', '/')]) literals.set(form, placeholder);
   };
-  addPath(codexHome, '<CODEX_HOME>');
-  try {
-    addPath(realpathSync.native(codexHome), '<CODEX_HOME>');
-  } catch {
-    // the profile may be gone already
+  for (const codexHome of codexHomes) {
+    addPath(codexHome, '<CODEX_HOME>');
+    try {
+      addPath(realpathSync.native(codexHome), '<CODEX_HOME>');
+    } catch {
+      // the profile may be gone already
+    }
   }
   addPath(tmpdir(), '<TMP>');
   addPath(homedir(), '<HOME>');
@@ -262,16 +293,19 @@ describe.runIf(configuredPath && scenario)('record codex app-server transcript',
       if (!scenario || !SCENARIOS.includes(scenario)) {
         throw new Error(`CODEX_RECORD_SCENARIO must be one of ${SCENARIOS.join(', ')}`);
       }
-      // Always a throwaway profile: recordings never touch the user's own.
+      const personal = PERSONAL.has(scenario);
+      // A throwaway profile unless the scenario reads the user's own (read-only).
       const codexHome = mkdtempSync(join(tmpdir(), 'codex record '));
       try {
         const executable = await resolveCodexExecutable({ configuredPath: configuredPath ?? '' });
-        const launch = prepareCodexLaunch(
-          { ...process.env, CODEX_HOME: codexHome },
-          [],
-          [...ISOLATED_PROFILE_OVERRIDES, ...SCENARIO_OVERRIDES[scenario]],
-        );
-        const literals = localLiterals(codexHome);
+        // The personal launch is exactly connectCodex's: no CODEX_HOME, no overrides.
+        const launch = personal
+          ? prepareCodexLaunch(process.env)
+          : prepareCodexLaunch(
+              { ...process.env, CODEX_HOME: codexHome },
+              [],
+              [...ISOLATED_PROFILE_OVERRIDES, ...SCENARIO_OVERRIDES[scenario]],
+            );
         const child = spawn(executable, launch.args, {
           env: launch.env,
           stdio: 'pipe',
@@ -293,10 +327,20 @@ describe.runIf(configuredPath && scenario)('record codex app-server transcript',
           commands: {
             recorder: `CODEX_RECORD_SCENARIO=${scenario} pnpm record:codex`,
             codex: ['<CODEX_EXECUTABLE>', ...launch.args],
-            profile: 'fresh temporary CODEX_HOME',
+            profile: personal
+              ? "the user's own CODEX_HOME; config/read reduced to the provider"
+              : 'fresh temporary CODEX_HOME',
           },
         };
-        const text = `${redactTranscript([meta, ...wire.entries], literals)
+        const entries = personal
+          ? wire.entries.map((entry) =>
+              entry.type === 'message'
+                ? { ...entry, message: projectCodexConfig(entry.message) }
+                : entry,
+            )
+          : wire.entries;
+        const literals = localLiterals(codexHome, String(init['codexHome']));
+        const text = `${redactTranscript([meta, ...entries], literals)
           .map((entry) => JSON.stringify(entry))
           .join('\n')}\n`;
         // Second, independent check: nothing is written if the scanner still finds something.

@@ -14,7 +14,33 @@ export interface CodexProvider {
   readonly id: string;
   /** Display name from the provider's configuration, when it has one. */
   readonly name: string | null;
+  /** `base_url` from the provider's configuration; null for a built-in default. */
+  readonly baseUrl: string | null;
+  /**
+   * True when requests do not go straight to OpenAI (a proxy such as Headroom,
+   * a local model). Informational: the account policy does not depend on it.
+   */
+  readonly unofficialBaseUrl: boolean;
 }
+
+/** Hosts of OpenAI's own endpoints (API and ChatGPT backend). */
+const OFFICIAL_HOSTS = new Set(['api.openai.com', 'chatgpt.com']);
+
+function isOfficialUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' && OFFICIAL_HOSTS.has(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+const UNKNOWN_PROVIDER: CodexProvider = {
+  id: 'unknown',
+  name: null,
+  baseUrl: null,
+  unofficialBaseUrl: true,
+};
 
 export type CodexAuthState =
   | { readonly status: 'authorized'; readonly email: string | null; readonly planType: string }
@@ -44,12 +70,16 @@ export function isUsable(state: CodexAuthState): state is CodexUsableState {
 export class CodexAuthError extends Error {
   override readonly name = 'CodexAuthError';
 
-  constructor(readonly state: CodexUnauthorizedState) {
+  readonly state: CodexUnauthorizedState;
+
+  // A plain field rather than a parameter property: runnable with Node's type stripping.
+  constructor(state: CodexUnauthorizedState) {
     super(
       state.status === 'login_required'
         ? 'Codex is not signed in: run `codex login` in a terminal, then try again'
         : `Codex account not allowed (${state.reason}): ${state.detail}`,
     );
+    this.state = state;
   }
 }
 
@@ -67,25 +97,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Whether an `account/read` result needs the provider (from `config/read`) to be judged. */
-export function needsProvider(result: unknown): boolean {
-  return isRecord(result) && result['requiresOpenaiAuth'] === false;
-}
-
 /** Extracts the active provider from a `config/read` result; null when it is not there. */
 export function providerFromConfig(result: unknown): CodexProvider | null {
   if (!isRecord(result) || !isRecord(result['config'])) return null;
   const config = result['config'];
   const id = typeof config['model_provider'] === 'string' ? config['model_provider'] : 'openai';
   const providers = isRecord(config['model_providers']) ? config['model_providers'] : {};
-  const entry = providers[id];
-  const name = isRecord(entry) && typeof entry['name'] === 'string' ? entry['name'] : null;
-  return { id, name };
+  const configured = providers[id];
+  const entry = isRecord(configured) ? configured : {};
+  const name = typeof entry['name'] === 'string' ? entry['name'] : null;
+  const baseUrl = typeof entry['base_url'] === 'string' ? entry['base_url'] : null;
+  // Without a base_url only the built-in OpenAI provider is known to be official.
+  const unofficialBaseUrl = baseUrl === null ? id !== 'openai' : !isOfficialUrl(baseUrl);
+  return { id, name, baseUrl, unofficialBaseUrl };
 }
 
 export interface AccountPolicy {
   readonly allowUnverifiedProvider: boolean;
-  /** Needed when `requiresOpenaiAuth` is false; see `needsProvider`. */
+  /** From `config/read`; names the provider when `requiresOpenaiAuth` is false. */
   readonly provider?: CodexProvider | null;
 }
 
@@ -107,7 +136,7 @@ export function interpretAccountRead(result: unknown, policy: AccountPolicy): Co
     return rejected('api_key', 'API key authentication is not allowed; sign in with ChatGPT');
   }
   if (!result['requiresOpenaiAuth']) {
-    const provider = policy.provider ?? { id: 'unknown', name: null };
+    const provider = policy.provider ?? UNKNOWN_PROVIDER;
     if (policy.allowUnverifiedProvider) return { status: 'unverified_provider', provider };
     const label = provider.name ? `${provider.name} (${provider.id})` : provider.id;
     return rejected(

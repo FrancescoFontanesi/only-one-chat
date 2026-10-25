@@ -1,0 +1,15 @@
+{"type":"meta","scenario":"personal-startup","codexVersion":"0.164.0","userAgent":"only-one-chat-recorder/0.164.0 (Windows 10.0.26200; x86_64) xterm-256color (only-one-chat-recorder; 0.0.0)","recordedAt":"2026-10-25T15:09:23.789Z","platform":"win32-x64","commands":{"recorder":"CODEX_RECORD_SCENARIO=personal-startup pnpm record:codex","codex":["<CODEX_EXECUTABLE>","app-server"],"profile":"the user's own CODEX_HOME; config/read reduced to the provider"}}
+{"type":"message","dir":"client","atMs":2,"message":{"id":0,"method":"initialize","params":{"clientInfo":{"name":"only-one-chat-recorder","title":"Only One Chat recorder","version":"0.0.0"}}}}
+{"type":"message","dir":"server","atMs":297,"message":{"id":0,"result":{"userAgent":"only-one-chat-recorder/0.164.0 (Windows 10.0.26200; x86_64) xterm-256color (only-one-chat-recorder; 0.0.0)","codexHome":"<CODEX_HOME>","platformFamily":"windows","platformOs":"windows"}}}
+{"type":"message","dir":"client","atMs":297,"message":{"method":"initialized"}}
+{"type":"message","dir":"client","atMs":297,"message":{"id":1,"method":"account/read","params":{}}}
+{"type":"message","dir":"server","atMs":297,"message":{"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"<host>","installationId":"<installation-id-1>","environmentId":null},"emittedAtMs":1792940961937}}
+{"type":"message","dir":"server","atMs":578,"message":{"method":"account/updated","params":{"authMode":"chatgpt","planType":"plus"},"emittedAtMs":1792940962219}}
+{"type":"message","dir":"server","atMs":578,"message":{"id":1,"result":{"account":{"type":"chatgpt","email":"<email-1>","planType":"plus"},"requiresOpenaiAuth":true,"workspaceRouting":{"chatgptAccountId":"<account-id-1>","backendOrigin":"https://chatgpt.com","accountRoutingOverride":"NO_CONSTRAINT"}}}}
+{"type":"message","dir":"client","atMs":579,"message":{"id":2,"method":"config/read","params":{}}}
+{"type":"message","dir":"server","atMs":606,"message":{"id":2,"result":{"config":{"model_provider":"headroom","model_providers":{"headroom":{"name":"Headroom persistent proxy","base_url":"http://127.0.0.1:8787/v1","requires_openai_auth":true}}}}}}
+{"type":"message","dir":"client","atMs":606,"message":{"id":3,"method":"account/read","params":{}}}
+{"type":"message","dir":"server","atMs":610,"message":{"id":3,"result":{"account":{"type":"chatgpt","email":"<email-1>","planType":"plus"},"requiresOpenaiAuth":true,"workspaceRouting":{"chatgptAccountId":"<account-id-1>","backendOrigin":"https://chatgpt.com","accountRoutingOverride":"NO_CONSTRAINT"}}}}
+{"type":"message","dir":"client","atMs":610,"message":{"id":4,"method":"config/read","params":{}}}
+{"type":"message","dir":"server","atMs":617,"message":{"id":4,"result":{"config":{"model_provider":"headroom","model_providers":{"headroom":{"name":"Headroom persistent proxy","base_url":"http://127.0.0.1:8787/v1","requires_openai_auth":true}}}}}}
+{"type":"exit","atMs":2148,"code":0,"signal":null,"stdioClosedAtMs":2148}

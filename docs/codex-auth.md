@@ -18,8 +18,8 @@ lo stato non è verificabile, il risultato è il rifiuto.
 ## Contratto
 
 `connectCodex(options)` avvia `codex app-server` senza override, completa l'handshake e
-**subito dopo** esegue `account/read`; solo se `requiresOpenaiAuth` è `false` legge anche
-`config/read` per conoscere il provider. Lo stato `auth` è uno dei seguenti:
+**subito dopo** esegue `account/read` seguito da `config/read`, che dà il provider. Lo
+stato `auth` è uno dei seguenti:
 
 | Risposta di `account/read`                                    | Stato                                  |
 | ------------------------------------------------------------- | -------------------------------------- |
@@ -31,9 +31,18 @@ lo stato non è verificabile, il risultato è il rifiuto.
 | `account.type` diverso (`amazonBedrock`, tipi futuri)         | `rejected / unsupported_mode`          |
 | errore, timeout, risposta incompleta o malformata             | `rejected / read_failed`               |
 
-`provider` è `{ id, name }` da `config/read` (`model_provider` e il `name` della sua voce in
-`model_providers`); se `config/read` fallisce vale `{ id: "unknown", name: null }`. Il
-messaggio di `provider_not_verified` nomina il provider e spiega come abilitarlo.
+`provider` è `{ id, name, baseUrl, unofficialBaseUrl }` da `config/read`
+(`model_provider` e la sua voce in `model_providers`: `name`, `base_url`).
+`unofficialBaseUrl` è vero quando il `base_url` non è un endpoint HTTPS di
+`api.openai.com` o `chatgpt.com`, oppure quando un provider diverso da `openai` non ne
+dichiara uno; se `config/read` fallisce vale `{ id: "unknown", name: null, baseUrl: null,
+unofficialBaseUrl: true }`. Il messaggio di `provider_not_verified` nomina il provider e
+spiega come abilitarlo.
+
+**Provider visibile.** `session.provider` riporta il provider dell'ultima lettura, sempre,
+anche con `requiresOpenaiAuth: true`. È informativo e non bloccante: serve all'indicatore
+"via proxy" (con Headroom: `headroom`, `http://127.0.0.1:8787/v1`,
+`unofficialBaseUrl: true`); l'accesso lo decide solo lo stato `auth`.
 
 **Gate.** `session.request()` lascia passare senza verifica solo `account/read`. Ogni
 altra richiesta richiede `authorized` o `unverified_provider`, non stale; altrimenti la
@@ -63,6 +72,13 @@ togliere l'autorizzazione (`apikey` → `api_key`, `null` → `login_required`, 
 `unsupported_mode`; `chatgpt` richiede una rilettura). Una lettura in corsa con un cambio
 viene scartata.
 
+**Avvio.** Con un profilo in cui l'utente ha fatto login, Codex annuncia l'account
+(`account/updated` con `authMode: "chatgpt"`) **mentre** è in corso la prima
+`account/read`, che quindi viene scartata (transcript `personal-startup.jsonl`; misurato a
+riposo per 65 s: la notifica arriva una volta sola, a 0,58 s). All'avvio `connectCodex`
+rilegge al massimo **3 volte** finché una lettura si completa senza cambi in mezzo; se non
+succede, lo stato resta `rejected / read_failed`.
+
 ## Ambiente e lancio
 
 - Profilo e configurazione dell'utente: nessun `CODEX_HOME` imposto, nessun override `-c`.
@@ -79,8 +95,9 @@ viene scartata.
 Con il fake server: account ChatGPT autorizzato; API key rifiutata anche con un provider
 personalizzato e `allowUnverifiedProvider`; `login_required` senza altre chiamate e con il
 rimando a `codex login`; Bedrock e tipi sconosciuti rifiutati; provider personalizzato
-rifiutato per default con nome e istruzioni, ammesso con l'opzione; `config/read` letto
-solo quando serve; errori e risposte incomplete rifiutati; cambi di account; ambiente con
+rifiutato per default con nome e istruzioni, ammesso con l'opzione; provider e base URL
+esposti a ogni lettura; annuncio dell'account durante la prima lettura (rilettura) e
+limite delle 3 letture; errori e risposte incomplete rifiutati; cambi di account; ambiente con
 chiavi tolte e base URL e proxy conservati; lancio senza override; metodi negati mai
 inviati.
 
@@ -92,8 +109,11 @@ Con Codex CLI 0.164.0 reale:
   (provider `openai`); con un provider personalizzato senza auth OpenAI →
   `requiresOpenaiAuth: false` e il suo `name` in `config/read` (transcript
   `startup.jsonl` e `custom-provider.jsonl`);
-- profilo personale dell'utente (diagnosi, [diagnosis.md](diagnosis.md)): ChatGPT Plus,
-  provider `headroom` con `requires_openai_auth = true`, quindi `authorized`.
+- profilo personale dell'utente (diagnosi, [diagnosis.md](diagnosis.md), e transcript
+  `personal-startup.jsonl`): ChatGPT Plus, provider `headroom` con
+  `requires_openai_auth = true`, quindi `authorized`; `workspaceRouting` è un oggetto
+  (`chatgptAccountId`, `backendOrigin`, `accountRoutingOverride`); remote control
+  `disabled`, `environmentId: null`.
 
 ## Limiti residui
 

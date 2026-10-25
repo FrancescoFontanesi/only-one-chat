@@ -32,7 +32,7 @@ const KEY_FIXED: Readonly<Record<string, string>> = {
 };
 /**
  * Lists that describe the user's own setup (Claude's installed skills, plugins,
- * agents and commands): personal, and irrelevant to the protocol.
+ * agents, commands and MCP servers): personal, and irrelevant to the protocol.
  */
 const PERSONAL_LISTS = new Set([
   'slash_commands',
@@ -40,6 +40,7 @@ const PERSONAL_LISTS = new Set([
   'skills',
   'agents',
   'plugins',
+  'mcp_servers',
 ]);
 
 const SECRET_KEY = /token|secret|password|api_?key|authorization|cookie|credential/i;
@@ -48,6 +49,7 @@ const NOT_SECRET = new Set(['apiKeySource']);
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const JWT = /eyJ[\w-]{4,}\.[\w-]{4,}\.[\w-]{4,}/g;
 const URL_PATTERN = /https?:\/\/[^\s"'<>]+/g;
+const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 
 function redactUrl(url: string): string {
   const query = url.indexOf('?');
@@ -110,6 +112,16 @@ export function redactTranscript(
       }
     });
   }
+  // Any other UUID (thread, turn, message ids): numbered, so references still match.
+  const numberedUuid = (value: string): string => {
+    const key = `uuid\0${value.toLowerCase()}`;
+    if (!numbered.has(key)) {
+      const n = (counters.get('uuid') ?? 0) + 1;
+      counters.set('uuid', n);
+      numbered.set(key, `<uuid-${String(n)}>`);
+    }
+    return numbered.get(key) ?? '<uuid>';
+  };
   const replacements = [...found]
     .filter(([value]) => value.length >= 3)
     .sort((a, b) => b[0].length - a[0].length);
@@ -120,7 +132,7 @@ export function redactTranscript(
     for (const [value, placeholder] of replacements) {
       out = replaceAllCaseInsensitive(out, value, placeholder);
     }
-    return out.replace(JWT, '<jwt>').replace(EMAIL, '<email>');
+    return out.replace(JWT, '<jwt>').replace(EMAIL, '<email>').replace(UUID, numberedUuid);
   };
   const redact = (value: unknown): unknown => {
     if (typeof value === 'string') return redactString(value);
@@ -137,6 +149,11 @@ export function redactTranscript(
           `<${label}>`;
       else if (fixed !== undefined) out[key] = fixed;
       else if (PERSONAL_LISTS.has(key) && Array.isArray(item)) out[key] = ['<redacted>'];
+      // MCP tools are named after the user's own servers and connectors.
+      else if (key === 'tools' && Array.isArray(item))
+        out[key] = item.map((tool) =>
+          typeof tool === 'string' && tool.startsWith('mcp__') ? '<mcp-tool>' : redact(tool),
+        );
       else if (SECRET_KEY.test(key) && !NOT_SECRET.has(key) && typeof item === 'string')
         out[key] = '<redacted>';
       else out[key] = redact(item);
@@ -144,6 +161,38 @@ export function redactTranscript(
     return out;
   };
   return entries.map(redact);
+}
+
+/**
+ * Reduces a Codex `config/read` response to what the client reads: the active
+ * provider and the configured providers' name, base_url and auth requirement.
+ * The rest is the user's whole configuration (MCP servers, projects, paths),
+ * which has no place in a fixture. Other messages are returned unchanged.
+ */
+export function projectCodexConfig(message: unknown): unknown {
+  if (typeof message !== 'object' || message === null) return message;
+  const result = (message as Record<string, unknown>)['result'];
+  if (typeof result !== 'object' || result === null || !('config' in result)) return message;
+  const config = (result as Record<string, unknown>)['config'] as Record<string, unknown>;
+  const providers = (config['model_providers'] ?? {}) as Record<string, Record<string, unknown>>;
+  return {
+    ...message,
+    result: {
+      config: {
+        model_provider: config['model_provider'],
+        model_providers: Object.fromEntries(
+          Object.entries(providers).map(([id, provider]) => [
+            id,
+            {
+              name: provider['name'],
+              base_url: provider['base_url'],
+              requires_openai_auth: provider['requires_openai_auth'],
+            },
+          ]),
+        ),
+      },
+    },
+  };
 }
 
 export interface Leak {

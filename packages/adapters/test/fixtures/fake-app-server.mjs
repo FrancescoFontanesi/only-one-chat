@@ -50,8 +50,14 @@ let nextTurn = 1;
 
 // `account/read` results, shaped like codex-rs GetAccountResponse.
 const chatgpt = { type: 'chatgpt', email: 'user@example.com', planType: 'plus' };
+// A signed-in ChatGPT account comes with its routing (personal-startup.jsonl).
+const chatgptRouting = {
+  chatgptAccountId: 'fake-account',
+  backendOrigin: 'https://chatgpt.com',
+  accountRoutingOverride: 'NO_CONSTRAINT',
+};
 const ACCOUNTS = {
-  chatgpt: { account: chatgpt, requiresOpenaiAuth: true, workspaceRouting: null },
+  chatgpt: { account: chatgpt, requiresOpenaiAuth: true, workspaceRouting: chatgptRouting },
   apiKey: { account: { type: 'apiKey' }, requiresOpenaiAuth: true, workspaceRouting: null },
   none: { account: null, requiresOpenaiAuth: true, workspaceRouting: null },
   bedrock: {
@@ -78,6 +84,7 @@ const ACCOUNTS = {
 const AUTH_MODE = { chatgpt: 'chatgpt', apiKey: 'apikey', none: null };
 
 let accountKind = option('account') ?? 'none';
+let announced = false;
 
 function setAccount(kind) {
   accountKind = kind;
@@ -167,6 +174,17 @@ const handlers = {
   },
 
   'account/read': (_params, id) => {
+    const current = ACCOUNTS[accountKind];
+    // A real profile signed in with ChatGPT announces its account once, while
+    // the first read is in flight (recorded: personal-startup.jsonl).
+    if (!announced && current?.account?.type === 'chatgpt') {
+      announced = true;
+      notify('account/updated', { authMode: 'chatgpt', planType: 'plus' });
+    }
+    if (accountKind === 'updateOnEveryRead') {
+      notify('account/updated', { authMode: 'chatgpt', planType: 'plus' });
+      return ACCOUNTS.chatgpt;
+    }
     if (accountKind === 'readError') {
       return send({ id, error: { code: -32603, message: 'failed to load auth' } });
     }

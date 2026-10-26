@@ -106,7 +106,13 @@ farlo scattare.
   prima del suo turno nel run 2) e consuma un po' di quota.
 - Codex: un ruolo dell'utente (`agents.<nome>.config_file`) potrebbe fissare un altro
   modello; il controllo a posteriori lo intercetta.
-- Claude: l'effort dei sotto-agenti non è osservabile.
+- **Claude: l'effort dei sotto-agenti non è osservabile** (limite noto). L'adapter lo impone
+  con `CLAUDE_CODE_EFFORT_LEVEL` nell'ambiente del processo, ma Claude Code 2.1.308 non lo
+  riporta da nessuna parte: né nei messaggi del sotto-agente, né negli eventi `system`
+  `task_*`, né in `result` (`modelUsage`, `subagent_stats`), verificato su un turno reale.
+  Quindi il controllo a posteriori verifica solo il modello: l'etichetta mostra "effort non
+  riportato" e un effort diverso non può interrompere il turno. Se una versione futura lo
+  riportasse, basterà inviarlo nell'evento `identified`.
 - Il nome di un agente personalizzato dell'utente diventa il nome del sotto-agente: se
   contenesse come parola intera un nome esterno al suo provider (per esempio un agente
   Claude chiamato `gpt-helper`), il turno verrebbe interrotto.

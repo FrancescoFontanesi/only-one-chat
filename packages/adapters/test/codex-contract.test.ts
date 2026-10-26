@@ -14,6 +14,7 @@ import { createInterface } from 'node:readline';
 import { afterEach, describe, expect, it } from 'vitest';
 import { projectCodexConfig } from '../dev/redact.js';
 import { interpretAccountRead, providerFromConfig } from '../src/codex/auth.js';
+import { testEnv } from './env.js';
 
 type Json = Record<string, unknown>;
 type Entry =
@@ -217,7 +218,7 @@ afterEach(() => {
 
 /** Replays the recorded client messages against the fake and returns its answers in order. */
 async function replayOnFake(entries: Entry[], flags: readonly string[]): Promise<Json[]> {
-  const child = spawn(process.execPath, [FAKE, 'app-server', ...flags]);
+  const child = spawn(process.execPath, [FAKE, 'app-server', ...flags], { env: testEnv() });
   children.push(child);
   const received: Json[] = [];
   const waiters = new Map<unknown, () => void>();

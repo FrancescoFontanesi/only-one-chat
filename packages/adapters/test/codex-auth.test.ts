@@ -15,6 +15,7 @@ import {
   type CodexSessionOptions,
 } from '../src/index.js';
 import { ISOLATED_PROFILE_OVERRIDES } from '../dev/isolated-profile.js';
+import { testEnv } from './env.js';
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-app-server.mjs');
 
@@ -38,6 +39,7 @@ async function connect(
 ): Promise<CodexSession> {
   const session = await connectCodex({
     executable: process.execPath,
+    baseEnv: testEnv(),
     launcherArgs: [FAKE, `--account=${account}`, `--log=${log}`, ...fakeFlags],
     clientInfo: { name: 'only-one-chat-tests', version: '0.0.0' },
     requestTimeoutMs: 5_000,
@@ -255,7 +257,7 @@ describe('launch in the user profile', () => {
   };
 
   it('passes the user environment minus the API key variables, whatever their case', async () => {
-    const session = await connect('chatgpt', { baseEnv: { ...process.env, ...userEnv } });
+    const session = await connect('chatgpt', { baseEnv: testEnv(userEnv) });
     const env = (await session.request('test/env')) as Record<string, string>;
 
     const names = Object.keys(env).map((key) => key.toUpperCase());

@@ -14,6 +14,7 @@ import {
   type ForcedShutdownReport,
 } from '../src/index.js';
 import { selectOrphans } from '../src/process-tree.js';
+import { testEnv } from './env.js';
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-app-server.mjs');
 
@@ -37,6 +38,7 @@ async function start(
 ): Promise<AppServerClient> {
   const client = await startAppServer({
     executable: process.execPath,
+    env: testEnv(),
     args: [FAKE, 'app-server', ...flags],
     clientInfo: { name: 'only-one-chat-tests', version: '0.0.0' },
     requestTimeoutMs: 5_000,

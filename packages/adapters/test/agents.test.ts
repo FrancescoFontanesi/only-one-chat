@@ -18,6 +18,7 @@ import {
   type AgentSession,
   type AgentTurnHandlers,
 } from '../src/index.js';
+import { testEnv } from './env.js';
 
 const FAKE_CODEX = join(import.meta.dirname, 'fixtures', 'fake-app-server.mjs');
 const FAKE_CLAUDE = join(import.meta.dirname, 'fixtures', 'fake-claude.mjs');
@@ -53,6 +54,7 @@ function handlers() {
 async function codex(account = 'chatgpt', extra: Record<string, unknown> = {}) {
   const session = await createCodexAgentFactory({
     executable: process.execPath,
+    baseEnv: testEnv(),
     launcherArgs: [FAKE_CODEX, `--account=${account}`],
     cwd: dir,
     model: 'gpt-6-luna',
@@ -139,6 +141,7 @@ describe('Codex agent session', () => {
   async function codexWithPolicy(received: string) {
     const session = await createCodexAgentFactory({
       executable: process.execPath,
+      baseEnv: testEnv(),
       launcherArgs: [FAKE_CODEX, '--account=chatgpt', `--log=${received}`],
       cwd: dir,
       model: 'gpt-6-luna',
@@ -210,6 +213,7 @@ describe('Codex agent session', () => {
     const received = join(dir, 'received.jsonl');
     const session = await createCodexAgentFactory({
       executable: process.execPath,
+      baseEnv: testEnv(),
       launcherArgs: [FAKE_CODEX, '--account=chatgpt', `--log=${received}`],
       cwd: dir,
       model: 'gpt-6-luna',
@@ -334,7 +338,7 @@ describe('Claude agent session', () => {
       cwd: dir,
       model: 'haiku',
       effort: 'low',
-      baseEnv: { ...process.env },
+      baseEnv: testEnv(),
       shutdownTimeoutMs: 300,
     })({ instructions: 'Sei il worker.' });
   }
@@ -370,7 +374,7 @@ describe('Claude agent session', () => {
       cwd: dir,
       model: 'haiku',
       effort: 'low',
-      baseEnv: { ...process.env, CLAUDE_CODE_SUBAGENT_MODEL: 'claude-opus-from-user' },
+      baseEnv: testEnv({ CLAUDE_CODE_SUBAGENT_MODEL: 'claude-opus-from-user' }),
       shutdownTimeoutMs: 300,
     })({
       instructions: 'Sei il worker.',
@@ -429,7 +433,7 @@ describe('Claude agent session', () => {
       cwd: dir,
       model: 'haiku',
       effort: 'low',
-      baseEnv: { ...process.env },
+      baseEnv: testEnv(),
       shutdownTimeoutMs: 300,
     })({
       instructions: 'Sei il worker.',

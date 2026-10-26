@@ -15,6 +15,7 @@ import {
   type ClaudeTurnOptions,
   isOfficialAnthropicUrl,
 } from '../src/index.js';
+import { testEnv } from './env.js';
 
 const FAKE = join(import.meta.dirname, 'fixtures', 'fake-claude.mjs');
 
@@ -63,7 +64,7 @@ function options(flags: string[] = [], overrides: Partial<ClaudeTurnOptions> = {
       launcherArgs: [FAKE, `--log=${log}`, ...flags],
       cwd: dir,
       prompt: 'Verifica le proposte',
-      baseEnv: { ...process.env },
+      baseEnv: testEnv(),
       onEvent: (event: ClaudeEvent) => events.push(event),
       shutdownTimeoutMs: 300,
       ...overrides,
@@ -177,14 +178,13 @@ describe('a turn', () => {
   });
 
   it('passes the user environment minus API keys', async () => {
-    const baseEnv = {
-      ...process.env,
+    const baseEnv = testEnv({
       ANTHROPIC_API_KEY: 'should-not-leak',
       anthropic_auth_token: 'should-not-leak',
       OPENAI_API_KEY: 'should-not-leak',
       HTTPS_PROXY: 'http://127.0.0.1:3128',
       RTK_ENABLED: '1',
-    };
+    });
     await startClaudeTurn(options([], { baseEnv }).options).done;
     for (const entry of fakeLog().filter((e) => e.env)) {
       expect(JSON.stringify(entry.env)).not.toContain('should-not-leak');
@@ -213,7 +213,7 @@ describe('billing checks', () => {
   });
 
   it('refuses a custom base URL unless allowUnverifiedProvider is on', async () => {
-    const baseEnv = { ...process.env, ANTHROPIC_BASE_URL: 'http://127.0.0.1:8787' };
+    const baseEnv = testEnv({ ANTHROPIC_BASE_URL: 'http://127.0.0.1:8787' });
     const error = await failure(startClaudeTurn(options([], { baseEnv }).options).done);
     expect(error.kind).toBe('provider_not_verified');
     expect(error.message).toMatch(/127\.0\.0\.1:8787.*allowUnverifiedProvider/s);
@@ -230,7 +230,7 @@ describe('billing checks', () => {
     'https://api.anthropic.com/',
     'HTTPS://API.Anthropic.com/',
   ])('accepts the official endpoint %s as the subscription', async (url) => {
-    const baseEnv = { ...process.env, ANTHROPIC_BASE_URL: url };
+    const baseEnv = testEnv({ ANTHROPIC_BASE_URL: url });
     const result = await startClaudeTurn(options([], { baseEnv }).options).done;
     expect(result.billing).toBe('subscription');
   });

@@ -9,12 +9,20 @@
 // logged. Afterwards the scenario's hidden tests run on what they wrote.
 // Results: sandbox/results/<run>.json and .md (with --fake, in the run
 // directory instead). --fake drives the fake CLIs: no model turns, no quota.
+//
+// Claude reports its quota only when a turn starts, so a run brackets the
+// system with two probes: a minimal Haiku turn (no tools, "Rispondi solo OK")
+// before and after, whose rate_limit_event arrives before its own inference.
+// Their tokens and cost are recorded apart, never in the system's totals; the
+// difference includes the first probe's own small consumption.
+// --no-claude-quota skips them.
 // Executables: CODEX_EXECUTABLE, CLAUDE_EXECUTABLE (else searched on PATH).
 
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, relative } from 'node:path';
 import {
+  startClaudeTurn,
   CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
   CODEX_SUBAGENT_FORBIDDEN_NAMES,
   codexQuota,
@@ -190,6 +198,27 @@ async function main(): Promise<void> {
   const factory = (config: AgentConfig) =>
     config.cli === 'codex' ? codex(config) : claude(config);
 
+  /** Claude quota now: a minimal Haiku turn; see the module comment. */
+  async function claudeProbe(): Promise<{
+    quota: QuotaSnapshot | null;
+    costUsd: number | null;
+  } | null> {
+    if (fake || process.argv.includes('--no-claude-quota')) return null;
+    try {
+      const result = await startClaudeTurn({
+        executable: claudeExecutable,
+        cwd: runDir,
+        prompt: 'Rispondi solo OK',
+        model: 'haiku',
+        effort: 'low',
+      }).done;
+      return { quota: result.quota, costUsd: result.costUsd };
+    } catch (error) {
+      process.stderr.write(`bench: Claude quota probe failed: ${String(error)}\n`);
+      return null;
+    }
+  }
+
   /** Codex quota before and after: account/rateLimits/read uses no model quota. */
   async function codexQuotaNow(): Promise<QuotaSnapshot | null> {
     if (fake) return null;
@@ -212,6 +241,13 @@ async function main(): Promise<void> {
   process.stdout.write(`Run ${runId}\n${system.title}\nCartella: ${runDir}\n\n`);
   const turns: TurnRecord[] = [];
   const events: string[] = [];
+  /** The single system bypasses the runtime: its events are logged here, as the loop does. */
+  const record = (event: ThreadEvent): void => {
+    onEvent(event);
+    if (event.type === 'text' || event.type === 'subagent_text') return;
+    const { type, ...fields } = event;
+    void log.append(type, fields);
+  };
   const onEvent = (event: ThreadEvent): void => {
     if (event.type === 'text' || event.type === 'subagent_text') return;
     if (event.type === 'message') {
@@ -240,6 +276,7 @@ async function main(): Promise<void> {
   };
 
   const codexBefore = await codexQuotaNow();
+  const claudeBefore = await claudeProbe();
   const startedAt = Date.now();
   const request = fake && system.kind === 'pipeline' ? `${prompt}\n\n[delegation]` : prompt;
   let outcome:
@@ -272,19 +309,20 @@ async function main(): Promise<void> {
     process.on('SIGINT', () => void loop.stop());
     outcome = await loop.done;
   } else if (system.kind === 'single' && system.agent) {
+    await log.append('loop_started', { request, mode: 'single', autoApprove: true });
     const session = await factory(system.agent)({ instructions: SINGLE_AGENT_INSTRUCTIONS });
-    onEvent({ type: 'turn_started', role: 'worker', agent: session.name });
+    record({ type: 'turn_started', role: 'worker', agent: session.name });
     try {
       const turn = session.runTurn(requestPrompt(request), {
         onText: () => undefined,
         onApprovalRequest: () => Promise.resolve('decline'),
         onActivity: (activity) => {
-          onEvent({ type: 'activity', role: 'worker', ...activity });
+          record({ type: 'activity', role: 'worker', ...activity });
         },
       });
       process.on('SIGINT', () => void turn.stop());
       const result = await turn.done;
-      onEvent({
+      record({
         type: 'message',
         role: 'worker',
         agent: session.name,
@@ -305,6 +343,7 @@ async function main(): Promise<void> {
   }
   const wallMs = Date.now() - startedAt;
   const codexAfter = await codexQuotaNow();
+  const claudeAfter = await claudeProbe();
 
   const hidden: HiddenResults = await runHiddenTests(suite, runDir, {
     ...env,
@@ -328,6 +367,11 @@ async function main(): Promise<void> {
     tokens,
     claudeNominalCostUsd: costUsd,
     codexQuota: { before: codexBefore, after: codexAfter },
+    claudeQuota: {
+      before: claudeBefore?.quota ?? null,
+      after: claudeAfter?.quota ?? null,
+      probeCostUsd: (claudeBefore?.costUsd ?? 0) + (claudeAfter?.costUsd ?? 0),
+    },
     otherEvents: events,
   };
 
@@ -340,6 +384,7 @@ async function main(): Promise<void> {
     `- Test nascosti: ${String(hidden.passed)}/${String(hidden.total)}`,
     `- Tempo totale: ${(wallMs / 1000).toFixed(1)} s`,
     `- Quota Codex: prima ${quotaText(codexBefore)}; dopo ${quotaText(codexAfter)}`,
+    `- Quota Claude (sonde): prima ${quotaText(claudeBefore?.quota)}; dopo ${quotaText(claudeAfter?.quota)}`,
     `- Costo nominale Claude: $${costUsd.toFixed(4)}`,
     `- File: ${files.map((f) => `${f.path} (${String(f.lines)})`).join(', ') || 'nessuno'}`,
     '',

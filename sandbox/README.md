@@ -53,8 +53,12 @@ stdin. I test nascosti sono 30.
   due provider non si sommano fra loro.
 - **Costo nominale di Claude**: il prezzo di listino che il CLI riporta, anche con
   l'abbonamento.
-- **Quota di Codex**: prima e dopo, in percentuali intere. **Quota di Claude**: l'utilizzo
-  riportato all'inizio di ogni turno, quindi il consumo dell'ultimo turno non si vede.
+- **Quota di Codex**: prima e dopo, in percentuali intere, lette senza consumare quota. È
+  rumorosa: la spostano anche gli altri client Codex dell'utente.
+- **Quota di Claude**: Claude la riporta solo all'inizio di un turno, quindi il runner
+  racchiude il sistema fra due sonde, un turno minimo di Haiku senza strumenti prima e dopo.
+  Il costo delle sonde è registrato a parte, mai nei totali del sistema. La differenza
+  comprende il piccolo consumo della prima sonda. `--no-claude-quota` le salta.
 - **Tempo**: totale e per turno.
 - **Profilo personale.** I due CLI caricano `AGENTS.md`, `CLAUDE.md`, gli hook e rtk
   dell'utente: è un fattore di disturbo, registrato e non rimosso.

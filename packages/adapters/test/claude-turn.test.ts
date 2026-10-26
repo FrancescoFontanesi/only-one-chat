@@ -16,6 +16,7 @@ import {
   isOfficialAnthropicUrl,
 } from '../src/index.js';
 import { testEnv } from './env.js';
+import { exited, isRunning } from './processes.js';
 
 const FAKE = join(import.meta.dirname, 'fixtures', 'fake-claude.mjs');
 
@@ -81,15 +82,6 @@ async function failure(promise: Promise<unknown>): Promise<ClaudeError> {
   );
   expect(error).toBeInstanceOf(ClaudeError);
   return error as ClaudeError;
-}
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 describe('arguments', () => {
@@ -269,11 +261,11 @@ describe('ending a turn', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     strays.push(grandchild);
-    expect(isAlive(grandchild)).toBe(true);
+    expect(isRunning(grandchild)).toBe(true);
 
     await running.stop();
     expect((await outcome).kind).toBe('stopped');
-    expect(isAlive(grandchild)).toBe(false);
+    expect(await exited(grandchild)).toBe(true);
     await running.stop(); // idempotent
   });
 

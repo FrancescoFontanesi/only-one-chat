@@ -15,6 +15,7 @@ import {
 } from '../src/index.js';
 import { selectOrphans } from '../src/process-tree.js';
 import { testEnv } from './env.js';
+import { exited, isRunning, stateFromStat } from './processes.js';
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-app-server.mjs');
 
@@ -46,15 +47,6 @@ async function start(
   });
   started.push(client);
   return client;
-}
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function rejection(promise: Promise<unknown>): Promise<AppServerError> {
@@ -284,7 +276,7 @@ describe('close', () => {
     await Promise.all([client.close(), client.close()]);
 
     expect((await pending).kind).toBe('closed');
-    expect(isAlive(client.pid)).toBe(false);
+    expect(await exited(client.pid)).toBe(true);
     expect((await rejection(client.request('test/echo'))).kind).toBe('closed');
   });
 
@@ -295,7 +287,7 @@ describe('close', () => {
       ['--ignore-eof'],
     );
     await client.close();
-    expect(isAlive(client.pid)).toBe(false);
+    expect(await exited(client.pid)).toBe(true);
     expect(reports).toEqual([{ reason: 'exit-timeout', terminated: [client.pid], errors: [] }]);
   });
 
@@ -307,11 +299,11 @@ describe('close', () => {
     );
     const { pid: grandchild } = (await client.request('test/spawnGrandchild')) as { pid: number };
     strays.push(grandchild);
-    expect(isAlive(grandchild)).toBe(true);
+    expect(isRunning(grandchild)).toBe(true);
 
     await client.close();
-    expect(isAlive(client.pid)).toBe(false);
-    expect(isAlive(grandchild)).toBe(false);
+    expect(await exited(client.pid)).toBe(true);
+    expect(await exited(grandchild)).toBe(true);
     expect(reports.map((report) => report.reason)).toEqual(['exit-timeout']);
   });
 
@@ -325,8 +317,8 @@ describe('close', () => {
     strays.push(grandchild);
 
     await client.close(); // the server exits at once; the grandchild holds stdout and stderr
-    expect(isAlive(client.pid)).toBe(false);
-    expect(isAlive(grandchild)).toBe(false);
+    expect(await exited(client.pid)).toBe(true);
+    expect(await exited(grandchild)).toBe(true);
     expect(reports).toHaveLength(1);
     expect(reports[0]).toMatchObject({ reason: 'stdio-open', errors: [] });
     // Windows names each orphan it terminated; POSIX signals the process group as a whole.
@@ -350,6 +342,20 @@ describe('close', () => {
     await client.close();
     await client.close();
     expect(reports).toEqual([]);
+  });
+});
+
+describe('process liveness in the tests', () => {
+  it('reads the state of /proc/<pid>/stat, whatever the command name holds', () => {
+    expect(stateFromStat('4242 (node) S 1 4242 4242 0 -1')).toBe('S');
+    expect(stateFromStat('4242 (node) Z 1 4242 4242 0 -1')).toBe('Z');
+    expect(stateFromStat('4242 (a (weird) name) Z 1 4242')).toBe('Z');
+    expect(stateFromStat('garbage')).toBeUndefined();
+  });
+
+  it('waits for a process to end instead of checking once', async () => {
+    expect(await exited(process.pid, 100)).toBe(false);
+    expect(isRunning(process.pid)).toBe(true);
   });
 });
 

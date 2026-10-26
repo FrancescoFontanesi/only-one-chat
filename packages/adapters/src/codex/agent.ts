@@ -84,6 +84,12 @@ export function subagentThreadConfig(policy: AgentSubagentOptions): Record<strin
   };
 }
 
+/**
+ * Names a Codex sub-agent must never take: agents and models external to Codex.
+ * Matched as whole words by the runtime (checkSubagent).
+ */
+export const CODEX_SUBAGENT_FORBIDDEN_NAMES = ['claude', 'haiku', 'opus', 'sonnet', 'gemini'];
+
 type Json = Record<string, unknown>;
 
 function isRecord(value: unknown): value is Json {

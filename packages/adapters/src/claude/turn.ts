@@ -171,6 +171,12 @@ export function subagentEnv(subagents: {
   };
 }
 
+/**
+ * Names a Claude sub-agent must never take: agents and models external to
+ * Claude. Claude's own names are allowed (a custom agent "haiku-file-reader").
+ */
+export const CLAUDE_SUBAGENT_FORBIDDEN_NAMES = ['codex', 'luna', 'sol', 'gpt', 'gemini'];
+
 /** The Agent tool, offered only with a sub-agent policy. */
 export const SUBAGENT_TOOL = 'Agent';
 

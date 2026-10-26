@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
+  CODEX_SUBAGENT_FORBIDDEN_NAMES,
   ClaudeError,
   CodexAuthError,
   createClaudeAgentFactory,
@@ -257,6 +259,12 @@ describe('Codex agent session', () => {
     });
     await session.runTurn('ciao', handlers().value).done;
     expect(readFileSync(received, 'utf8')).not.toContain('features.multi_agent');
+  });
+
+  it('forbids sub-agent names external to each CLI, never its own', () => {
+    expect(CODEX_SUBAGENT_FORBIDDEN_NAMES).toEqual(['claude', 'haiku', 'opus', 'sonnet', 'gemini']);
+    expect(CLAUDE_SUBAGENT_FORBIDDEN_NAMES).toEqual(['codex', 'luna', 'sol', 'gpt', 'gemini']);
+    expect(CLAUDE_SUBAGENT_FORBIDDEN_NAMES).not.toContain('haiku');
   });
 
   it('reports MCP tool calls as activity', async () => {

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   APPROVAL_DENIED_MESSAGE,
+  checkSubagent,
   openEventLog,
   runLoop,
   type InterceptDecision,
@@ -497,6 +498,27 @@ describe('sub-agents (D13)', () => {
     });
     expect(codex.stops).toBe(1);
     expect(harness.events.some((e) => e.type === 'subagent_violation')).toBe(true);
+  });
+
+  it('matches forbidden names as whole words, relative to the provider', () => {
+    // As configured by the demo: names external to Codex, and to Claude.
+    const codex = { ...policy, forbiddenNames: ['claude', 'haiku', 'opus', 'sonnet', 'gemini'] };
+    const claude = {
+      ...policy,
+      model: 'claude-haiku-5-5',
+      forbiddenNames: ['codex', 'luna', 'sol', 'gpt', 'gemini'],
+    };
+    const named = (name: string) => ({ name, model: null, effort: null });
+    expect(checkSubagent(codex, named('/root/claude_review'), 1)).toMatch(/"claude"/);
+    expect(checkSubagent(codex, named('/root/Haiku-Helper'), 1)).toMatch(/"haiku"/);
+    expect(checkSubagent(codex, named('/root/explorer'), 1)).toBeUndefined();
+    expect(checkSubagent(claude, named('haiku-file-reader'), 1)).toBeUndefined();
+    expect(checkSubagent(claude, named('Explore'), 1)).toBeUndefined();
+    expect(checkSubagent(claude, named('gpt-helper'), 1)).toMatch(/"gpt"/);
+    expect(checkSubagent(claude, named('codex_reviewer'), 1)).toMatch(/"codex"/);
+    // Whole words only: "sol" is not in "solution", "gpt" not in "gptish".
+    expect(checkSubagent(claude, named('solution-finder'), 1)).toBeUndefined();
+    expect(checkSubagent(claude, named('gptish'), 1)).toBeUndefined();
   });
 
   it('checks the model a sub-agent reports later, and too many at once', async () => {

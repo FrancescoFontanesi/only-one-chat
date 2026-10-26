@@ -28,6 +28,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
+  CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
+  CODEX_SUBAGENT_FORBIDDEN_NAMES,
   createClaudeAgentFactory,
   createCodexAgentFactory,
   resolveClaudeExecutable,
@@ -112,11 +114,6 @@ function writeTrace(path: string, scenario: string): void {
   );
   if (written) process.stdout.write(`Codex trace (redacted): ${path}\n`);
 }
-
-/** Names a sub-agent of the other CLI must never take (its product and model names). */
-const CLAUDE_NAMES = ['claude', 'anthropic', 'haiku', 'sonnet', 'opus', 'fable'];
-const CODEX_NAMES = ['codex', 'openai', 'chatgpt', 'gpt', 'luna', 'sol'];
-const OTHER_AGENT_NAMES = ['gemini', 'antigravity'];
 
 const bar = '─'.repeat(72);
 let streaming: Role | undefined;
@@ -214,13 +211,13 @@ async function main(): Promise<void> {
         model: config.codexSubagentModel,
         effort: config.codexSubagentEffort,
         maxConcurrent: config.maxSubagents,
-        forbiddenNames: CLAUDE_NAMES.concat(OTHER_AGENT_NAMES),
+        forbiddenNames: CODEX_SUBAGENT_FORBIDDEN_NAMES,
       },
       worker: {
         model: config.claudeSubagentModel,
         effort: config.claudeSubagentEffort,
         maxConcurrent: config.maxSubagents,
-        forbiddenNames: CODEX_NAMES.concat(OTHER_AGENT_NAMES),
+        forbiddenNames: CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
       },
     },
     orchestrator: createCodexAgentFactory({

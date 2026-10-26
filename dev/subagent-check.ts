@@ -8,6 +8,8 @@
 
 import { homedir } from 'node:os';
 import {
+  CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
+  CODEX_SUBAGENT_FORBIDDEN_NAMES,
   createClaudeAgentFactory,
   createCodexAgentFactory,
   resolveClaudeExecutable,
@@ -35,13 +37,13 @@ const policies: Record<string, SubagentPolicy> = {
     model: env['OOC_CODEX_SUBAGENT_MODEL'] ?? 'gpt-6-luna',
     effort: env['OOC_CODEX_SUBAGENT_EFFORT'] ?? 'low',
     maxConcurrent: 2,
-    forbiddenNames: ['claude', 'anthropic', 'haiku', 'sonnet', 'opus', 'fable', 'gemini'],
+    forbiddenNames: CODEX_SUBAGENT_FORBIDDEN_NAMES,
   },
   claude: {
     model: env['OOC_CLAUDE_SUBAGENT_MODEL'] ?? 'claude-haiku-5-5',
     effort: env['OOC_CLAUDE_SUBAGENT_EFFORT'] ?? 'low',
     maxConcurrent: 2,
-    forbiddenNames: ['codex', 'openai', 'chatgpt', 'gpt', 'luna', 'sol', 'gemini'],
+    forbiddenNames: CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
   },
 };
 

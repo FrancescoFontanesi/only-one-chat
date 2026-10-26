@@ -14,7 +14,12 @@ Codice: `packages/runtime/src/loop.ts` (policy, etichette, controlli), adapter
   `low` e al massimo 2 contemporanei (configurazione della demo:
   `OOC_CODEX_SUBAGENT_*`, `OOC_CLAUDE_SUBAGENT_*`, `OOC_MAX_SUBAGENTS`).
 - Un sotto-agente non deve chiamarsi come un agente esterno o un suo modello, né
-  presentarsi come tale. Lo dicono le istruzioni di ruolo e il runtime lo controlla.
+  presentarsi come tale. Lo dicono le istruzioni di ruolo e il runtime lo controlla, su
+  parole intere e relativamente al provider: per Codex sono vietati `claude`, `haiku`,
+  `opus`, `sonnet` e `gemini` (`CODEX_SUBAGENT_FORBIDDEN_NAMES`), per Claude `codex`, `luna`,
+  `sol`, `gpt` e `gemini` (`CLAUDE_SUBAGENT_FORBIDDEN_NAMES`). I nomi del proprio provider
+  restano validi: `haiku-file-reader` sotto Claude è ammesso, `solution-finder` non contiene
+  la parola `sol`.
 
 La policy è configurazione per ruolo (`LoopOptions.subagents`: `model`, `effort`,
 `maxConcurrent`, `forbiddenNames`). Il runtime scrive il testo delle regole
@@ -103,4 +108,5 @@ farlo scattare.
   modello; il controllo a posteriori lo intercetta.
 - Claude: l'effort dei sotto-agenti non è osservabile.
 - Il nome di un agente personalizzato dell'utente diventa il nome del sotto-agente: se
-  contenesse un nome vietato il turno verrebbe interrotto.
+  contenesse come parola intera un nome esterno al suo provider (per esempio un agente
+  Claude chiamato `gpt-helper`), il turno verrebbe interrotto.

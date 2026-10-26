@@ -46,6 +46,7 @@ export type {
 } from './agent.js';
 export {
   subagentThreadConfig,
+  CODEX_SUBAGENT_FORBIDDEN_NAMES,
   createCodexAgentFactory,
   declineResponse,
   type CodexAgentConfig,
@@ -59,6 +60,7 @@ export {
 export { resolveClaudeExecutable } from './claude/executable.js';
 export {
   ClaudeError,
+  CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
   SUBAGENT_TOOL,
   subagentEnv,
   READ_ONLY_TOOLS,

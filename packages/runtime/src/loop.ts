@@ -15,8 +15,10 @@ import type {
   AgentTurnResult,
   ApprovalRequest,
   ApprovalDecision,
+  QuotaSnapshot,
   SubagentEvent,
   SubagentPolicy,
+  TurnUsage,
 } from './agent.js';
 import {
   delegationTemplate,
@@ -69,6 +71,8 @@ export type ThreadEvent =
       /** Written by the runtime from `identity`; see agentLabel. */
       readonly label: string;
       readonly identity: AgentIdentity;
+      readonly usage?: TurnUsage;
+      readonly quota?: QuotaSnapshot | null;
     }
   | {
       readonly type: 'approval_denied';
@@ -526,6 +530,8 @@ export function runLoop(options: LoopOptions): Loop {
         text: result.text,
         label: agentLabel(result.identity),
         identity: result.identity,
+        ...(result.usage ? { usage: result.usage } : {}),
+        ...(result.quota !== undefined ? { quota: result.quota } : {}),
       });
       return result;
     } catch (error) {

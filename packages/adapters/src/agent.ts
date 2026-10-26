@@ -1,3 +1,5 @@
+import type { QuotaSnapshot, TurnUsage } from './usage.js';
+
 // The agent shape the runtime expects (packages/runtime/src/agent.ts), restated
 // here so adapters do not depend on the runtime: TypeScript checks the two
 // structurally wherever they are wired together (the demo, later the extension).
@@ -51,7 +53,12 @@ export interface AgentIdentity {
 }
 
 export interface AgentTurn {
-  readonly done: Promise<{ readonly text: string; readonly identity: AgentIdentity }>;
+  readonly done: Promise<{
+    readonly text: string;
+    readonly identity: AgentIdentity;
+    readonly usage?: TurnUsage;
+    readonly quota?: QuotaSnapshot | null;
+  }>;
   stop(): Promise<void>;
 }
 

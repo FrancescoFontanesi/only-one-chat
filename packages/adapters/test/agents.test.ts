@@ -271,6 +271,26 @@ describe('Codex agent session', () => {
     expect(CLAUDE_SUBAGENT_FORBIDDEN_NAMES).not.toContain('haiku');
   });
 
+  it('reports the turn’s tokens by model, sub-agents included, and the quota seen', async () => {
+    const session = await codexWithPolicy(join(dir, 'received.jsonl'));
+    await session.runTurn('ciao', handlers().value).done;
+    const second = await session.runTurn('[subagent] leggi', handlers().value).done;
+    // The second turn counts its own growth of the thread, not the first turn's tokens.
+    expect(second.usage?.byModel['gpt-6-luna']).toEqual({
+      input: 600 + 500, // the sub-agent runs on gpt-6-luna too
+      cachedInput: 400,
+      cacheWrite: 0,
+      output: 50 + 20,
+      reasoning: 10,
+    });
+    expect(second.usage?.costUsd).toBeNull();
+    expect(second.usage?.durationMs).toBeGreaterThanOrEqual(0);
+    expect(second.quota?.windows).toEqual([
+      { name: '5h', usedPercent: 15, resetsAt: 1793019278 },
+      { name: 'weekly', usedPercent: 2, resetsAt: 1793606078 },
+    ]);
+  });
+
   it('reports MCP tool calls as activity', async () => {
     const session = await codex();
     const h = handlers();
@@ -412,6 +432,14 @@ describe('Claude agent session', () => {
     expect(tools(second?.argv)).toBe('Read,Grep,Glob');
     expect(second?.argv).not.toContain('--forward-subagent-text');
     expect(second?.env?.['CLAUDE_CODE_SUBAGENT_MODEL_FORCE']).toBeUndefined();
+  });
+
+  it('reports the recorded modelUsage, nominal cost and quota of the turn', async () => {
+    const session = await claudeWithPolicy(['--scenario=turn-subagent']);
+    const result = await session.runTurn('usa un sotto-agente', handlers().value).done;
+    expect(Object.keys(result.usage?.byModel ?? {})).toEqual(['claude-haiku-5-5']);
+    expect(result.usage?.costUsd).toBeCloseTo(0.004476445);
+    expect(result.quota?.windows[0]).toMatchObject({ name: '5h', usedPercent: 69 });
   });
 
   it('labels the answer with the model and session reported by init', async () => {

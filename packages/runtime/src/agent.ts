@@ -71,10 +71,39 @@ export interface AgentIdentity {
   readonly sessionId: string;
 }
 
+/** Tokens as the CLI counts them (not comparable across providers); `reasoning` ⊆ `output`. */
+export interface TokenUsage {
+  readonly input: number;
+  readonly cachedInput: number;
+  readonly cacheWrite: number;
+  readonly output: number;
+  readonly reasoning: number;
+}
+
+export interface TurnUsage {
+  /** This turn only, sub-agents included, by the model id the CLI reported. */
+  readonly byModel: Readonly<Record<string, TokenUsage>>;
+  /** Nominal cost the CLI reports, if any (Claude). */
+  readonly costUsd: number | null;
+  readonly durationMs: number;
+}
+
+/** Subscription usage the CLI reported during the turn: windows "5h" and "weekly". */
+export interface QuotaSnapshot {
+  readonly windows: readonly {
+    readonly name: string;
+    readonly usedPercent: number;
+    readonly resetsAt: number | null;
+  }[];
+}
+
 export interface AgentTurnResult {
   /** The agent's final message for the turn. */
   readonly text: string;
   readonly identity: AgentIdentity;
+  /** Measured by the adapter; absent when the CLI reports nothing. */
+  readonly usage?: TurnUsage;
+  readonly quota?: QuotaSnapshot | null;
 }
 
 export interface AgentTurn {

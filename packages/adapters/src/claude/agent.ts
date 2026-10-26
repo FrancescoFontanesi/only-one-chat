@@ -32,6 +32,7 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
     let running: ClaudeTurn | undefined;
 
     function runTurn(prompt: string, handlers: AgentTurnHandlers): AgentTurn {
+      const startedAt = Date.now();
       /** Sub-agents of this turn, by Agent tool call id. */
       const children = new Map<string, { identified: boolean }>();
       /** The first message of a sub-agent tells which model actually ran it. */
@@ -107,6 +108,12 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
         if (result.isError) throw new Error(`Claude turn failed: ${result.text}`);
         return {
           text: result.text,
+          usage: {
+            byModel: result.usage,
+            costUsd: result.costUsd,
+            durationMs: Date.now() - startedAt,
+          },
+          quota: result.quota,
           identity: {
             provider: 'Claude Code',
             model: result.model,

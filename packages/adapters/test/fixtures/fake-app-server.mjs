@@ -48,6 +48,44 @@ const turns = [];
 const hanging = new Map();
 let nextTurn = 1;
 
+// Cumulative tokens per thread, as thread/tokenUsage/updated reports them
+// (subagent-turn.jsonl): inputTokens includes the cached ones.
+const tokenTotals = new Map();
+function useTokens(threadId, turnId, last) {
+  const before = tokenTotals.get(threadId) ?? {
+    totalTokens: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+  };
+  const total = Object.fromEntries(
+    Object.entries(before).map(([key, value]) => [key, value + (last[key] ?? 0)]),
+  );
+  tokenTotals.set(threadId, total);
+  notify('thread/tokenUsage/updated', {
+    threadId,
+    turnId,
+    tokenUsage: { total, last: { ...before, ...last }, modelContextWindow: 258400 },
+  });
+}
+const TURN_TOKENS = {
+  totalTokens: 1050,
+  inputTokens: 1000,
+  cachedInputTokens: 400,
+  outputTokens: 50,
+  reasoningOutputTokens: 10,
+};
+const CHILD_TOKENS = { totalTokens: 520, inputTokens: 500, cachedInputTokens: 0, outputTokens: 20 };
+// account/rateLimits/updated as recorded: whole percents per window.
+const RATE_LIMITS = {
+  limitId: 'codex',
+  primary: { usedPercent: 15, windowDurationMins: 300, resetsAt: 1793019278 },
+  secondary: { usedPercent: 2, windowDurationMins: 10080, resetsAt: 1793606078 },
+  planType: 'plus',
+};
+
 // `account/read` results, shaped like codex-rs GetAccountResponse.
 const chatgpt = { type: 'chatgpt', email: 'user@example.com', planType: 'plus' };
 // A signed-in ChatGPT account comes with its routing (personal-startup.jsonl).
@@ -183,6 +221,7 @@ const handlers = {
           startedAtMs: Date.now(),
         });
       const childDone = (status) => {
+        useTokens(child, childTurn, CHILD_TOKENS);
         notify('turn/completed', {
           threadId: child,
           turn: { ...turnObject(status), id: childTurn, rootTurnId: turnId },
@@ -260,6 +299,8 @@ const handlers = {
       turnId,
       completedAtMs: Date.now(),
     });
+    useTokens(threadId, turnId, TURN_TOKENS);
+    notify('account/rateLimits/updated', { rateLimits: RATE_LIMITS });
     complete('completed');
   },
 

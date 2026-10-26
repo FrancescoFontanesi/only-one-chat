@@ -22,6 +22,15 @@ import type {
   AgentTurnHandlers,
 } from '../agent.js';
 import { CodexAuthError, isUsable } from './auth.js';
+import {
+  NO_TOKENS,
+  addTokens,
+  codexQuota,
+  codexTokens,
+  subtractTokens,
+  type QuotaSnapshot,
+  type TokenUsage,
+} from '../usage.js';
 import { connectCodex, type CodexSessionOptions } from './session.js';
 
 export interface CodexAgentConfig extends Omit<
@@ -140,12 +149,23 @@ function itemActivity(item: Json): { kind: string; detail: string } | undefined 
   return undefined;
 }
 
-type TurnOutcome = { text: string; identity: AgentIdentity } | Error;
+type TurnOutcome =
+  | {
+      text: string;
+      identity: AgentIdentity;
+      usage: { byModel: Record<string, TokenUsage>; costUsd: null; durationMs: number };
+      quota: QuotaSnapshot | null;
+    }
+  | Error;
 
 interface RunningTurn {
   readonly handlers: AgentTurnHandlers;
   turnId?: string;
   readonly messages: string[];
+  readonly startedAt: number;
+  /** The thread's cumulative tokens when the turn started. */
+  readonly baseline: TokenUsage;
+  quota: QuotaSnapshot | null;
   settle(outcome: TurnOutcome): void;
 }
 
@@ -153,6 +173,8 @@ interface RunningTurn {
 interface Child {
   turnId?: string;
   finished: boolean;
+  /** Model reported when it started, for its token usage. */
+  model: string;
 }
 
 const FINISHED: Readonly<Record<string, 'completed' | 'interrupted' | 'failed'>> = {
@@ -168,6 +190,19 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
     let threadId = '';
     let identity: AgentIdentity = { provider: 'Codex', model: '', effort: null, sessionId: '' };
     const children = new Map<string, Child>();
+    /** Latest cumulative tokens per thread (thread/tokenUsage/updated). */
+    const totals = new Map<string, TokenUsage>();
+
+    /** This turn's tokens by model: the parent's growth plus each sub-agent's thread. */
+    function turnUsage(turn: RunningTurn): Record<string, TokenUsage> {
+      const byModel: Record<string, TokenUsage> = {};
+      const add = (model: string, tokens: TokenUsage) => {
+        byModel[model] = addTokens(byModel[model] ?? NO_TOKENS, tokens);
+      };
+      add(identity.model, subtractTokens(totals.get(threadId) ?? NO_TOKENS, turn.baseline));
+      for (const [id, child] of children) add(child.model, totals.get(id) ?? NO_TOKENS);
+      return byModel;
+    }
 
     function finishChild(
       handlers: AgentTurnHandlers,
@@ -207,7 +242,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
       const id = String(item['agentThreadId']);
       const kind = item['kind'];
       if (kind === 'started' && !children.has(id)) {
-        children.set(id, { finished: false });
+        children.set(id, { finished: false, model: stringOrNull(item['model']) ?? 'unknown' });
         turn.handlers.onSubagent?.({
           type: 'started',
           id,
@@ -224,8 +259,18 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
       ...sessionOptions,
       clientInfo: { name: 'only-one-chat', title: 'Only One Chat', version: '0.0.0' },
       onNotification(method, params) {
+        if (!isRecord(params)) return;
+        // Usage and quota, kept whether or not a turn is running.
+        if (method === 'thread/tokenUsage/updated' && typeof params['threadId'] === 'string') {
+          const usage = params['tokenUsage'];
+          totals.set(params['threadId'], codexTokens(isRecord(usage) ? usage['total'] : undefined));
+        }
         const turn = current;
-        if (!turn || !isRecord(params)) return;
+        if (!turn) return;
+        if (method === 'account/rateLimits/updated') {
+          turn.quota = codexQuota(params['rateLimits']) ?? turn.quota;
+          return;
+        }
         const notifiedThread = params['threadId'];
         if (typeof notifiedThread === 'string' && notifiedThread !== threadId) {
           onChildNotification(turn, notifiedThread, method, params);
@@ -254,8 +299,18 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
           const completed = params['turn'];
           if (turn.turnId !== undefined && completed['id'] !== turn.turnId) return;
           const status = completed['status'];
-          if (status === 'completed') turn.settle({ text: turn.messages.join('\n\n'), identity });
-          else {
+          if (status === 'completed') {
+            turn.settle({
+              text: turn.messages.join('\n\n'),
+              identity,
+              usage: {
+                byModel: turnUsage(turn),
+                costUsd: null,
+                durationMs: Date.now() - turn.startedAt,
+              },
+              quota: turn.quota,
+            });
+          } else {
             const error = isRecord(completed['error']) ? String(completed['error']['message']) : '';
             turn.settle(new Error(`Codex turn ${String(status)}${error ? `: ${error}` : ''}`));
           }
@@ -323,14 +378,21 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
       if (current) throw new Error('A Codex turn is already running in this session');
       children.clear();
       let settle!: (outcome: TurnOutcome) => void;
-      const done = new Promise<{ text: string; identity: AgentIdentity }>((resolve, reject) => {
+      const done = new Promise<Exclude<TurnOutcome, Error>>((resolve, reject) => {
         settle = (outcome) => {
           if (current === turn) current = undefined;
           if (outcome instanceof Error) reject(outcome);
           else resolve(outcome);
         };
       });
-      const turn: RunningTurn = { handlers, messages: [], settle };
+      const turn: RunningTurn = {
+        handlers,
+        messages: [],
+        startedAt: Date.now(),
+        baseline: totals.get(threadId) ?? NO_TOKENS,
+        quota: null,
+        settle,
+      };
       current = turn;
       session
         .request('turn/start', {

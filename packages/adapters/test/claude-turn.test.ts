@@ -139,6 +139,22 @@ describe('a turn', () => {
       apiErrorStatus: null,
       billing: 'subscription',
       permissionDenials: [],
+      usage: {
+        'claude-haiku-5-5': {
+          input: 1175,
+          cachedInput: 649,
+          cacheWrite: 5402,
+          output: 19,
+          reasoning: 0,
+        },
+      },
+      costUsd: 0.00121389,
+      quota: {
+        windows: [
+          { name: '5h', usedPercent: 18, resetsAt: 1792955400 },
+          { name: 'weekly', usedPercent: 12, resetsAt: 1793512800 },
+        ],
+      },
     });
     expect(events.map((event) => event.type)).toEqual(['init', 'rate_limit', 'text']);
     expect(events[0]).toMatchObject({ sessionId: '<session-id-1>', apiKeySource: 'none' });

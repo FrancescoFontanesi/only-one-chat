@@ -34,6 +34,13 @@ export {
   type CodexSessionOptions,
 } from './codex/session.js';
 export { API_KEY_VARIABLES, withoutApiKeys } from './environment.js';
+export {
+  codexQuota,
+  type QuotaSnapshot,
+  type QuotaWindow,
+  type TokenUsage,
+  type TurnUsage,
+} from './usage.js';
 export type {
   AgentApprovalRequest,
   AgentFactory,

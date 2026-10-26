@@ -17,6 +17,7 @@ import { execFile, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { getEnv, withoutApiKeys } from '../environment.js';
 import { OWN_PROCESS_GROUP, terminateTree } from '../process-tree.js';
+import { claudeQuota, claudeUsage, type QuotaSnapshot, type TokenUsage } from '../usage.js';
 
 export type ClaudeErrorKind =
   | 'api_key'
@@ -131,6 +132,12 @@ export interface ClaudeTurnResult {
   readonly apiErrorStatus: number | null;
   readonly billing: ClaudeBilling;
   readonly permissionDenials: readonly unknown[];
+  /** `modelUsage` of the result: this turn, every model it used. */
+  readonly usage: Readonly<Record<string, TokenUsage>>;
+  /** `total_cost_usd`: Claude's nominal list price, even on a subscription. */
+  readonly costUsd: number | null;
+  /** The last `rate_limit_event` of the turn. */
+  readonly quota: QuotaSnapshot | null;
 }
 
 export interface ClaudeTurnOptions {
@@ -400,6 +407,7 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
     return new Promise<ClaudeTurnResult>((resolve, reject) => {
       let sessionId = '';
       let model = '';
+      let quota: QuotaSnapshot | null = null;
       let settled = false;
       const settle = (outcome: () => void) => {
         if (settled) return;
@@ -492,6 +500,7 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
             });
           }
         } else if (type === 'rate_limit_event') {
+          quota = claudeQuota(message['rate_limit_info']) ?? quota;
           options.onEvent?.({ type: 'rate_limit', info: message['rate_limit_info'] });
         } else if (type === 'result') {
           if (settled) return;
@@ -508,6 +517,10 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
             permissionDenials: Array.isArray(message['permission_denials'])
               ? message['permission_denials']
               : [],
+            usage: claudeUsage(message['modelUsage']),
+            costUsd:
+              typeof message['total_cost_usd'] === 'number' ? message['total_cost_usd'] : null,
+            quota,
           };
           // One turn only: end the input so Claude exits, force it if it lingers, and
           // resolve only once nothing of the turn is left running.

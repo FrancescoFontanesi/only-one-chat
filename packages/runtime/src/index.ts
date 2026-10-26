@@ -30,8 +30,11 @@ export type {
   AgentTurnResult,
   ApprovalDecision,
   ApprovalRequest,
+  QuotaSnapshot,
   SubagentEvent,
   SubagentPolicy,
+  TokenUsage,
+  TurnUsage,
 } from './agent.js';
 export {
   DELEGATION_END,

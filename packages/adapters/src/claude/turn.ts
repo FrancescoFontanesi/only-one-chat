@@ -10,7 +10,8 @@
 // The permission mode is passed explicitly (`default`, whatever the user's
 // settings say) and the turn is stopped the same way if init reports another.
 // A custom base URL (ANTHROPIC_BASE_URL, e.g. a local proxy) cannot be verified
-// and needs `allowUnverifiedProvider`, as for Codex.
+// and needs `allowUnverifiedProvider`, as for Codex; the official endpoint set
+// explicitly is not a custom one.
 
 import { execFile, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -278,7 +279,7 @@ export async function checkClaudeBilling(options: ClaudeTurnOptions): Promise<Cl
     );
   }
   const baseUrl = getEnv(env, 'ANTHROPIC_BASE_URL');
-  if (baseUrl) {
+  if (baseUrl && !isOfficialAnthropicUrl(baseUrl)) {
     if (!options.allowUnverifiedProvider) {
       throw new ClaudeError(
         'provider_not_verified',
@@ -289,6 +290,30 @@ export async function checkClaudeBilling(options: ClaudeTurnOptions): Promise<Cl
     return 'unverified_provider';
   }
   return 'subscription';
+}
+
+/**
+ * True for Anthropic's own API endpoint, https://api.anthropic.com with or
+ * without the trailing slash, as for Codex's unofficialBaseUrl. Anything else
+ * (another host or scheme, a port, a path, credentials, a query) is not.
+ */
+export function isOfficialAnthropicUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return false;
+  }
+  return (
+    parsed.protocol === 'https:' &&
+    parsed.hostname === 'api.anthropic.com' &&
+    parsed.port === '' &&
+    parsed.username === '' &&
+    parsed.password === '' &&
+    parsed.pathname === '/' &&
+    parsed.search === '' &&
+    parsed.hash === ''
+  );
 }
 
 /** Starts a turn once billing has been checked; see the module comment. */

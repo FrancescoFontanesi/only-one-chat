@@ -61,6 +61,7 @@ export { resolveClaudeExecutable } from './claude/executable.js';
 export {
   ClaudeError,
   CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
+  isOfficialAnthropicUrl,
   SUBAGENT_TOOL,
   subagentEnv,
   READ_ONLY_TOOLS,

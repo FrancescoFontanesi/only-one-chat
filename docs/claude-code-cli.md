@@ -83,6 +83,9 @@ prima del turno.
 2. Un `ANTHROPIC_BASE_URL` nell'ambiente (proxy o base URL personalizzato) rende la
    subscription non verificabile: rifiuto `provider_not_verified`, salvo
    `allowUnverifiedProvider`; l'esito riporta allora `billing: "unverified_provider"`.
+   L'endpoint ufficiale impostato esplicitamente (`https://api.anthropic.com`, con o senza
+   la barra finale) non è un base URL personalizzato (`isOfficialAnthropicUrl`); un'altra
+   porta, un percorso, delle credenziali o una query sì.
 3. All'evento `init`, `apiKeySource` deve essere `"none"`: altrimenti l'albero di
    processi viene terminato subito e il turno rifiutato con `api_key`.
 

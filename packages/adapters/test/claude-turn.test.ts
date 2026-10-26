@@ -13,6 +13,7 @@ import {
   startClaudeTurn,
   type ClaudeEvent,
   type ClaudeTurnOptions,
+  isOfficialAnthropicUrl,
 } from '../src/index.js';
 
 const FAKE = join(import.meta.dirname, 'fixtures', 'fake-claude.mjs');
@@ -222,6 +223,27 @@ describe('billing checks', () => {
       options([], { baseEnv, allowUnverifiedProvider: true }).options,
     ).done;
     expect(allowed.billing).toBe('unverified_provider');
+  });
+
+  it.each([
+    'https://api.anthropic.com',
+    'https://api.anthropic.com/',
+    'HTTPS://API.Anthropic.com/',
+  ])('accepts the official endpoint %s as the subscription', async (url) => {
+    const baseEnv = { ...process.env, ANTHROPIC_BASE_URL: url };
+    const result = await startClaudeTurn(options([], { baseEnv }).options).done;
+    expect(result.billing).toBe('subscription');
+  });
+
+  it.each([
+    ['plain http', 'http://api.anthropic.com'],
+    ['another host', 'https://api.anthropic.com.evil.example'],
+    ['a port', 'https://api.anthropic.com:8443'],
+    ['a path', 'https://api.anthropic.com/v1/proxy'],
+    ['credentials', 'https://user:pass@api.anthropic.com'],
+    ['a query', 'https://api.anthropic.com/?via=proxy'],
+  ])('treats the official host with %s as a custom base URL', (_case, url) => {
+    expect(isOfficialAnthropicUrl(url)).toBe(false);
   });
 
   it('stops the process as soon as init reports an API key source', async () => {

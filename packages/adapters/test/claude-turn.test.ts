@@ -247,6 +247,49 @@ describe('billing checks', () => {
   });
 });
 
+describe('sandbox mode (ADR 0008)', () => {
+  const turnArgv = () => fakeLog().find((entry) => entry.argv?.includes('-p'))?.argv ?? [];
+  const after = (argv: string[], flag: string) => argv[argv.indexOf(flag) + 1];
+
+  it('lets Claude write and edit in the working directory and run only the listed commands', async () => {
+    const result = await startClaudeTurn(
+      options(['--permission-mode-reported=acceptEdits'], {
+        sandbox: { commands: ['python', 'py'] },
+      }).options,
+    ).done;
+    expect(result.text).toBe('OK');
+    const argv = turnArgv();
+    expect(after(argv, '--tools')).toBe('Read,Grep,Glob,Write,Edit,Bash');
+    expect(after(argv, '--allowedTools')).toBe('Write,Edit,Bash(python *),Bash(py *)');
+    expect(after(argv, '--disallowedTools')).toBe(
+      'PowerShell,MultiEdit,NotebookEdit,WebFetch,WebSearch',
+    );
+    expect(after(argv, '--permission-mode')).toBe('acceptEdits');
+    expect(after(argv, '--permission-prompts')).toBe('none');
+    expect(argv).toContain('--strict-mcp-config');
+  });
+
+  it('stays read-only without it', async () => {
+    await startClaudeTurn(options().options).done;
+    const argv = turnArgv();
+    expect(after(argv, '--tools')).toBe('Read,Grep,Glob');
+    expect(argv).not.toContain('--allowedTools');
+    expect(after(argv, '--permission-mode')).toBe('default');
+  });
+
+  it('stops a sandbox turn whose init reports another permission mode', async () => {
+    const error = await failure(
+      startClaudeTurn(
+        options(['--permission-mode-reported=bypassPermissions'], {
+          sandbox: { commands: ['python'] },
+        }).options,
+      ).done,
+    );
+    expect(error.kind).toBe('permission_mode');
+    expect(error.message).toMatch(/instead of "acceptEdits"/);
+  });
+});
+
 describe('ending a turn', () => {
   it('stops a running turn and terminates its whole process tree', async () => {
     const { options: turn, events } = options(['--hang']);

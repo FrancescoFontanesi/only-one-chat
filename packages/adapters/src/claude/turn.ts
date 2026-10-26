@@ -44,7 +44,7 @@ export class ClaudeError extends Error {
   }
 }
 
-/** Read-only for this iteration: no writing, editing, shell or network tools. */
+/** Read-only by default: no writing, editing, shell or network tools. */
 export const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'] as const;
 const DENIED_TOOLS = [
   'Bash',
@@ -57,8 +57,29 @@ const DENIED_TOOLS = [
   'WebSearch',
 ];
 
+/** Sandbox mode (ADR 0008): the file tools and Bash join the read-only ones. */
+export const SANDBOX_TOOLS = ['Write', 'Edit', 'Bash'] as const;
+/** Still denied in sandbox mode: another shell, notebooks, network. */
+const SANDBOX_DENIED_TOOLS = ['PowerShell', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch'];
+
 /** Accepted by Claude Code 2.1.308 although --help lists only the other modes. */
 export const PERMISSION_MODE = 'default';
+/** Sandbox mode: file edits in the working directory only are accepted without asking. */
+export const SANDBOX_PERMISSION_MODE = 'acceptEdits';
+
+/** The permission mode a turn runs in, which init must report back. */
+export function permissionModeOf(options: Pick<ClaudeTurnOptions, 'sandbox'>): string {
+  return options.sandbox ? SANDBOX_PERMISSION_MODE : PERMISSION_MODE;
+}
+
+/**
+ * Tools allowed without asking in sandbox mode: writing and editing (in the
+ * working directory, by the permission mode) and Bash for the listed commands
+ * only, e.g. "Bash(python *)". Any other command would ask, and is denied.
+ */
+export function sandboxAllowedTools(commands: readonly string[]): string[] {
+  return ['Write', 'Edit', ...commands.map((command) => `Bash(${command} *)`)];
+}
 
 export type ClaudeBilling = 'subscription' | 'unverified_provider';
 
@@ -147,6 +168,12 @@ export interface ClaudeTurnOptions {
    * effort; without it the Agent tool is not offered. See subagentEnv.
    */
   readonly subagents?: { readonly model: string; readonly effort: string };
+  /**
+   * Sandbox mode (ADR 0008), never the default: Claude may write and edit files
+   * in `cwd` and run the listed commands (e.g. `python`); everything else stays
+   * denied. Only for a fresh, disposable working directory.
+   */
+  readonly sandbox?: { readonly commands: readonly string[] };
 }
 
 /**
@@ -218,9 +245,16 @@ export function claudeTurnArgs(options: ClaudeTurnOptions): string[] {
     'stream-json',
     '--verbose',
     '--tools',
-    [...READ_ONLY_TOOLS, ...(options.subagents ? [SUBAGENT_TOOL] : [])].join(','),
+    [
+      ...READ_ONLY_TOOLS,
+      ...(options.sandbox ? SANDBOX_TOOLS : []),
+      ...(options.subagents ? [SUBAGENT_TOOL] : []),
+    ].join(','),
     '--disallowedTools',
-    DENIED_TOOLS.join(','),
+    (options.sandbox ? SANDBOX_DENIED_TOOLS : DENIED_TOOLS).join(','),
+    ...(options.sandbox
+      ? ['--allowedTools', sandboxAllowedTools(options.sandbox.commands).join(',')]
+      : []),
     // No MCP servers: the claude.ai connectors include tools that write elsewhere.
     '--strict-mcp-config',
     // Anything that would ask for permission is denied: nobody answers in -p mode.
@@ -228,7 +262,7 @@ export function claudeTurnArgs(options: ClaudeTurnOptions): string[] {
     'none',
     // Explicit, so the user's defaultMode (acceptEdits, bypassPermissions, …) never applies.
     '--permission-mode',
-    PERMISSION_MODE,
+    permissionModeOf(options),
     // Without it the text of a foreground sub-agent is left out of the stream.
     ...(options.subagents ? ['--forward-subagent-text'] : []),
     ...(options.model ? ['--model', options.model] : []),
@@ -407,10 +441,10 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
                   'api_key',
                   `Claude reported the API key source ${JSON.stringify(apiKeySource)}; the turn was stopped`,
                 )
-              : permissionMode !== PERMISSION_MODE
+              : permissionMode !== permissionModeOf(options)
                 ? new ClaudeError(
                     'permission_mode',
-                    `Claude reported the permission mode ${JSON.stringify(permissionMode)} instead of "${PERMISSION_MODE}"; the turn was stopped`,
+                    `Claude reported the permission mode ${JSON.stringify(permissionMode)} instead of "${permissionModeOf(options)}"; the turn was stopped`,
                   )
                 : undefined;
           if (refusal) {

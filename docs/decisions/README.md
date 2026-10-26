@@ -12,3 +12,4 @@ Una decisione superata non si cancella: si marca "Sostituita da NNNN".
 | [0005](0005-subscription-only-auth.md)            | Solo abbonamenti: gate di autenticazione e profilo Codex dedicato    | Sostituita da 0006 |
 | [0006](0006-personal-cli-profiles.md)             | Profili personali dei CLI                                            | Accettata          |
 | [0007](0007-subagents-visible-not-intercepted.md) | D13: sotto-agenti visibili e vincolati, non intercettati             | Accettata          |
+| [0008](0008-sandbox-mode.md)                      | Modalità sandbox: scrittura confinata per le prove locali            | Accettata          |

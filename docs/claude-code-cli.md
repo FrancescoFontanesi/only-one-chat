@@ -99,6 +99,14 @@ trasforma in `ClaudeError` `usage_limit`, con un messaggio chiaro e **nessun nuo
 tentativo**; il ciclo si ferma con `failed`. Fixture reale e redatta:
 `turn-usage-limit.jsonl`.
 
+## Modalità sandbox
+
+Con `sandbox: { commands: ['python'] }` ([ADR 0008](decisions/0008-sandbox-mode.md)) il turno
+aggiunge `Write`, `Edit` e `Bash`, ammette senza chiedere `Write`, `Edit` e `Bash(python *)`
+(`--allowedTools`), nega `PowerShell`, notebook e rete, e usa `--permission-mode acceptEdits`
+(modifiche accettate solo nella cartella di lavoro). Ogni altro comando chiederebbe un
+permesso e viene negato da `--permission-prompts none`. Mai per default.
+
 ## Sotto-agenti
 
 Con una policy del runtime l'adapter aggiunge lo strumento `Agent` (in `init` compare come

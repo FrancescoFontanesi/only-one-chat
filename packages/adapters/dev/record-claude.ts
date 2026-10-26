@@ -17,14 +17,21 @@
 
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir, hostname, tmpdir, userInfo } from 'node:os';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'vitest';
 import { claudeTurnArgs } from '../src/claude/turn.js';
 import { withoutApiKeys } from '../src/environment.js';
-import { findLeaks, redactTranscript, type RedactionLiterals } from './redact.js';
+import {
+  findLeaks,
+  homeLiteral,
+  localNameLiterals,
+  localNames,
+  redactTranscript,
+  type RedactionLiterals,
+} from './redact.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'test', 'fixtures', 'claude');
 const PROMPT = 'Rispondi solo OK';
@@ -36,15 +43,14 @@ interface Captured {
 
 function literals(): RedactionLiterals {
   const out = new Map<string, string>();
-  for (const [path, placeholder] of [
-    [tmpdir(), '<TMP>'],
-    [homedir(), '<HOME>'],
-  ] as const) {
+  const home = homeLiteral();
+  const paths: [string, string][] = [[tmpdir(), '<TMP>']];
+  if (home) paths.push([home, '<HOME>']);
+  for (const [path, placeholder] of paths) {
     out.set(path, placeholder);
     out.set(path.replaceAll('\\', '/'), placeholder);
   }
-  out.set(userInfo().username, '<user>');
-  out.set(hostname(), '<host>');
+  for (const [name, placeholder] of localNameLiterals()) out.set(name, placeholder);
   return [...out];
 }
 
@@ -115,7 +121,7 @@ describe.runIf(from ?? live)('record a Claude stream-json fixture', () => {
     const text = `${redactTranscript([meta, input, ...messages], literals())
       .map((entry) => JSON.stringify(entry))
       .join('\n')}\n`;
-    const leaks = findLeaks(text, [userInfo().username, hostname()]);
+    const leaks = findLeaks(text, localNames());
     if (leaks.length > 0) {
       throw new Error(
         `Fixture not written, possible leaks: ${leaks.map((l) => `${l.kind} ${l.match}`).join('; ')}`,

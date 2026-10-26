@@ -21,7 +21,7 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, hostname, tmpdir, userInfo } from 'node:os';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -31,6 +31,9 @@ import { prepareCodexLaunch } from '../src/codex/session.js';
 import { ISOLATED_PROFILE_OVERRIDES } from './isolated-profile.js';
 import {
   findLeaks,
+  homeLiteral,
+  localNameLiterals,
+  localNames,
   projectCodexConfig,
   redactTranscript,
   type RedactionLiterals,
@@ -277,9 +280,9 @@ function localLiterals(...codexHomes: readonly string[]): RedactionLiterals {
     }
   }
   addPath(tmpdir(), '<TMP>');
-  addPath(homedir(), '<HOME>');
-  literals.set(userInfo().username, '<user>');
-  literals.set(hostname(), '<host>');
+  const home = homeLiteral();
+  if (home) addPath(home, '<HOME>');
+  for (const [name, placeholder] of localNameLiterals()) literals.set(name, placeholder);
   return [...literals];
 }
 
@@ -344,7 +347,7 @@ describe.runIf(configuredPath && scenario)('record codex app-server transcript',
           .map((entry) => JSON.stringify(entry))
           .join('\n')}\n`;
         // Second, independent check: nothing is written if the scanner still finds something.
-        const leaks = findLeaks(text, [userInfo().username, hostname()]);
+        const leaks = findLeaks(text, localNames());
         if (leaks.length > 0) {
           throw new Error(
             `Transcript not written, possible leaks: ${leaks.map((leak) => leak.kind).join(', ')}`,

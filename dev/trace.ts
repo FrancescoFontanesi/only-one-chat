@@ -4,9 +4,12 @@
 // still finds something.
 
 import { writeFileSync } from 'node:fs';
-import { homedir, hostname, tmpdir, userInfo } from 'node:os';
+import { tmpdir } from 'node:os';
 import {
   findLeaks,
+  homeLiteral,
+  localNameLiterals,
+  localNames,
   projectCodexConfig,
   redactTranscript,
 } from '../packages/adapters/dev/redact.js';
@@ -44,9 +47,9 @@ export class Trace {
     addPath(workspace, '<WORKSPACE>');
     if (init) addPath(init, '<CODEX_HOME>');
     addPath(tmpdir(), '<TMP>');
-    addPath(homedir(), '<HOME>');
-    literals.set(userInfo().username, '<user>');
-    literals.set(hostname(), '<host>');
+    const home = homeLiteral();
+    if (home) addPath(home, '<HOME>');
+    for (const [name, placeholder] of localNameLiterals()) literals.set(name, placeholder);
     const entries = this.entries.map((entry) => ({
       ...entry,
       message: projectCodexConfig(entry.message),
@@ -57,7 +60,7 @@ export class Trace {
     )
       .map((entry) => JSON.stringify(entry))
       .join('\n')}\n`;
-    const leaks = findLeaks(text, [userInfo().username, hostname()]);
+    const leaks = findLeaks(text, localNames());
     if (leaks.length > 0) {
       process.stderr.write(
         `trace not written, possible leaks: ${leaks.map((leak) => leak.kind).join(', ')}\n`,

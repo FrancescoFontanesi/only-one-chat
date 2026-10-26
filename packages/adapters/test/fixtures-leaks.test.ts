@@ -3,13 +3,12 @@
 // scanner is checked against a sample built to trip every rule.
 
 import { readdirSync, readFileSync } from 'node:fs';
-import { hostname, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { findLeaks, redactTranscript } from '../dev/redact.js';
+import { findLeaks, localNames, personalNames, redactTranscript } from '../dev/redact.js';
 
 const FIXTURES = join(import.meta.dirname, 'fixtures');
-const LOCAL = [userInfo().username, hostname()];
+const LOCAL = localNames();
 
 function fixtureFiles(): string[] {
   return readdirSync(FIXTURES, { recursive: true, encoding: 'utf8' })
@@ -114,5 +113,29 @@ describe('leak scanner', () => {
     // The same login id gets the same placeholder everywhere it appears.
     expect(text.match(/<login-id-1>/g)).toHaveLength(2);
     expect(text).toContain('"planType":"plus"');
+  });
+});
+
+describe('generic account names', () => {
+  it('are never personal: root, admin, administrator, user', () => {
+    expect(personalNames(['root', 'Admin', 'administrator', 'user', 'alice', 'ab'])).toEqual([
+      'alice',
+    ]);
+  });
+
+  it('do not trip the scanner on Codex sub-agent paths, while a real name still does', () => {
+    const fixture = '{"agentPath":"/root/env_read"}';
+    expect(findLeaks(fixture, ['root'])).toEqual([]);
+    expect(findLeaks('{"cwd":"/srv/alice/work"}', ['alice'])).toMatchObject([
+      { kind: 'local literal', match: 'alice' },
+    ]);
+  });
+
+  it('are not redacted, so the sub-agent paths in the fixtures stay intact', () => {
+    const [entry] = redactTranscript(
+      [{ agentPath: '/root/env_read' }],
+      personalNames(['root']).map((name) => [name, '<user>'] as const),
+    );
+    expect(entry).toEqual({ agentPath: '/root/env_read' });
   });
 });

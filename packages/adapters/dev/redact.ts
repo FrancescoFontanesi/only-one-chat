@@ -3,6 +3,45 @@
 // `findLeaks` is the independent check the fixture test applies afterwards.
 // Dev tooling only: nothing here ships in the extension.
 
+import { homedir, hostname, userInfo } from 'node:os';
+
+/**
+ * Account names too common to identify anyone, never treated as personal:
+ * "root" is also the start of every Codex sub-agent path ("/root/env_read"),
+ * so redacting or scanning for it would break the fixtures for whoever works
+ * as root.
+ */
+const GENERIC_NAMES = new Set(['root', 'admin', 'administrator', 'user']);
+
+/** The names worth redacting and scanning for: not too short, not generic. */
+export function personalNames(names: readonly string[]): string[] {
+  return names.filter((name) => name.length >= 3 && !GENERIC_NAMES.has(name.toLowerCase()));
+}
+
+/** This machine's user and host name, as personal names. */
+export function localNames(): string[] {
+  return personalNames([userInfo().username, hostname()]);
+}
+
+/**
+ * The home directory as a literal to redact, unless it is a generic account's
+ * ("/root"): replacing it would also rewrite Codex's "/root/…" sub-agent paths.
+ */
+export function homeLiteral(): string | undefined {
+  const home = homedir();
+  const last = home.split(/[\\/]/).filter(Boolean).at(-1) ?? '';
+  return personalNames([last]).length > 0 ? home : undefined;
+}
+
+/** Placeholders for this machine's user and host name (generic names excluded). */
+export function localNameLiterals(): RedactionLiterals {
+  const username = userInfo().username;
+  return [
+    ...personalNames([username]).map((name) => [name, '<user>'] as const),
+    ...personalNames([hostname()]).map((name) => [name, '<host>'] as const),
+  ];
+}
+
 /** Exact strings to replace wherever they appear (paths, user name, host name). */
 export type RedactionLiterals = readonly (readonly [value: string, placeholder: string])[];
 
@@ -224,8 +263,8 @@ export function findLeaks(text: string, literals: readonly string[] = []): Leak[
   for (const [kind, pattern] of LEAK_PATTERNS) {
     for (const match of text.matchAll(pattern)) leaks.push({ kind, match: match[0] });
   }
-  for (const literal of literals) {
-    if (literal.length >= 3 && text.toLowerCase().includes(literal.toLowerCase())) {
+  for (const literal of personalNames(literals)) {
+    if (text.toLowerCase().includes(literal.toLowerCase())) {
       leaks.push({ kind: 'local literal', match: literal });
     }
   }

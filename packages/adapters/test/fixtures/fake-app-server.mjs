@@ -11,6 +11,8 @@
 // Flags: app-server (required) | --ignore-eof | --exit-at-start | --fail-initialize
 //        --account=<kind> (see ACCOUNTS) | --log=<file> (received messages, JSONL)
 //        --provider=<id> --provider-name=<name> (config/read; `readError` fails it)
+// Prompts with [delegation] get a valid delegation block to @claude, and a
+// verdict prompt ("Rispondi solo SUCCESS o FAIL") gets SUCCESS.
 // Unknown arguments (such as Codex `-c key=value` overrides) are ignored.
 
 import { spawn } from 'node:child_process';
@@ -270,6 +272,28 @@ const handlers = {
       });
     }
     let answer = `Risposta: ${text}`;
+    // For the benchmark runner's --fake mode: a planner's specification and its verdict.
+    if (text.includes('[delegation]')) {
+      answer = [
+        'Specifica pronta.',
+        '<<<DELEGA @claude',
+        '## Obiettivo',
+        'Implementa la calcolatrice.',
+        '## Contesto',
+        'Cartella di lavoro vuota.',
+        '## Vincoli',
+        'Solo libreria standard.',
+        '## Assunzioni',
+        'Nessuna',
+        '## Domande aperte',
+        'Nessuna',
+        '## Output atteso',
+        'Rapporto con file e test.',
+        'DELEGA>>>',
+      ].join('\n');
+    } else if (text.includes('Rispondi solo SUCCESS o FAIL')) {
+      answer = 'SUCCESS';
+    }
     if (text.includes('[approval]')) {
       const serverId = nextServerRequestId++;
       const reply = new Promise((resolve) => awaitingClient.set(serverId, resolve));

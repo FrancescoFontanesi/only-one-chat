@@ -20,6 +20,7 @@
     "record:codex": "vitest run --config packages/adapters/dev/vitest.config.ts record-codex --silent=false",
     "record:claude": "vitest run --config packages/adapters/dev/vitest.config.ts record-claude --silent=false",
     "demo": "node --import ./dev/ts-resolve.mjs dev/demo.ts",
+    "bench": "node --import ./dev/ts-resolve.mjs dev/bench.ts",
     "diagnose": "vitest run --config packages/adapters/dev/vitest.config.ts diagnose --silent=false",
     "package": "pnpm --filter only-one-chat run package",
     "check": "pnpm build && pnpm typecheck && pnpm lint && pnpm test"

@@ -1,0 +1,22 @@
+{
+  "description": "Systems compared on the calc scenario. Models and effort are configuration.",
+  "systems": {
+    "A": {
+      "kind": "pipeline",
+      "title": "Codex plans and judges, Claude executes",
+      "planner": { "cli": "codex", "model": "gpt-6.1-sol", "effort": "medium" },
+      "executor": { "cli": "claude", "model": "sonnet", "effort": "low" },
+      "subagents": {
+        "codex": { "model": "gpt-6-luna", "effort": "low" },
+        "claude": { "model": "claude-haiku-5-5", "effort": "low" },
+        "maxConcurrent": 2
+      }
+    },
+    "B": {
+      "kind": "single",
+      "title": "One model in one turn",
+      "agent": { "cli": "claude", "model": "opus", "effort": "medium" }
+    }
+  },
+  "sandboxCommands": ["python", "py"]
+}

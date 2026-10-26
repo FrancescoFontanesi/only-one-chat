@@ -6,7 +6,7 @@ Stato: Accettata (iterazione 2)
 
 Finora gli agenti lavorano in sola lettura e le approvazioni sono tutte rifiutate (R9 non è
 ancora implementato). La prima prova vera, una demo di scrittura di codice
-(cartella `sandbox/` del repository), richiede che un agente scriva file ed esegua i
+([sandbox/README.md](../../sandbox/README.md)), richiede che un agente scriva file ed esegua i
 test del codice che ha scritto, senza nessuno che approvi a mano ogni passo.
 
 ## Decisione

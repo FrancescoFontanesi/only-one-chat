@@ -63,23 +63,26 @@ export const SANDBOX_TOOLS = ['Write', 'Edit', 'Bash'] as const;
 /** Still denied in sandbox mode: another shell, notebooks, network. */
 const SANDBOX_DENIED_TOOLS = ['PowerShell', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch'];
 
-/** Accepted by Claude Code 2.1.308 although --help lists only the other modes. */
+/**
+ * Accepted by Claude Code 2.1.308 although --help lists only the other modes.
+ * Sandbox turns use it too: acceptEdits would also approve mkdir, touch, rm,
+ * rmdir, mv, cp and sed in the working directory (seen in the first benchmark).
+ */
 export const PERMISSION_MODE = 'default';
-/** Sandbox mode: file edits in the working directory only are accepted without asking. */
-export const SANDBOX_PERMISSION_MODE = 'acceptEdits';
-
-/** The permission mode a turn runs in, which init must report back. */
-export function permissionModeOf(options: Pick<ClaudeTurnOptions, 'sandbox'>): string {
-  return options.sandbox ? SANDBOX_PERMISSION_MODE : PERMISSION_MODE;
-}
 
 /**
- * Tools allowed without asking in sandbox mode: writing and editing (in the
- * working directory, by the permission mode) and Bash for the listed commands
- * only, e.g. "Bash(python *)". Any other command would ask, and is denied.
+ * Rules allowed without asking in sandbox mode (Claude Code docs, permissions):
+ * - `Edit(./**)`: file edits under the working directory only; a CLI rule's
+ *   relative path is anchored there, and Write is checked against Edit rules
+ *   (a bare `Edit` or `Write` would match every path);
+ * - `Bash(<command> *)` for each listed command, e.g. `Bash(python *)`; every
+ *   subcommand of a compound command must match on its own.
+ * Anything else that asks (rm, mv, an edit elsewhere, another program) is
+ * denied by --permission-prompts none. Read-only commands such as ls, cat or
+ * a cd inside the working directory run without asking in every mode.
  */
 export function sandboxAllowedTools(commands: readonly string[]): string[] {
-  return ['Write', 'Edit', ...commands.map((command) => `Bash(${command} *)`)];
+  return ['Edit(./**)', ...commands.map((command) => `Bash(${command} *)`)];
 }
 
 export type ClaudeBilling = 'subscription' | 'unverified_provider';
@@ -269,7 +272,7 @@ export function claudeTurnArgs(options: ClaudeTurnOptions): string[] {
     'none',
     // Explicit, so the user's defaultMode (acceptEdits, bypassPermissions, …) never applies.
     '--permission-mode',
-    permissionModeOf(options),
+    PERMISSION_MODE,
     // Without it the text of a foreground sub-agent is left out of the stream.
     ...(options.subagents ? ['--forward-subagent-text'] : []),
     ...(options.model ? ['--model', options.model] : []),
@@ -449,10 +452,10 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
                   'api_key',
                   `Claude reported the API key source ${JSON.stringify(apiKeySource)}; the turn was stopped`,
                 )
-              : permissionMode !== permissionModeOf(options)
+              : permissionMode !== PERMISSION_MODE
                 ? new ClaudeError(
                     'permission_mode',
-                    `Claude reported the permission mode ${JSON.stringify(permissionMode)} instead of "${permissionModeOf(options)}"; the turn was stopped`,
+                    `Claude reported the permission mode ${JSON.stringify(permissionMode)} instead of "${PERMISSION_MODE}"; the turn was stopped`,
                   )
                 : undefined;
           if (refusal) {

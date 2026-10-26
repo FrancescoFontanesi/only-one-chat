@@ -102,10 +102,12 @@ tentativo**; il ciclo si ferma con `failed`. Fixture reale e redatta:
 ## Modalità sandbox
 
 Con `sandbox: { commands: ['python'] }` ([ADR 0008](decisions/0008-sandbox-mode.md)) il turno
-aggiunge `Write`, `Edit` e `Bash`, ammette senza chiedere `Write`, `Edit` e `Bash(python *)`
-(`--allowedTools`), nega `PowerShell`, notebook e rete, e usa `--permission-mode acceptEdits`
-(modifiche accettate solo nella cartella di lavoro). Ogni altro comando chiederebbe un
-permesso e viene negato da `--permission-prompts none`. Mai per default.
+aggiunge `Write`, `Edit` e `Bash` e resta in `--permission-mode default`. Ammette senza
+chiedere solo `Edit(./**)` (le modifiche sotto la cartella di lavoro, `Write` compreso) e
+`Bash(python *)`; nega `PowerShell`, notebook e rete. Tutto il resto che chiederebbe un
+permesso (`rm`, `mv`, modifiche altrove) viene negato da `--permission-prompts none`; i comandi
+in sola lettura (`ls`, `cat`, `cd` nella cartella) passano sempre. Non si usa `acceptEdits`,
+che approverebbe da solo anche `rm`, `mv`, `cp` e `sed` nella cartella. Mai per default.
 
 ## Sotto-agenti
 

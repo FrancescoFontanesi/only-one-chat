@@ -269,18 +269,18 @@ describe('sandbox mode (ADR 0008)', () => {
 
   it('lets Claude write and edit in the working directory and run only the listed commands', async () => {
     const result = await startClaudeTurn(
-      options(['--permission-mode-reported=acceptEdits'], {
-        sandbox: { commands: ['python', 'py'] },
-      }).options,
+      options([], { sandbox: { commands: ['python', 'py'] } }).options,
     ).done;
     expect(result.text).toBe('OK');
     const argv = turnArgv();
     expect(after(argv, '--tools')).toBe('Read,Grep,Glob,Write,Edit,Bash');
-    expect(after(argv, '--allowedTools')).toBe('Write,Edit,Bash(python *),Bash(py *)');
+    // Edit(./**) covers Write too; bare Write or Edit would allow any path.
+    expect(after(argv, '--allowedTools')).toBe('Edit(./**),Bash(python *),Bash(py *)');
     expect(after(argv, '--disallowedTools')).toBe(
       'PowerShell,MultiEdit,NotebookEdit,WebFetch,WebSearch',
     );
-    expect(after(argv, '--permission-mode')).toBe('acceptEdits');
+    // Not acceptEdits: it would also approve rm, mv, cp and sed in the directory.
+    expect(after(argv, '--permission-mode')).toBe('default');
     expect(after(argv, '--permission-prompts')).toBe('none');
     expect(argv).toContain('--strict-mcp-config');
   });
@@ -302,7 +302,7 @@ describe('sandbox mode (ADR 0008)', () => {
       ).done,
     );
     expect(error.kind).toBe('permission_mode');
-    expect(error.message).toMatch(/instead of "acceptEdits"/);
+    expect(error.message).toMatch(/instead of "default"/);
   });
 });
 

@@ -75,6 +75,7 @@ const startup = load('startup');
 const customProvider = load('custom-provider');
 const personalStartup = load('personal-startup');
 const questionTurn = load('question-turn');
+const subagentTurn = load('subagent-turn');
 
 describe(`recorded Codex ${RECORDED_VERSION}: what the client accepts`, () => {
   const all = [startup, customProvider, personalStartup, questionTurn].filter(
@@ -407,4 +408,53 @@ describe('fake app-server matches the recorded question-turn on what the client 
       expect(types).not.toContain('collabAgentToolCall');
     },
   );
+});
+
+/** A real native sub-agent (dev/subagent-check.ts codex, policy gpt-6-luna/low). */
+describe.runIf(subagentTurn !== undefined)('recorded sub-agent turn', () => {
+  const server = () => messages(subagentTurn ?? [], 'server');
+  const activity = (kind: string) =>
+    server()
+      .filter((m) => m['method'] === 'item/started')
+      .map((m) => (m['params'] as Json)['item'] as Json)
+      .find((item) => item['type'] === 'subAgentActivity' && item['kind'] === kind);
+
+  it('announces the sub-agent with the model and effort the policy imposes', () => {
+    expect(activity('started')).toMatchObject({
+      model: 'gpt-6-luna',
+      reasoningEffort: 'low',
+      agentPath: '/root/env_read',
+    });
+    expect(activity('completed')).toMatchObject({ model: null, reasoningEffort: null });
+  });
+
+  it('runs the sub-agent on its own thread, announced on the same connection', () => {
+    const child = activity('started')?.['agentThreadId'];
+    const childTurns = server().filter(
+      (m) => m['method'] === 'turn/started' && (m['params'] as Json)['threadId'] === child,
+    );
+    expect(childTurns).toHaveLength(1);
+    const childCommands = server().filter(
+      (m) =>
+        m['method'] === 'item/started' &&
+        (m['params'] as Json)['threadId'] === child &&
+        ((m['params'] as Json)['item'] as Json)['type'] === 'commandExecution',
+    );
+    expect(childCommands.length).toBeGreaterThan(0);
+  });
+
+  it('passed the policy as per-thread overrides, and the thread effort stayed the profile’s', () => {
+    const start = messages(subagentTurn ?? [], 'client').find(
+      (m) => m['method'] === 'thread/start',
+    );
+    expect((start?.['params'] as Json)['config']).toMatchObject({
+      'agents.default_subagent_model': 'gpt-6-luna',
+      'agents.default_subagent_reasoning_effort': 'low',
+      'features.multi_agent_v2.expose_spawn_agent_model_overrides': false,
+    });
+    expect(result(subagentTurn, 'thread/start')).toMatchObject({
+      reasoningEffort: 'high',
+      multiAgentMode: 'explicitRequestOnly',
+    });
+  });
 });

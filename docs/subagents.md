@@ -80,11 +80,19 @@ farlo scattare.
   stream reale ci sono anche gli eventi `system` `task_started`, `task_progress`,
   `task_updated` e `task_notification`, e `init` elenca lo strumento come `Task`.
   Registrato come `turn-subagent.jsonl`, che il fake riproduce.
-- **Codex 0.164.0, Luna, low**: creazione fallita con `no rollout found`, nessun sotto-agente
-  avviato, quindi nessun vincolo osservato. `spawn_agent` eredita per default tutta la
-  cronologia del padre (`fork_turns: "all"`), che un thread `ephemeral` non conserva su
-  disco. L'istruzione di ruolo ora chiede `fork_turns: "none"` con il contesto nel compito:
-  **da verificare** con un turno reale.
+- **Codex 0.164.0, Luna, low**, primo turno: creazione fallita con `no rollout found`,
+  nessun sotto-agente avviato. `spawn_agent` eredita per default tutta la cronologia del
+  padre (`fork_turns: "all"`), che un thread `ephemeral` non conserva su disco. Da allora
+  l'istruzione di ruolo chiede `fork_turns: "none"` con il contesto nel compito.
+- **Codex, secondo turno** (`subagent-turn.jsonl`): il sotto-agente `/root/env_read` parte,
+  con il proprio thread, un comando di lettura e stato `completed`. `subAgentActivity`
+  riporta `gpt-6-luna` ed effort `low`, mentre il thread padre ha effort `high` (il
+  predefinito del profilo): l'override `default_subagent_reasoning_effort` si applica (nel
+  run 2, senza override, l'effort era `medium`). Nessuna violazione.
+  `multiAgentMode` nella risposta di `thread/start` resta `explicitRequestOnly` anche con il
+  testo guida per thread: il campo non lo riflette. Il comportamento (un sotto-agente, solo
+  perché richiesto) è coerente con il testo, ma anche con la modalità predefinita, quindi
+  questo turno non dimostra che il testo guida venga applicato.
 
 ## Limiti
 

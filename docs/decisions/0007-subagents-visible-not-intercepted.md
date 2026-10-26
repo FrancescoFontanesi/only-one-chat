@@ -30,6 +30,6 @@ che partano: il protocollo app-server non ha una richiesta per lo spawn
   fermato: il controllo è a posteriori.
 - Gli adapter devono riportare i sotto-agenti come eventi (`onSubagent`) e lo stop deve
   raggiungerli; il runtime resta indipendente dai provider.
-- I limiti noti e la verifica reale sono in [subagents.md](../subagents.md). I sotto-agenti
-  di Codex non sono ancora verificati su un turno reale: la creazione fallisce sui thread
-  `ephemeral` se eredita la cronologia, e la correzione (`fork_turns: "none"`) attende un turno.
+- I limiti noti e la verifica reale sono in [subagents.md](../subagents.md). Sui thread
+  `ephemeral` un sotto-agente di Codex può partire solo senza ereditare la cronologia
+  (`fork_turns: "none"`), verificato su un turno reale.

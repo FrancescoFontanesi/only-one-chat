@@ -34,7 +34,11 @@ Stato: iterazione 1. Codice: `packages/runtime/src/` (`loop.ts`, `delegation.ts`
 4. Il **worker** (iterazione 1: Claude) riceve il testo approvato; la risposta arriva in
    streaming. I turni successivi riprendono la stessa sessione Claude (`--resume`).
 5. Il runtime prepara il **messaggio di review** (risultato del worker e richiesta di
-   valutazione), anch'esso intercettato.
+   valutazione), anch'esso intercettato. La risposta del worker sta fra le righe
+   `<<<RISPOSTA DEL WORKER` e `RISPOSTA DEL WORKER>>>`, con una frase che la indica come
+   dato da valutare e non come istruzioni (minaccia T4 in [security.md](security.md)); una
+   riga della risposta identica a un delimitatore viene sostituita, così la risposta non
+   può chiudere la cornice in anticipo.
 6. L'orchestratore valuta: una nuova delega riparte dal punto 3, altrimenti la risposta è
    la conclusione. Al massimo **3 scambi**; al terzo la review chiede di non delegare più e
    un'ulteriore delega chiude con `limit_reached`.

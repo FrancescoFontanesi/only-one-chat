@@ -56,6 +56,23 @@ risposta, etichetta), senza review. Una sola correzione di un blocco malformato 
 ammessa (`canAskOrchestrator` diventa falso); se l'orchestratore risponde senza
 delegare, l'esito è `failed`. Nella demo: `pnpm demo --question`.
 
+## Modalità pipeline (benchmark)
+
+`runLoop({ mode: 'pipeline', autoApprove: true })`, per le prove della cartella `sandbox/`
+([ADR 0008](decisions/0008-sandbox-mode.md)). Tre turni:
+
+1. il **pianificatore** (`plannerInstructions`) ragiona e scrive una sola specifica completa
+   nel blocco di delega, con destinatario obbligatorio, senza codice completo;
+2. l'**esecutore** (`EXECUTOR_INSTRUCTIONS`) la segue alla lettera, senza analisi estese,
+   scrive i file, esegue i test e risponde con un rapporto fisso (File, Test, Problemi);
+3. il pianificatore riceve il rapporto nella cornice da dato (`verdictPrompt`) e risponde solo
+   `SUCCESS` o `FAIL`; l'esito è `verdict`, con il verdetto letto da `parseVerdict` (null se
+   ambiguo).
+
+Con `autoApprove` i messaggi fra agenti non aspettano l'utente, ma sono intercettati,
+registrati e mostrati come decisione `auto_approve`; un blocco malformato riceve una sola
+correzione automatica (`auto_fix`), poi il run fallisce. Mai per default.
+
 ## Etichette
 
 Ogni risposta nel thread (`message`) porta un'etichetta scritta dal **runtime** da

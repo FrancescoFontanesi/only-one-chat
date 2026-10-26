@@ -1,0 +1,362 @@
+{
+  "runId": "calc-A-2026-10-26T17-15-49-496Z",
+  "scenario": "calc",
+  "system": "A",
+  "config": {
+    "kind": "pipeline",
+    "title": "Codex plans and judges, Claude executes",
+    "planner": {
+      "cli": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "medium"
+    },
+    "executor": {
+      "cli": "claude",
+      "model": "sonnet",
+      "effort": "low"
+    },
+    "subagents": {
+      "codex": {
+        "model": "gpt-6-luna",
+        "effort": "low"
+      },
+      "claude": {
+        "model": "claude-haiku-5-5",
+        "effort": "low"
+      },
+      "maxConcurrent": 2
+    }
+  },
+  "fake": false,
+  "runDir": "<RUN>",
+  "wallMs": 162107,
+  "outcome": {
+    "status": "verdict",
+    "verdict": "SUCCESS",
+    "answer": "SUCCESS",
+    "report": "## File\nCreati nella cartella corrente: `lexer.py`, `evaluator.py`, `main.py`, `test_calc.py`. `graft` non è stata toccata.\n\n## Test\nComando: `python -m unittest`. Ha eseguito 19 test, tutti passati, 0 falliti (esito OK).\n\n## Problemi\nNessuno. Ho fatto due scelte che la specifica non copriva:\n- Ogni operazione che dà un risultato non finito o complesso, o va in overflow, produce `Error: numeric error`. Il controllo vale anche sui risultati intermedi.\n- Un argomento CLI non valido stampa una sola riga `Error: ...` su stderr ed esce con codice 1."
+  },
+  "hidden": {
+    "passed": 30,
+    "total": 30,
+    "cases": [
+      {
+        "name": "addition",
+        "passed": true
+      },
+      {
+        "name": "precedence-left",
+        "passed": true
+      },
+      {
+        "name": "precedence-right",
+        "passed": true
+      },
+      {
+        "name": "parentheses",
+        "passed": true
+      },
+      {
+        "name": "float-division",
+        "passed": true
+      },
+      {
+        "name": "float-repr",
+        "passed": true
+      },
+      {
+        "name": "integral-float",
+        "passed": true
+      },
+      {
+        "name": "modulo",
+        "passed": true
+      },
+      {
+        "name": "power-right-assoc",
+        "passed": true
+      },
+      {
+        "name": "unary-below-power",
+        "passed": true
+      },
+      {
+        "name": "negative-exponent",
+        "passed": true
+      },
+      {
+        "name": "unary-parentheses",
+        "passed": true
+      },
+      {
+        "name": "decimals",
+        "passed": true
+      },
+      {
+        "name": "sqrt",
+        "passed": true
+      },
+      {
+        "name": "max-many",
+        "passed": true
+      },
+      {
+        "name": "min-negative",
+        "passed": true
+      },
+      {
+        "name": "abs",
+        "passed": true
+      },
+      {
+        "name": "assignment-prints",
+        "passed": true
+      },
+      {
+        "name": "script-variables",
+        "passed": true
+      },
+      {
+        "name": "script-continues-after-error",
+        "passed": true
+      },
+      {
+        "name": "division-by-zero",
+        "passed": true
+      },
+      {
+        "name": "modulo-by-zero",
+        "passed": true
+      },
+      {
+        "name": "unknown-function",
+        "passed": true
+      },
+      {
+        "name": "sqrt-negative",
+        "passed": true
+      },
+      {
+        "name": "sqrt-arity",
+        "passed": true
+      },
+      {
+        "name": "max-no-arguments",
+        "passed": true
+      },
+      {
+        "name": "unknown-variable",
+        "passed": true
+      },
+      {
+        "name": "unclosed-parenthesis",
+        "passed": true
+      },
+      {
+        "name": "missing-operand",
+        "passed": true
+      },
+      {
+        "name": "two-numbers",
+        "passed": true
+      }
+    ]
+  },
+  "files": [
+    {
+      "path": "evaluator.py",
+      "lines": 187
+    },
+    {
+      "path": "graft\\.cache\\session\\<uuid-1>.json",
+      "lines": 9
+    },
+    {
+      "path": "graft\\.cache\\telemetry-repo-id.json",
+      "lines": 3
+    },
+    {
+      "path": "lexer.py",
+      "lines": 62
+    },
+    {
+      "path": "main.py",
+      "lines": 50
+    },
+    {
+      "path": "test_calc.py",
+      "lines": 178
+    }
+  ],
+  "turns": [
+    {
+      "role": "orchestrator",
+      "agent": "Codex (gpt-6.1-sol)",
+      "label": "Codex · gpt-6.1-sol · effort medium · sessione <uuid-1>",
+      "usage": {
+        "byModel": {
+          "gpt-6.1-sol": {
+            "input": 20011,
+            "cachedInput": 32896,
+            "cacheWrite": 0,
+            "output": 3560,
+            "reasoning": 376
+          }
+        },
+        "costUsd": null,
+        "durationMs": 96329
+      },
+      "quota": {
+        "windows": [
+          {
+            "name": "5h",
+            "usedPercent": 63,
+            "resetsAt": 1793047202
+          },
+          {
+            "name": "weekly",
+            "usedPercent": 18,
+            "resetsAt": 1793606078
+          }
+        ]
+      }
+    },
+    {
+      "role": "worker",
+      "agent": "Claude (sonnet)",
+      "label": "Claude Code · claude-sonnet-5-5 · effort low · sessione <uuid-2>",
+      "usage": {
+        "byModel": {
+          "claude-haiku-5-5": {
+            "input": 5781,
+            "cachedInput": 0,
+            "cacheWrite": 0,
+            "output": 26,
+            "reasoning": 0
+          },
+          "claude-sonnet-5-5": {
+            "input": 4,
+            "cachedInput": 16282,
+            "cacheWrite": 25039,
+            "output": 8495,
+            "reasoning": 1651
+          }
+        },
+        "costUsd": 0.1873333,
+        "durationMs": 59154
+      },
+      "quota": {
+        "windows": [
+          {
+            "name": "5h",
+            "usedPercent": 50,
+            "resetsAt": 1793045400
+          },
+          {
+            "name": "weekly",
+            "usedPercent": 39,
+            "resetsAt": 1793512800
+          }
+        ]
+      }
+    },
+    {
+      "role": "orchestrator",
+      "agent": "Codex (gpt-6.1-sol)",
+      "label": "Codex · gpt-6.1-sol · effort medium · sessione <uuid-1>",
+      "usage": {
+        "byModel": {
+          "gpt-6.1-sol": {
+            "input": 374,
+            "cachedInput": 30592,
+            "cacheWrite": 0,
+            "output": 27,
+            "reasoning": 20
+          }
+        },
+        "costUsd": null,
+        "durationMs": 4855
+      },
+      "quota": {
+        "windows": [
+          {
+            "name": "5h",
+            "usedPercent": 65,
+            "resetsAt": 1793047202
+          },
+          {
+            "name": "weekly",
+            "usedPercent": 18,
+            "resetsAt": 1793606078
+          }
+        ]
+      }
+    }
+  ],
+  "tokens": {
+    "gpt-6.1-sol": {
+      "input": 20385,
+      "cachedInput": 63488,
+      "cacheWrite": 0,
+      "output": 3587,
+      "reasoning": 396
+    },
+    "claude-haiku-5-5": {
+      "input": 5781,
+      "cachedInput": 0,
+      "cacheWrite": 0,
+      "output": 26,
+      "reasoning": 0
+    },
+    "claude-sonnet-5-5": {
+      "input": 4,
+      "cachedInput": 16282,
+      "cacheWrite": 25039,
+      "output": 8495,
+      "reasoning": 1651
+    }
+  },
+  "claudeNominalCostUsd": 0.1873333,
+  "codexQuota": {
+    "before": {
+      "windows": [
+        {
+          "name": "5h",
+          "usedPercent": 63,
+          "resetsAt": 1793047202
+        },
+        {
+          "name": "weekly",
+          "usedPercent": 18,
+          "resetsAt": 1793606078
+        }
+      ]
+    },
+    "after": {
+      "windows": [
+        {
+          "name": "5h",
+          "usedPercent": 65,
+          "resetsAt": 1793047202
+        },
+        {
+          "name": "weekly",
+          "usedPercent": 18,
+          "resetsAt": 1793606078
+        }
+      ]
+    }
+  },
+  "otherEvents": [
+    "activity",
+    "decision",
+    "activity",
+    "activity",
+    "activity",
+    "activity",
+    "activity",
+    "activity",
+    "decision",
+    "finished"
+  ]
+}

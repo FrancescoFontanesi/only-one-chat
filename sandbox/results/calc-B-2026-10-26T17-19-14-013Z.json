@@ -1,0 +1,267 @@
+{
+  "runId": "calc-B-2026-10-26T17-19-14-013Z",
+  "scenario": "calc",
+  "system": "B",
+  "config": {
+    "kind": "single",
+    "title": "One model in one turn",
+    "agent": {
+      "cli": "claude",
+      "model": "opus",
+      "effort": "medium"
+    }
+  },
+  "fake": false,
+  "runDir": "<RUN>",
+  "wallMs": 144958,
+  "outcome": {
+    "status": "single",
+    "report": "## File\n- `lexer.py`: creato. Divide il testo in token e registra la colonna di ciascuno. Contiene anche le classi di errore `CalcError` e `CalcSyntaxError`.\n- `evaluator.py`: creato. Contiene il parser (a discesa ricorsiva), la valutazione e la formattazione dei risultati.\n- `main.py`: creato. Gestisce la modalità `-e \"ISTRUZIONE\"` e la lettura da stdin.\n- `test_calc.py`: creato. Contiene i test `unittest`, compresi quelli che avviano `main.py` come processo separato.\n- `parser.py`: creato e poi eliminato. Il parsing è stato spostato in `evaluator.py` perché in Python 3.9 e precedenti esiste un modulo built-in `parser` che avrebbe la precedenza sul file locale.\n\n## Test\n- Comando: `python -m unittest -v` (Python 3.10.6)\n- Risultato: 25 test eseguiti, 25 passati, 0 falliti.\n\n## Problemi\nNessuno. Alcuni casi non coperti dalla specifica, gestiti così:\n- **Formato dei numeri:** sono validi solo `3` e `2.5`. Scritture come `.5`, `2.` o `3abc` danno un errore di sintassi.\n- **Operatori non previsti:** il più unario non è supportato, quindi `+1` dà un errore di sintassi alla colonna 1.\n- **Overflow:** un risultato troppo grande, per esempio `9^9^9`, stampa `Error: numeric overflow`.\n- **Base negativa con esponente non intero:** per esempio `(-8)^0.5`, stampa `Error: invalid argument for ^`.\n- **Zero elevato a esponente negativo:** `0^-1` stampa `Error: division by zero`.\n- **Modulo:** `%` segue le regole di Python, quindi il risultato ha il segno del divisore.\n- **Argomenti non validi:** con argomenti diversi da `-e \"ISTRUZIONE\"`, il programma stampa l'uso corretto ed esce con codice 2."
+  },
+  "hidden": {
+    "passed": 30,
+    "total": 30,
+    "cases": [
+      {
+        "name": "addition",
+        "passed": true
+      },
+      {
+        "name": "precedence-left",
+        "passed": true
+      },
+      {
+        "name": "precedence-right",
+        "passed": true
+      },
+      {
+        "name": "parentheses",
+        "passed": true
+      },
+      {
+        "name": "float-division",
+        "passed": true
+      },
+      {
+        "name": "float-repr",
+        "passed": true
+      },
+      {
+        "name": "integral-float",
+        "passed": true
+      },
+      {
+        "name": "modulo",
+        "passed": true
+      },
+      {
+        "name": "power-right-assoc",
+        "passed": true
+      },
+      {
+        "name": "unary-below-power",
+        "passed": true
+      },
+      {
+        "name": "negative-exponent",
+        "passed": true
+      },
+      {
+        "name": "unary-parentheses",
+        "passed": true
+      },
+      {
+        "name": "decimals",
+        "passed": true
+      },
+      {
+        "name": "sqrt",
+        "passed": true
+      },
+      {
+        "name": "max-many",
+        "passed": true
+      },
+      {
+        "name": "min-negative",
+        "passed": true
+      },
+      {
+        "name": "abs",
+        "passed": true
+      },
+      {
+        "name": "assignment-prints",
+        "passed": true
+      },
+      {
+        "name": "script-variables",
+        "passed": true
+      },
+      {
+        "name": "script-continues-after-error",
+        "passed": true
+      },
+      {
+        "name": "division-by-zero",
+        "passed": true
+      },
+      {
+        "name": "modulo-by-zero",
+        "passed": true
+      },
+      {
+        "name": "unknown-function",
+        "passed": true
+      },
+      {
+        "name": "sqrt-negative",
+        "passed": true
+      },
+      {
+        "name": "sqrt-arity",
+        "passed": true
+      },
+      {
+        "name": "max-no-arguments",
+        "passed": true
+      },
+      {
+        "name": "unknown-variable",
+        "passed": true
+      },
+      {
+        "name": "unclosed-parenthesis",
+        "passed": true
+      },
+      {
+        "name": "missing-operand",
+        "passed": true
+      },
+      {
+        "name": "two-numbers",
+        "passed": true
+      }
+    ]
+  },
+  "files": [
+    {
+      "path": "evaluator.py",
+      "lines": 283
+    },
+    {
+      "path": "lexer.py",
+      "lines": 104
+    },
+    {
+      "path": "main.py",
+      "lines": 52
+    },
+    {
+      "path": "test_calc.py",
+      "lines": 219
+    }
+  ],
+  "turns": [
+    {
+      "role": "worker",
+      "agent": "Claude (opus)",
+      "label": "Claude Code · claude-opus-5-5 · effort medium · sessione <uuid-1>",
+      "usage": {
+        "byModel": {
+          "claude-haiku-5-5": {
+            "input": 2148,
+            "cachedInput": 0,
+            "cacheWrite": 0,
+            "output": 25,
+            "reasoning": 0
+          },
+          "claude-opus-5-5": {
+            "input": 14,
+            "cachedInput": 92874,
+            "cacheWrite": 27098,
+            "output": 16301,
+            "reasoning": 2447
+          }
+        },
+        "costUsd": 0.5616620999999999,
+        "durationMs": 144957
+      },
+      "quota": {
+        "windows": [
+          {
+            "name": "5h",
+            "usedPercent": 53,
+            "resetsAt": 1793045400
+          },
+          {
+            "name": "weekly",
+            "usedPercent": 40,
+            "resetsAt": 1793512800
+          }
+        ]
+      }
+    }
+  ],
+  "tokens": {
+    "claude-haiku-5-5": {
+      "input": 2148,
+      "cachedInput": 0,
+      "cacheWrite": 0,
+      "output": 25,
+      "reasoning": 0
+    },
+    "claude-opus-5-5": {
+      "input": 14,
+      "cachedInput": 92874,
+      "cacheWrite": 27098,
+      "output": 16301,
+      "reasoning": 2447
+    }
+  },
+  "claudeNominalCostUsd": 0.5616620999999999,
+  "codexQuota": {
+    "before": {
+      "windows": [
+        {
+          "name": "5h",
+          "usedPercent": 66,
+          "resetsAt": 1793047202
+        },
+        {
+          "name": "weekly",
+          "usedPercent": 18,
+          "resetsAt": 1793606078
+        }
+      ]
+    },
+    "after": {
+      "windows": [
+        {
+          "name": "5h",
+          "usedPercent": 68,
+          "resetsAt": 1793047202
+        },
+        {
+          "name": "weekly",
+          "usedPercent": 19,
+          "resetsAt": 1793606078
+        }
+      ]
+    }
+  },
+  "otherEvents": [
+    "activity",
+    "activity",
+    "activity",
+    "activity",
+    "activity",
+    "activity",
+    "activity",
+    "activity",
+    "activity",
+    "activity",
+    "activity",
+    "activity"
+  ]
+}

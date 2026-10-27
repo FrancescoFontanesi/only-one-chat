@@ -36,15 +36,30 @@ attraverso gli appunti, la cattura al focus e il formato del brief.
    - Il leader è un modello scelto in configurazione (per esempio Sol, oppure Opus), con una
      sessione che dura tutta la conversazione.
    - ChatGPT web è una fonte opzionale di brief, attraverso il ponte dell'ADR 0009.
-2. **Il leader sceglie la via per ogni richiesta**, quella che costa meno a parità di
-   risultato:
-   - **domanda sul codice**: risponde lui; per esplorare usa i sotto-agenti, che gli
+2. **Il leader è l'interlocutore con cui si ragiona**, come la web app, ma è anche un agente
+   capace di scrivere. L'implementatore è un modello esterno, su un'altra subscription, e il
+   leader lo sa: non è un suo sotto-agente. Per ogni richiesta il leader sceglie la via e la
+   dichiara nella prima riga della risposta ("Via: rispondo | chiedo | faccio io | delego —
+   perché"):
+   - **rispondo**: domande e ragionamento; per leggere il codice usa i sotto-agenti, che gli
      restituiscono una sintesi;
-   - **modifica piccola e concentrata**: la fa lui ed esegue i test, perché delegarla costerebbe
-     più della modifica. La sua sessione quindi può scrivere;
-   - **modifica più grande**: la delega all'implementatore sull'altra subscription, con un brief
-     autosufficiente. Non esplora il codice per prepararla: è l'implementatore a farlo;
-   - **brief strutturato**: lo inoltra così com'è, aggiungendo solo le sue note (leader leggero).
+   - **chiedo**: manca una decisione che cambia il risultato;
+   - **faccio io**: modifiche piccole e concentrate (uno o due file, poche decine di righe,
+     comportamento deciso). Le scrive lui, perché un brief costerebbe più della modifica. I
+     sotto-agenti non scrivono mai;
+   - **delego**: modifiche più grandi, oppure quando l'utente lo chiede ("genera il prompt",
+     "delega"). Il leader organizza il lavoro, spiega all'utente cosa delega e perché, e scrive
+     il brief. Non esplora il codice a fondo per prepararlo: lo fa l'implementatore;
+   - **brief dalla web app**, riconosciuto dal suo marcatore: non lo rigenera. Il runtime lo
+     inoltra così com'è, e il leader aggiunge solo note, cioè aggiunte o correzioni mirate che
+     valgono sul testo del brief.
+   - **Dopo una delega**, e solo allora, il leader riceve il rapporto strutturato
+     dell'implementatore con i fatti del runner, e riferisce all'utente: se è andato tutto bene,
+     cosa non torna, cosa converrebbe modificare. Così il rapporto entra nella conversazione, e
+     l'utente può ragionarci con il leader: le correzioni piccole le fa il leader, per quelle
+     grandi parte una nuova delega.
+   - **Reasoning.** Il livello di reasoning di ogni ruolo lo sceglie l'utente; l'estensione non
+     lo forza. La guida d'uso consiglia i livelli per i vari casi.
 3. **Il contesto del leader è la risorsa da proteggere.**
    - Gli tornano solo il rapporto dell'implementatore e i fatti del runner (file cambiati, test
      rieseguiti, test falliti per nome).

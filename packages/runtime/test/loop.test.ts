@@ -810,7 +810,7 @@ describe('gateway mode (ADR 0009)', () => {
         '',
         '## Goal\nFunzioni utente.\n## Acceptance criteria\n1. f(3) stampa 10.',
         '',
-        'Note del leader:',
+        'Note del leader (aggiunte e correzioni mirate; una correzione vale sul testo del brief):',
         '- Usa il dizionario delle variabili esistente.',
       ].join('\n'),
     ]);
@@ -860,6 +860,9 @@ describe('leader mode: one chat across requests', () => {
     expect(codex.instructions[0]).toMatch(
       /per leggere ed esplorare il codice, non per modificarlo/,
     );
+    // The leader knows its collaborator is external, and states the route it takes.
+    expect(codex.instructions[0]).toMatch(/non un tuo sotto-agente/);
+    expect(codex.instructions[0]).toMatch(/Via: <rispondo \| chiedo \| faccio io \| delego>/);
   });
 
   it('delegates a free request with its own brief, headings included, and answers on the facts', async () => {
@@ -900,7 +903,7 @@ describe('leader mode: one chat across requests', () => {
     const claude = fakeAgent('Claude', [{ answer: 'rapporto' }]);
     expect(await ask(codex, claude, brief)).toMatchObject({ status: 'result', result });
     expect(claude.prompts[0]).toBe(
-      'Brief (project=calc, track=ans):\n\n## Goal\nans.\n\nNote del leader:\n- Nessuna nota di rilievo.',
+      'Brief (project=calc, track=ans):\n\n## Goal\nans.\n\nNote del leader (aggiunte e correzioni mirate; una correzione vale sul testo del brief):\n- Nessuna nota di rilievo.',
     );
     expect(codex.prompts[0]).toMatch(/^Brief dalla chat di ragionamento/);
     expect(codex.prompts[1]).toMatch(/senza rileggere il codice/);

@@ -66,6 +66,8 @@ export {
   agentSessionOptions,
   leaderInstructions,
   leaderResultPrompt,
+  pendingReportsPreface,
+  type PendingReport,
   lightDelegation,
   lightGatewayInstructions,
   briefAgentPrompt,

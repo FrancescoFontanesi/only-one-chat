@@ -1,0 +1,68 @@
+{
+  "description": "Who makes a small change right after a delegation (ADR 0011): the leader itself, the implementer through a targeted message of the leader, or the implementer addressed directly; in a new or in the same implementer session. Everything at low effort.",
+  "seed": "../calc/reference",
+  "verify": ["python", "-m", "unittest"],
+  "systems": {
+    "V1": {
+      "kind": "leader",
+      "script": "script-v1.json",
+      "title": "V1: the leader makes the small change itself",
+      "leader": { "cli": "codex", "model": "gpt-6.1-sol", "effort": "low" },
+      "implementer": { "cli": "claude", "model": "sonnet", "effort": "low" },
+      "subagents": {
+        "codex": { "model": "gpt-6-luna", "effort": "low" },
+        "claude": { "model": "claude-haiku-5-5", "effort": "low" },
+        "maxConcurrent": 2
+      }
+    },
+    "V2": {
+      "kind": "leader",
+      "script": "script-v2.json",
+      "title": "V2: the leader delegates the small change, new implementer session",
+      "leader": { "cli": "codex", "model": "gpt-6.1-sol", "effort": "low" },
+      "implementer": { "cli": "claude", "model": "sonnet", "effort": "low" },
+      "subagents": {
+        "codex": { "model": "gpt-6-luna", "effort": "low" },
+        "claude": { "model": "claude-haiku-5-5", "effort": "low" },
+        "maxConcurrent": 2
+      }
+    },
+    "V3": {
+      "kind": "leader",
+      "script": "script-v3.json",
+      "title": "V3: the leader delegates the small change, same implementer session",
+      "leader": { "cli": "codex", "model": "gpt-6.1-sol", "effort": "low" },
+      "implementer": { "cli": "claude", "model": "sonnet", "effort": "low" },
+      "subagents": {
+        "codex": { "model": "gpt-6-luna", "effort": "low" },
+        "claude": { "model": "claude-haiku-5-5", "effort": "low" },
+        "maxConcurrent": 2
+      }
+    },
+    "V4": {
+      "kind": "leader",
+      "script": "script-v4.json",
+      "title": "V4: the small change asked directly to the implementer, new session",
+      "leader": { "cli": "codex", "model": "gpt-6.1-sol", "effort": "low" },
+      "implementer": { "cli": "claude", "model": "sonnet", "effort": "low" },
+      "subagents": {
+        "codex": { "model": "gpt-6-luna", "effort": "low" },
+        "claude": { "model": "claude-haiku-5-5", "effort": "low" },
+        "maxConcurrent": 2
+      }
+    },
+    "V5": {
+      "kind": "leader",
+      "script": "script-v5.json",
+      "title": "V5: the small change asked directly to the implementer, same session",
+      "leader": { "cli": "codex", "model": "gpt-6.1-sol", "effort": "low" },
+      "implementer": { "cli": "claude", "model": "sonnet", "effort": "low" },
+      "subagents": {
+        "codex": { "model": "gpt-6-luna", "effort": "low" },
+        "claude": { "model": "claude-haiku-5-5", "effort": "low" },
+        "maxConcurrent": 2
+      }
+    }
+  },
+  "sandboxCommands": ["python", "py"]
+}

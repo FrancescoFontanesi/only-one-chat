@@ -1,0 +1,16 @@
+{
+  "description": "calc-small, variant v3: the leader delegates floor and ceil to Claude, then a small related request (round).",
+  "messages": [
+    {
+      "name": "floor-ceil",
+      "to": "leader",
+      "text": "Delega a Claude questo lavoro: aggiungi alla calcolatrice le funzioni predefinite floor(x) e ceil(x), con un argomento ciascuna come sqrt e abs, e i loro test. Un numero sbagliato di argomenti dà lo stesso errore delle altre funzioni."
+    },
+    {
+      "name": "round",
+      "to": "leader",
+      "implementer": "same",
+      "text": "Aggiungi anche round(x): un argomento, arrotondamento all’intero più vicino come la round di Python, allo stesso modo di floor e ceil, con i test. Delegala a Claude con un messaggio mirato e breve."
+    }
+  ]
+}

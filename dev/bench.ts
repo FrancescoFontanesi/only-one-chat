@@ -53,6 +53,8 @@ import {
   briefAgentPrompt,
   extractResult,
   leaderInstructions,
+  LIGHT_IMPLEMENTER_INSTRUCTIONS,
+  type AgentSession,
   openEventLog,
   parseBrief,
   requestPrompt,
@@ -92,6 +94,8 @@ interface SystemConfig {
   readonly implementer?: AgentConfig;
   /** Gateway systems: a light leader (forwards the brief, judges on the facts). */
   readonly light?: boolean;
+  /** Session systems: the script, relative to the scenario; default script.json. */
+  readonly script?: string;
   readonly agent?: AgentConfig;
   readonly subagents?: {
     readonly codex: { readonly model: string; readonly effort: string };
@@ -287,18 +291,31 @@ async function main(): Promise<void> {
     const names = Object.keys(systems.systems).join('|');
     throw new Error(`usage: bench --system ${names} [--scenario ${scenario}] [--fake]`);
   }
-  const scriptPath = join(scenarioDir, 'script.json');
-  /** A session scenario: the user's messages, in order (a file is read as it is: a brief). */
+  const scriptPath = join(scenarioDir, system.script ?? 'script.json');
+  /**
+   * A session scenario: the user's messages, in order (a file is read as it
+   * is: a brief). `to`: the leader (default) or the implementer directly;
+   * `implementer`: its session continues (`same`) or starts over (`new`,
+   * the default when the field is absent).
+   */
   const script = existsSync(scriptPath)
     ? (
         JSON.parse(readFileSync(scriptPath, 'utf8')) as {
-          messages: { name: string; text?: string; file?: string }[];
+          messages: {
+            name: string;
+            text?: string;
+            file?: string;
+            to?: 'leader' | 'implementer';
+            implementer?: 'new' | 'same';
+          }[];
         }
       ).messages.map((message) => ({
         name: message.name,
         text: message.file
           ? readFileSync(join(scenarioDir, message.file), 'utf8')
           : (message.text ?? ''),
+        to: message.to ?? 'leader',
+        implementer: message.implementer ?? 'new',
       }))
     : undefined;
   const briefPath = join(scenarioDir, 'brief.txt');
@@ -494,10 +511,53 @@ async function main(): Promise<void> {
       true,
     )(agentSessionOptions(leaderInstructions(system.implementer.cli), proactive));
     const answers: Answer[] = [];
+    const implementerConfig = system.implementer;
+    /** Every implementer session opened, closed at the end; the last one is current. */
+    const implementers: AgentSession[] = [];
+    const implementerSession = async (which: 'new' | 'same'): Promise<AgentSession> => {
+      const current = implementers.at(-1);
+      if (which === 'same' && current) return current;
+      const session = await factory(
+        implementerConfig,
+        true,
+      )(agentSessionOptions(LIGHT_IMPLEMENTER_INSTRUCTIONS, implementerPolicy));
+      implementers.push(session);
+      return session;
+    };
     try {
       for (const message of script) {
         currentMessage = message.name;
-        process.stdout.write(`\n— ${message.name}\n`);
+        process.stdout.write(`\n— ${message.name} → ${message.to}\n`);
+        if (message.to === 'implementer') {
+          // A message straight to the implementer: no leader turn, no facts.
+          const session = await implementerSession(message.implementer);
+          record({ type: 'turn_started', role: 'worker', agent: session.name });
+          try {
+            const result = await session.runTurn(message.text, {
+              onText: () => undefined,
+              onApprovalRequest: () => Promise.resolve('decline'),
+              onActivity: (activity) => {
+                record({ type: 'activity', role: 'worker', ...activity });
+              },
+            }).done;
+            record({
+              type: 'message',
+              role: 'worker',
+              agent: session.name,
+              text: result.text,
+              label: agentLabel(result.identity),
+              identity: result.identity,
+              ...(result.usage ? { usage: result.usage } : {}),
+              ...(result.quota !== undefined ? { quota: result.quota } : {}),
+            });
+            answers.push({ name: message.name, status: 'completed', text: result.text });
+          } catch (error) {
+            const text = error instanceof Error ? error.message : String(error);
+            answers.push({ name: message.name, status: 'failed', text });
+            break;
+          }
+          continue;
+        }
         // The fake leader answers [light] with a delegation block.
         const isBrief = parseBrief(message.text).status === 'valid';
         const text = fake && isBrief ? message.text.replace('\n', '\n[light]\n') : message.text;
@@ -507,9 +567,10 @@ async function main(): Promise<void> {
           onEvent,
           mode: 'leader',
           leaderSession,
+          workerSession: await implementerSession(message.implementer),
           autoApprove: true,
           orchestrator: () => Promise.reject(new Error('the leader session is given')),
-          worker: factory(system.implementer, true),
+          worker: () => Promise.reject(new Error('the implementer session is given')),
           subagents: {
             ...(proactive ? { orchestrator: proactive } : {}),
             ...(implementerPolicy ? { worker: implementerPolicy } : {}),
@@ -535,6 +596,7 @@ async function main(): Promise<void> {
       }
     } finally {
       await leaderSession.close();
+      await Promise.allSettled(implementers.map((session) => session.close()));
     }
     outcome = { status: 'session', answers };
   } else if (script && system.kind === 'session' && system.agent) {

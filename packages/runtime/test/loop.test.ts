@@ -12,6 +12,7 @@ import {
   frameWorkerAnswer,
   leaderInstructions,
   parseVerdict,
+  pendingReportsPreface,
   openEventLog,
   runLoop,
   type InterceptDecision,
@@ -886,6 +887,75 @@ describe('leader mode: one chat across requests', () => {
     expect(claude.instructions[0]).toMatch(/Esplora il repository solo quanto serve/);
     expect(codex.prompts[1]).toContain('python -m unittest: exit 0');
     expect(codex.prompts[1]).toMatch(/rispondi all’utente in breve/);
+  });
+
+  it('with deferred review, ends on the report; the next request carries it in its preface', async () => {
+    const own = '<<<DELEGA @claude\nAggiungi round.\nDELEGA>>>';
+    const codex = fakeAgent('Codex', [{ answer: own }, { answer: 'Visto, tutto bene.' }]);
+    const claude = fakeAgent('Claude', [{ answer: '## Files\nevaluator.py' }]);
+    const leaderSession = await codex.factory({ instructions: leaderInstructions('claude') });
+    const common = {
+      mode: 'leader' as const,
+      leaderSession,
+      autoApprove: true,
+      intercept: never,
+      onMalformedDelegation: never,
+      facts: () => Promise.resolve('python -m unittest: exit 0'),
+    };
+    const first = await loop(codex, claude, [], [], {
+      ...common,
+      request: 'Aggiungi round.',
+      review: 'deferred',
+    });
+    const outcome = await first.running.done;
+    expect(outcome).toEqual({
+      status: 'delegated',
+      spec: 'Aggiungi round.',
+      report: '## Files\nevaluator.py',
+      facts: 'python -m unittest: exit 0',
+    });
+    // No review turn: one leader turn only.
+    expect(codex.prompts).toHaveLength(1);
+
+    const preface = pendingReportsPreface([
+      {
+        source: 'delegation',
+        request: 'Aggiungi round.',
+        report: '## Files\nevaluator.py',
+        facts: 'python -m unittest: exit 0',
+      },
+    ]);
+    const second = await loop(codex, fakeAgent('Claude', []), [], [], {
+      ...common,
+      request: 'E adesso?',
+      preface,
+    });
+    expect(await second.running.done).toMatchObject({ status: 'completed' });
+    expect(codex.prompts[1]).toContain(WORKER_ANSWER_START);
+    expect(codex.prompts[1]).toContain('python -m unittest: exit 0');
+    expect(codex.prompts[1]?.endsWith('E adesso?')).toBe(true);
+  });
+
+  it('continues a given implementer session and leaves it open', async () => {
+    const own = '<<<DELEGA @claude\n## Goal\nround(x).\nDELEGA>>>';
+    const codex = fakeAgent('Codex', [{ answer: own }, { answer: 'Fatto.' }]);
+    const claude = fakeAgent('Claude', [{ answer: 'rapporto' }]);
+    const leaderSession = await codex.factory({ instructions: leaderInstructions('claude') });
+    const workerSession = await claude.factory({ instructions: 'implementatore' });
+    const { running } = await loop(codex, claude, [], [], {
+      request: 'Aggiungi round.',
+      mode: 'leader',
+      leaderSession,
+      workerSession,
+      autoApprove: true,
+      intercept: never,
+      onMalformedDelegation: never,
+    });
+    expect(await running.done).toMatchObject({ status: 'completed', exchanges: 1 });
+    expect(claude.prompts).toEqual(['## Goal\nround(x).']);
+    // Created once, by the caller; the loop neither recreates nor closes it.
+    expect(claude.instructions).toEqual(['implementatore']);
+    expect(claude.closed).toBe(false);
   });
 
   it('forwards a structured brief with its notes only and writes the result block', async () => {

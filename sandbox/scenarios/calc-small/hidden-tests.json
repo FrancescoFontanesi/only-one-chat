@@ -1,0 +1,34 @@
+{
+  "description": "Hidden acceptance tests for the calc-small scenario: the calc suite, plus floor and ceil (first request) and round (second request). Written from the scripts before any run. Never copied into the agents' working directory.",
+  "include": ["../calc/hidden-tests.json"],
+  "command": ["python", "main.py"],
+  "cases": [
+    { "name": "floor-positive", "args": ["-e", "floor(2.7)"], "stdout": "2", "exitCode": 0 },
+    { "name": "floor-negative", "args": ["-e", "floor(-2.1)"], "stdout": "-3", "exitCode": 0 },
+    { "name": "floor-integer", "args": ["-e", "floor(5)"], "stdout": "5", "exitCode": 0 },
+    { "name": "ceil-positive", "args": ["-e", "ceil(2.1)"], "stdout": "3", "exitCode": 0 },
+    { "name": "ceil-negative", "args": ["-e", "ceil(-2.7)"], "stdout": "-2", "exitCode": 0 },
+    {
+      "name": "floor-arity",
+      "args": ["-e", "floor(1, 2)"],
+      "stderrIncludes": "Error: wrong number of arguments for floor",
+      "exitCode": 1
+    },
+    {
+      "name": "ceil-arity",
+      "args": ["-e", "ceil()"],
+      "stderrIncludes": "Error: wrong number of arguments for ceil",
+      "exitCode": 1
+    },
+    { "name": "round-down", "args": ["-e", "round(2.4)"], "stdout": "2", "exitCode": 0 },
+    { "name": "round-up", "args": ["-e", "round(2.6)"], "stdout": "3", "exitCode": 0 },
+    { "name": "round-negative", "args": ["-e", "round(-1.6)"], "stdout": "-2", "exitCode": 0 },
+    { "name": "round-integer", "args": ["-e", "round(7)"], "stdout": "7", "exitCode": 0 },
+    {
+      "name": "round-arity",
+      "args": ["-e", "round(1, 2)"],
+      "stderrIncludes": "Error: wrong number of arguments for round",
+      "exitCode": 1
+    }
+  ]
+}

@@ -43,6 +43,16 @@ describe.runIf(python)('sandbox scenario calc', () => {
     expect(results.total).toBe(55);
   }, 120_000);
 
+  it('passes the calc-small suite, calc cases included, on its reference', async () => {
+    const suite = loadSuite(join(SCENARIOS, 'calc-small', 'hidden-tests.json'));
+    const results = await runHiddenTests(suite, join(SCENARIOS, 'calc-small', 'reference'), {
+      ...process.env,
+      PYTHONDONTWRITEBYTECODE: '1',
+    });
+    expect(results.cases.filter((c) => !c.passed)).toEqual([]);
+    expect(results.total).toBe(42);
+  }, 120_000);
+
   it('names the run directory <RUN> in failure reasons, so results carry no local path', async () => {
     const empty = mkdtempSync(join(tmpdir(), 'bench run '));
     try {

@@ -260,6 +260,7 @@ export class OnlyOneChatPanel {
         allowedCommands: settings.get<string[]>('allowedCommands') ?? [],
         verifyCommand: settings.get<string[]>('verifyCommand') ?? [],
         mode: this.mode,
+        review: settings.get<string>('leaderReview') === 'deferred' ? 'deferred' : 'always',
         logPath: path.join(logDir, `chat-${stamp}.jsonl`),
       },
       {

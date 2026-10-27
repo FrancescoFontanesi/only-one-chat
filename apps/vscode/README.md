@@ -10,11 +10,21 @@ its answer:
 
 - **rispondo**: it answers. To read the code it uses its own sub-agents, which never write.
 - **chiedo**: a decision is missing, and it asks you for it.
-- **faccio io**: a small, focused change. It makes it itself and runs the tests.
-- **delego**: a larger change, or you asked for it ("genera il prompt", "delega"). It explains
-  what it hands over, writes a brief, and the implementer receives it directly. Afterwards the
-  leader reads the implementer's report and the facts the extension verified (changed files,
-  tests run again), then tells you whether everything went well and what does not add up.
+- **delego**: any change to the code, small ones included.
+  - It explains what it hands over, writes a brief (or a short targeted message for a
+    follow-up), and the implementer receives it directly.
+  - The implementer keeps its session for the whole chat, so a follow-up costs it little.
+  - Afterwards the leader reads the implementer's report and the facts the extension verified
+    (changed files, tests run again), then tells you whether everything went well and what does
+    not add up.
+  - With `onlyOneChat.leaderReview` set to `deferred` it reads them with your next message
+    instead, one leader turn less.
+- **faccio io**: only when you start with `/fai`, or when no implementer is available. In our
+  tests a leader making a one-line change itself cost more than delegating it.
+
+`/delega` and `/chiedi` choose the other routes. `@impl` writes to the implementer directly:
+it is the cheapest way when you already know what to ask. The leader reads that report with
+your next message.
 
 A brief written in the ChatGPT web app (it starts with `<<<OOC-BRIEF`) can be pasted into the
 chat. The leader does not rewrite it: it forwards it with targeted notes or corrections only.

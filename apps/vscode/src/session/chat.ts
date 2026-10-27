@@ -1,9 +1,11 @@
-// One chat with the leader (ADR 0010), as the panel drives it. The leader's
-// session lives as long as the chat; each user message is one leader-mode loop
-// of the runtime, which answers, changes the code or delegates to the
-// implementer. Runtime events become thread updates for the webview. Node
-// only, no `vscode`: the panel passes the configuration in, so the session
-// can be tested against the fake CLIs.
+// One chat with the leader (ADR 0010, 0011), as the panel drives it. The
+// leader's and the implementer's sessions live as long as the chat. A user
+// message is one leader-mode loop of the runtime (answer, ask, delegate), or,
+// with `@impl`, a turn of the implementer alone. Work the leader has not seen
+// yet (a deferred review, a direct message) reaches it with the user's next
+// message. Runtime events become thread updates for the webview. Node only,
+// no `vscode`: the panel passes the configuration in, so the session can be
+// tested against the fake CLIs.
 
 import {
   CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
@@ -12,15 +14,18 @@ import {
   createCodexAgentFactory,
 } from '@only-one-chat/adapters';
 import {
+  LIGHT_IMPLEMENTER_INSTRUCTIONS,
+  agentLabel,
   agentSessionOptions,
   leaderInstructions,
   openEventLog,
+  pendingReportsPreface,
   runLoop,
   type AgentFactory,
   type AgentSession,
   type EventLog,
   type InterceptDecision,
-  type Loop,
+  type PendingReport,
   type SubagentPolicy,
   type ThreadEvent,
   type TurnUsage,
@@ -60,9 +65,17 @@ export interface ChatConfig {
   /** Run again by the runtime after each delegation; empty: none. */
   readonly verifyCommand: readonly string[];
   readonly mode: ApprovalMode;
+  /**
+   * After a delegation: `always`, the leader reviews the report at once;
+   * `deferred`, it reads it with the user's next message (one leader turn less).
+   */
+  readonly review: 'always' | 'deferred';
   /** JSONL event log, outside the workspace. */
   readonly logPath: string;
 }
+
+/** A message for the implementer alone: `@impl` and the text. */
+const DIRECT = /^@impl\b\s*/i;
 
 export interface ChatEvents {
   update(update: ThreadUpdate): void;
@@ -87,10 +100,16 @@ export class ChatSession {
   private mode: ApprovalMode;
   private log: EventLog | undefined;
   private leaderSession: AgentSession | undefined;
-  private running: Loop | undefined;
+  /** Kept across delegations and direct messages: a follow-up costs it little (calc-small). */
+  private implementerSession: AgentSession | undefined;
+  /** Stops what is running now: a leader loop or a direct implementer turn. */
+  private stopRunning: (() => Promise<void>) | undefined;
+  private running = false;
   private nextId = 1;
   private readonly currentTurn = new Map<TurnRole, string>();
   private readonly pending = new Map<string, (decision: InterceptDecision) => void>();
+  /** Implementer work the leader has not seen yet. */
+  private unseen: PendingReport[] = [];
 
   constructor(
     private readonly config: ChatConfig,
@@ -100,7 +119,7 @@ export class ChatSession {
   }
 
   get busy(): boolean {
-    return this.running !== undefined;
+    return this.running;
   }
 
   setMode(mode: ApprovalMode): void {
@@ -143,7 +162,16 @@ export class ChatSession {
     };
   }
 
-  /** Sends the user's message to the leader; one at a time. */
+  /** The implementer's session, opened once and continued (ADR 0011). */
+  private async implementer(): Promise<AgentSession> {
+    this.implementerSession ??= await this.factory(
+      this.config.implementer,
+      true,
+    )(agentSessionOptions(LIGHT_IMPLEMENTER_INSTRUCTIONS, this.policy(this.config.implementer)));
+    return this.implementerSession;
+  }
+
+  /** Sends the user's message: to the leader, or with `@impl` to the implementer; one at a time. */
   async send(text: string): Promise<void> {
     if (this.running) {
       this.events.update({
@@ -154,63 +182,15 @@ export class ChatSession {
       return;
     }
     this.events.update({ type: 'user', id: this.id('u'), text });
+    this.running = true;
     this.events.busy(true);
-    const { config } = this;
-    const baseline = snapshot(config.cwd);
-    /** Set by the facts callback, which runs inside the loop. */
+    const baseline = snapshot(this.config.cwd);
+    /** Set once the facts are shown, by the facts callback or the direct turn. */
     const shown = { facts: false };
     try {
-      this.log ??= await openEventLog(config.logPath, config.cwd);
-      const leaderPolicy = { ...this.policy(config.leader), proactive: true };
-      // The leader writes too: it makes the small, focused changes itself.
-      this.leaderSession ??= await this.factory(
-        config.leader,
-        true,
-      )(agentSessionOptions(leaderInstructions(config.implementer.cli), leaderPolicy));
-      const manual = this.mode === 'manual';
-      const loop = runLoop({
-        request: text,
-        log: this.log,
-        onEvent: (event) => {
-          this.onEvent(event);
-        },
-        mode: 'leader',
-        leaderSession: this.leaderSession,
-        autoApprove: !manual,
-        orchestrator: () => Promise.reject(new Error('the leader session is given')),
-        worker: this.factory(config.implementer, true),
-        subagents: { orchestrator: leaderPolicy, worker: this.policy(config.implementer) },
-        facts: async () => {
-          const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand);
-          shown.facts = true;
-          this.events.update({ type: 'notice', level: 'info', text: facts });
-          return facts;
-        },
-        intercept: (message, signal) =>
-          new Promise<InterceptDecision>((resolve, reject) => {
-            const id = this.id('a');
-            this.pending.set(id, resolve);
-            signal.addEventListener('abort', () => {
-              this.pending.delete(id);
-              reject(new Error('stopped'));
-            });
-            this.events.update({
-              type: 'approval',
-              id,
-              kind: message.kind,
-              from: message.from,
-              to: message.to,
-              text: message.text,
-            });
-          }),
-        // A malformed block: the leader rewrites it once, then the loop stops.
-        onMalformedDelegation: (problem) =>
-          Promise.resolve(
-            problem.canAskOrchestrator ? { action: 'ask_orchestrator' } : { action: 'cancel' },
-          ),
-      });
-      this.running = loop;
-      await loop.done;
+      this.log ??= await openEventLog(this.config.logPath, this.config.cwd);
+      if (DIRECT.test(text)) await this.toImplementer(text.replace(DIRECT, ''), baseline, shown);
+      else await this.toLeader(text, baseline, shown);
     } catch (error) {
       this.events.update({
         type: 'notice',
@@ -218,11 +198,12 @@ export class ChatSession {
         text: error instanceof Error ? error.message : String(error),
       });
     } finally {
-      this.running = undefined;
+      this.running = false;
+      this.stopRunning = undefined;
       this.closeRunningTurns('failed');
       if (!shown.facts) {
-        // Changes the leader made itself, with no delegation: shown, not judged.
-        const changed = changes(baseline, snapshot(config.cwd));
+        // Changes made with no delegation: shown, not judged.
+        const changed = changes(baseline, snapshot(this.config.cwd));
         if (changed !== 'unknown' && changed.length > 0) {
           this.events.update({
             type: 'notice',
@@ -232,6 +213,147 @@ export class ChatSession {
         }
       }
       this.events.busy(false);
+    }
+  }
+
+  /** A turn of the implementer alone; its report waits for the leader. */
+  private async toImplementer(
+    text: string,
+    baseline: ReturnType<typeof snapshot>,
+    shown: { facts: boolean },
+  ): Promise<void> {
+    const { config } = this;
+    const session = await this.implementer();
+    const id = this.id('t');
+    this.currentTurn.set('implementer', id);
+    this.events.update({
+      type: 'turn',
+      id,
+      role: 'implementer',
+      agent: session.name,
+      status: 'running',
+    });
+    const turn = session.runTurn(text, {
+      onText: (chunk) => {
+        this.events.update({ type: 'chunk', turnId: id, text: chunk });
+      },
+      onApprovalRequest: (request) => {
+        this.events.update({
+          type: 'notice',
+          level: 'warn',
+          text: `Richiesta di ${session.name} rifiutata: ${request.summary}`,
+        });
+        return Promise.resolve('decline');
+      },
+      onActivity: ({ kind, detail }) => {
+        this.events.update({
+          type: 'activity',
+          turnId: id,
+          text: `${kind}: ${detail.slice(0, 240)}`,
+        });
+      },
+    });
+    this.stopRunning = () => turn.stop();
+    const result = await turn.done;
+    this.currentTurn.delete('implementer');
+    const usage = summarize(result.usage);
+    this.events.update({
+      type: 'turn',
+      id,
+      role: 'implementer',
+      agent: session.name,
+      status: 'done',
+      label: agentLabel(result.identity),
+      text: result.text,
+      ...(usage ? { usage } : {}),
+    });
+    const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand);
+    shown.facts = true;
+    this.events.update({ type: 'notice', level: 'info', text: facts });
+    this.unseen.push({ source: 'direct', request: text, report: result.text, facts });
+    this.events.update({
+      type: 'notice',
+      level: 'info',
+      text: 'Il leader leggerà questo rapporto con il tuo prossimo messaggio.',
+    });
+  }
+
+  private async toLeader(
+    text: string,
+    baseline: ReturnType<typeof snapshot>,
+    shown: { facts: boolean },
+  ): Promise<void> {
+    const { config } = this;
+    const leaderPolicy = { ...this.policy(config.leader), proactive: true };
+    // Writable: on /fai, or with no implementer, it makes the change itself.
+    this.leaderSession ??= await this.factory(
+      config.leader,
+      true,
+    )(agentSessionOptions(leaderInstructions(config.implementer.cli), leaderPolicy));
+    const unseen = this.unseen;
+    this.unseen = [];
+    const manual = this.mode === 'manual';
+    const loop = runLoop({
+      request: text,
+      ...(unseen.length > 0 ? { preface: pendingReportsPreface(unseen) } : {}),
+      log: this.log ?? (await openEventLog(config.logPath, config.cwd)),
+      onEvent: (event) => {
+        this.onEvent(event);
+      },
+      mode: 'leader',
+      leaderSession: this.leaderSession,
+      workerSession: await this.implementer(),
+      review: config.review,
+      autoApprove: !manual,
+      orchestrator: () => Promise.reject(new Error('the leader session is given')),
+      worker: () => Promise.reject(new Error('the implementer session is given')),
+      subagents: { orchestrator: leaderPolicy, worker: this.policy(config.implementer) },
+      facts: async () => {
+        const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand);
+        shown.facts = true;
+        this.events.update({ type: 'notice', level: 'info', text: facts });
+        return facts;
+      },
+      intercept: (message, signal) =>
+        new Promise<InterceptDecision>((resolve, reject) => {
+          const id = this.id('a');
+          this.pending.set(id, resolve);
+          signal.addEventListener('abort', () => {
+            this.pending.delete(id);
+            reject(new Error('stopped'));
+          });
+          this.events.update({
+            type: 'approval',
+            id,
+            kind: message.kind,
+            from: message.from,
+            to: message.to,
+            text: message.text,
+          });
+        }),
+      // A malformed block: the leader rewrites it once, then the loop stops.
+      onMalformedDelegation: (problem) =>
+        Promise.resolve(
+          problem.canAskOrchestrator ? { action: 'ask_orchestrator' } : { action: 'cancel' },
+        ),
+    });
+    this.stopRunning = () => loop.stop();
+    const outcome = await loop.done;
+    if (outcome.status === 'delegated') {
+      this.unseen.push({
+        source: 'delegation',
+        request: outcome.spec,
+        report: outcome.report,
+        facts: outcome.facts,
+      });
+      this.events.update({
+        type: 'notice',
+        level: 'info',
+        text: 'Il leader leggerà il rapporto con il tuo prossimo messaggio.',
+      });
+    } else if (outcome.status !== 'completed' && outcome.status !== 'result') {
+      // Something else ended the loop: what was unseen is still unseen.
+      this.unseen = [...unseen, ...this.unseen];
     }
   }
 
@@ -249,14 +371,17 @@ export class ChatSession {
   }
 
   async stop(): Promise<void> {
-    await this.running?.stop();
+    await this.stopRunning?.();
   }
 
-  /** Ends the leader's session: the next message starts a new one. */
+  /** Ends the leader's and the implementer's sessions: the next message starts new ones. */
   async reset(): Promise<void> {
     await this.stop();
     await this.leaderSession?.close();
+    await this.implementerSession?.close();
     this.leaderSession = undefined;
+    this.implementerSession = undefined;
+    this.unseen = [];
     this.currentTurn.clear();
   }
 

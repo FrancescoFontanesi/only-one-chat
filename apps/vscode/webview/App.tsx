@@ -200,7 +200,7 @@ function Composer({ busy }: { busy: boolean }) {
     <footer class="composer">
       <textarea
         class="editor"
-        placeholder="Scrivi al leader, oppure incolla un brief. Ctrl+Invio per inviare."
+        placeholder="Scrivi al leader, oppure incolla un brief. @impl per scrivere all’implementatore; /fai, /delega, /chiedi per scegliere la via. Ctrl+Invio per inviare."
         value={text}
         rows={4}
         onInput={(event) => {

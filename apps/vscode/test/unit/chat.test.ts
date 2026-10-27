@@ -31,7 +31,7 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true, maxRetries: 5 });
 });
 
-function session(mode: 'auto' | 'manual') {
+function session(mode: 'auto' | 'manual', review: 'always' | 'deferred' = 'always') {
   const updates: ThreadUpdate[] = [];
   const busy: boolean[] = [];
   const config: ChatConfig = {
@@ -49,6 +49,7 @@ function session(mode: 'auto' | 'manual') {
     allowedCommands: ['python'],
     verifyCommand: [],
     mode,
+    review,
     logPath: join(root, 'logs', 'chat.jsonl'),
   };
   const chat = new ChatSession(config, {
@@ -93,6 +94,37 @@ describe('chat session', () => {
     ]);
     const notices = updates.flatMap((u) => (u.type === 'notice' ? [u.text] : []));
     expect(notices.some((text) => text.startsWith('File cambiati'))).toBe(true);
+  });
+
+  it('sends @impl to the implementer alone; the leader reads its report next time', async () => {
+    const { chat, updates } = session('auto');
+    try {
+      await chat.send('@impl aggiungi round');
+      await chat.send('com’è andata?');
+    } finally {
+      await chat.dispose();
+    }
+    const done = updates.flatMap((u) => (u.type === 'turn' && u.status === 'done' ? [u] : []));
+    expect(done.map((u) => u.role)).toEqual(['implementer', 'leader']);
+    // The fake implementer echoes the message without @impl.
+    expect(done[0]?.text).toContain('aggiungi round');
+    expect(done[0]?.text).not.toContain('@impl');
+    // The fake leader echoes its prompt: the report came before the user's message.
+    expect(done[1]?.text).toMatch(/Nel frattempo l’implementatore ha lavorato/);
+    expect(done[1]?.text?.endsWith('com’è andata?')).toBe(true);
+  });
+
+  it('with deferred review, keeps the report for the next message instead of a review turn', async () => {
+    const { chat, updates } = session('auto', 'deferred');
+    try {
+      await chat.send('[spec] aggiungi una funzione');
+      await chat.send('e ora?');
+    } finally {
+      await chat.dispose();
+    }
+    const done = updates.flatMap((u) => (u.type === 'turn' && u.status === 'done' ? [u] : []));
+    expect(done.map((u) => u.role)).toEqual(['leader', 'implementer', 'leader']);
+    expect(done[2]?.text).toMatch(/Nel frattempo/);
   });
 
   it('waits for the user before a delegation in manual mode', async () => {

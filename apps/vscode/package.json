@@ -105,6 +105,15 @@
           "default": "manual",
           "description": "manual: you approve each message between agents; auto: they pass, logged."
         },
+        "onlyOneChat.leaderReview": {
+          "type": "string",
+          "enum": [
+            "always",
+            "deferred"
+          ],
+          "default": "always",
+          "description": "After a delegation: always, the leader reviews the report at once; deferred, it reads it with your next message (one leader turn less)."
+        },
         "onlyOneChat.codexPath": {
           "type": "string",
           "default": "",

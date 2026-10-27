@@ -11,7 +11,12 @@ export interface ApprovalRequest {
   readonly summary: string;
 }
 
-export type ApprovalDecision = 'decline';
+/**
+ * `accept`: this request only; `acceptForSession`: also the same request again
+ * in this session, as the CLI scopes it (Codex: the same command or files,
+ * never a whole program); `decline`: refused, the agent goes on.
+ */
+export type ApprovalDecision = 'accept' | 'acceptForSession' | 'decline';
 
 /**
  * What an agent reports about its own sub-agents (D13). `started` may come
@@ -156,6 +161,11 @@ export interface AgentSessionOptions {
    * the user's configuration applies.
    */
   readonly subagents?: SubagentPolicy & { readonly rules: string };
+  /**
+   * The CLI's own session to continue (Claude session id, Codex thread id),
+   * for a chat reopened later (R5). When it cannot be resumed, a new one starts.
+   */
+  readonly resume?: string;
 }
 
 /** Creates a session for one role; model and effort are the factory's configuration. */

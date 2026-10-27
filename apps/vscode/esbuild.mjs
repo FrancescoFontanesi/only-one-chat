@@ -5,7 +5,7 @@
 //   node esbuild.mjs --production  minified, no source maps (used by `package`)
 //   node esbuild.mjs --tests       also bundle the integration tests into out/test
 
-import { rm } from 'node:fs/promises';
+import { copyFile, mkdir, rm } from 'node:fs/promises';
 import { context, build } from 'esbuild';
 
 const args = new Set(process.argv.slice(2));
@@ -59,6 +59,13 @@ if (tests) {
 
 await rm('dist', { recursive: true, force: true });
 if (tests) await rm('out', { recursive: true, force: true });
+
+// Claude's PermissionRequest hook runs as its own Node script, outside the bundle.
+await mkdir('dist/hooks', { recursive: true });
+await copyFile(
+  '../../packages/adapters/hooks/permission-request.mjs',
+  'dist/hooks/permission-request.mjs',
+);
 
 if (watch) {
   const contexts = await Promise.all(targets.map((options) => context(options)));

@@ -158,6 +158,31 @@ tocca e come le mitiga.
   quello che può fare quel programma. Per provare l'estensione si usa una cartella separata
   (`pnpm playground`).
 
+### T12. Approvazioni interattive (R9, ADR 0011)
+
+- **Minaccia:**
+  - un'approvazione data per sbaglio, o troppo ampia;
+  - un processo locale che si finge l'hook di Claude per approvarsi da solo.
+- **Mitigazioni per Codex:** le richieste arrivano dal protocollo dell'app-server e la risposta
+  è `accept`, `acceptForSession` o `decline`. "Per la sessione" lo applica Codex alla stessa
+  richiesta.
+- **Mitigazioni per Claude:** un hook `PermissionRequest`, passato per il solo turno con
+  `--settings`, interroga un ponte su 127.0.0.1.
+  - **Il ponte:**
+    - ascolta solo su localhost, su una porta casuale;
+    - richiede un token casuale di 32 byte per ogni ruolo, confrontato in tempo costante;
+    - accetta una riga di al massimo 1 MB.
+  - **Tutto ciò che va storto nega:** token, ponte o risposta mancanti, una risposta
+    malformata, un timeout.
+  - **"Per la sessione"** vale solo per lo stesso strumento con lo stesso input completo, mai
+    per un programma o un prefisso (T5).
+- **Mitigazioni comuni:** fermare la richiesta nega ciò che è in attesa. Le richieste che non
+  sono comandi o modifiche di file (permessi di sandbox, elicitazioni MCP) restano negate.
+- **Limite noto.** Il token è nell'ambiente del processo Claude e dei comandi che esegue. Un
+  comando già consentito può leggerlo e inviare una richiesta al ponte, ma il ponte la mostra
+  comunque all'utente: non si può auto-approvare, salvo una richiesta identica a una già
+  consentita per la sessione.
+
 ## Sicurezza della supply chain (bootstrap)
 
 - Versioni esatte e lockfile (`pnpm install --frozen-lockfile`).

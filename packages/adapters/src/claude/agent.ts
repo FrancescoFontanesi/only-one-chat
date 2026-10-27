@@ -28,13 +28,19 @@ export type ClaudeAgentConfig = Omit<
 >;
 
 export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactory {
-  return ({ instructions, subagents }): Promise<AgentSession> => {
-    let sessionId: string | undefined;
+  return ({ instructions, subagents, resume }): Promise<AgentSession> => {
+    let sessionId: string | undefined = resume;
     let running: ClaudeTurn | undefined;
     // A resumed turn reports the whole session's usage and cost so far, not
     // its own: each turn is the difference from the previous one.
     let sessionUsage: Readonly<Record<string, TokenUsage>> = {};
     let sessionCost = 0;
+    /**
+     * A session reopened from an earlier chat: its totals before this process
+     * are unknown, so the first turn's own usage cannot be told apart and is
+     * not reported; the turns after it are.
+     */
+    let baselineUnknown = resume !== undefined;
     /**
      * The effort of the next turns; the user can change it during the chat.
      * CLAUDE_CODE_EFFORT_LEVEL also sets the main session's effort, so the
@@ -129,9 +135,13 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
         const costUsd = result.costUsd === null ? null : result.costUsd - sessionCost;
         sessionUsage = result.usage;
         if (result.costUsd !== null) sessionCost = result.costUsd;
+        const ownUsageKnown = !baselineUnknown;
+        baselineUnknown = false;
         return {
           text: result.text,
-          usage: { byModel, costUsd, durationMs: Date.now() - startedAt },
+          ...(ownUsageKnown
+            ? { usage: { byModel, costUsd, durationMs: Date.now() - startedAt } }
+            : {}),
           quota: result.quota,
           identity: {
             provider: 'Claude Code',

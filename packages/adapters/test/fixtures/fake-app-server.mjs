@@ -151,6 +151,37 @@ const handlers = {
   // message and a command. [subagent-model=…], [subagent-effort=…] and
   // [subagent-name=…] change what it reports; [subagent-hang] keeps it (and
   // the parent) running until turn/interrupt. [mcp] calls an MCP tool.
+  // A thread the fake "has on disk": any id starting with "kept-"; others are unknown.
+  'thread/resume': (params, id) => {
+    if (typeof params.threadId !== 'string' || !params.threadId.startsWith('kept-')) {
+      return send({
+        id,
+        error: {
+          code: -32600,
+          message: `no rollout found for thread id ${String(params.threadId)}`,
+        },
+      });
+    }
+    threads.set(params.threadId, params);
+    return send({
+      id,
+      result: {
+        thread: { id: params.threadId, sessionId: params.threadId, ephemeral: false },
+        model: params.model ?? 'fake-model',
+        modelProvider: option('provider') ?? 'openai',
+        serviceTier: null,
+        cwd: params.cwd ?? process.cwd(),
+        approvalPolicy: params.approvalPolicy ?? 'on-request',
+        approvalsReviewer: params.approvalsReviewer ?? 'user',
+        sandbox: {
+          type: params.sandbox === 'read-only' ? 'readOnly' : 'workspaceWrite',
+          networkAccess: false,
+        },
+        reasoningEffort: 'high',
+      },
+    });
+  },
+
   'thread/start': (params) => {
     threads.set('thread-1', params);
     return {

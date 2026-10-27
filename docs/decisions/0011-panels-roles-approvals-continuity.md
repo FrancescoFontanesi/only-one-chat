@@ -65,13 +65,28 @@ Stato: Accettata in parte (iterazione 3).
   (threat T5).
 - **Codex:** le richieste arrivano già dal protocollo; oggi le rifiutiamo, d'ora in poi le
   inoltriamo.
-- **Claude in modalità headless:** serve uno strumento MCP di permesso
-  (`--permission-prompt-tool`).
-  - Lo realizziamo con un server stdio minimo scritto nel progetto (JSON-RPC), senza l'SDK MCP:
-    nessuna dipendenza nuova.
-  - Il server parla con l'estensione su 127.0.0.1, con un token casuale per sessione.
-  - Nega se l'estensione non risponde.
-  - Sarà da documentare come minaccia nel threat model.
+- **Claude in modalità headless: un hook `PermissionRequest`**, non uno strumento MCP.
+  - **Perché l'hook.** La documentazione di Claude Code lo specifica per intero: cosa riceve e
+    cosa deve restituire. Il contratto di `--permission-prompt-tool` invece non è documentato.
+  - **Come entra nel turno.** L'hook si passa per ogni turno con `--settings`; le impostazioni
+    dell'utente non si toccano.
+  - **Cosa fa lo script** (`packages/adapters/hooks/permission-request.mjs`, eseguito dal Node
+    dell'editor):
+    - chiede all'estensione tramite un ponte su 127.0.0.1, con un token casuale per ogni ruolo;
+    - nega se manca il token, se il ponte non risponde o se la risposta non arriva entro 9 minuti.
+  - **Il livello "chiede" per Claude:** nessuna `--allowedTools`, quindi ogni modifica e ogni
+    comando che chiederebbe permesso passano da te.
+  - **Il livello "auto":** valgono la cartella e i comandi ammessi. Il resto, invece di essere
+    negato, viene chiesto a te.
+  - **"Per la sessione" lo ricorda il ponte:** solo per lo stesso strumento con lo stesso input
+    completo (threat T5).
+  - **Ciò che l'hook non decide** resta negato (`--permission-prompts none`).
+  - **Verificato su Claude 2.1.308, con un turno reale di Haiku:** l'hook viene chiamato,
+    l'allow si applica, e il comando parte.
+  - **Limite trovato.** Su una cartella con un nome abbreviato 8.3 (per esempio `FRANCE~1`)
+    Claude esige un'approvazione manuale che nessun hook può dare. Per questo l'estensione
+    espande sempre la cartella nel nome lungo.
+  - **Threat model:** T12 in [security.md](../security.md).
 
 ### Continuità dell'implementatore
 
@@ -87,15 +102,28 @@ Stato: Accettata in parte (iterazione 3).
   successivo.
 - **I messaggi diretti** (`@impl`) usano la sessione del filone corrente.
 
-### Persistenza
+### Persistenza (implementata)
 
-- **Per ogni chat, nello storage del workspace:**
-  - il log degli eventi dell'interfaccia, per ridisegnare il thread;
-  - gli id delle sessioni native del leader e dell'implementatore per filone.
-- **Ripresa:**
-  - Claude: `--resume`;
-  - Codex: `thread/resume`. Per questo i thread non sono più `ephemeral`, e Codex li conserva
-    nel suo storico come fa la sua estensione.
+- **Per ogni chat, nello storage del workspace dell'estensione:** un file JSON scritto in modo
+  atomico (file temporaneo, poi rename). Contiene:
+  - gli aggiornamenti del thread, per ridisegnarlo. I frammenti di un turno concluso si
+    scartano, perché il testo finale li contiene;
+  - gli id delle sessioni native del leader e dell'implementatore.
+- **Limiti:** al massimo 50 chat e 3000 aggiornamenti per chat.
+- **Alla riapertura del pannello** torna la chat più recente. Quelle precedenti si scelgono
+  nell'intestazione, e "Nuova chat" ne apre una vuota. Quello che era in corso o in attesa si
+  ridisegna come interrotto.
+- **Ripresa delle sessioni native:**
+  - Claude: `--resume`.
+  - Codex: `thread/resume`, con le stesse regole dell'avvio (cartella, sandbox, policy,
+    istruzioni) e `excludeTurns`. Per questo l'estensione apre thread non `ephemeral`, che
+    Codex conserva nel suo storico come fa la sua estensione. Il benchmark resta effimero.
+  - Se il thread non c'è più, ne parte uno nuovo.
+- **Il primo turno dopo una ripresa non riporta il suo consumo.** I CLI riportano i totali della
+  sessione, compresi i turni dei processi precedenti, e senza il totale di partenza non si
+  ricava quello del singolo turno. I turni successivi sì.
+- **Da fare:** i rapporti in coda per il leader non si salvano ancora. Alla riapertura il
+  leader non riceve quelli rimasti in sospeso.
 
 ### Esito: chi fa le modifiche piccole
 

@@ -332,6 +332,23 @@ describe('approvals requested by an agent', () => {
     );
     expect(logged().map((e) => e.type)).toContain('approval_denied');
   });
+
+  it('go to the user when there is someone to ask, and the answer reaches the agent', async () => {
+    const codex = fakeAgent('Codex', [{ approval: 'git status', answer: 'Fine.' }]);
+    const asked: { role: string; agent: string; summary: string }[] = [];
+    const { running, harness } = await loop(codex, fakeAgent('Claude', []), [], [], {
+      onApproval: ({ role, agent, request }) => {
+        asked.push({ role, agent, summary: request.summary });
+        return Promise.resolve('acceptForSession');
+      },
+    });
+    await running.done;
+    expect(asked).toEqual([{ role: 'orchestrator', agent: 'Codex', summary: 'git status' }]);
+    expect(codex.decisions).toEqual(['acceptForSession']);
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({ type: 'approval_decided', decision: 'acceptForSession' }),
+    );
+  });
 });
 
 describe('limits', () => {

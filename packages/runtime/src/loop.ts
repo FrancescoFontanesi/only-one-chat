@@ -88,6 +88,14 @@ export type ThreadEvent =
       readonly message: string;
     }
   | {
+      /** The user's answer to an agent's approval request (R9). */
+      readonly type: 'approval_decided';
+      readonly role: Role;
+      readonly agent: string;
+      readonly request: ApprovalRequest;
+      readonly decision: ApprovalDecision;
+    }
+  | {
       readonly type: 'activity';
       readonly role: Role;
       readonly kind: string;
@@ -225,6 +233,15 @@ export interface LoopOptions {
    * caller hands to the leader with the user's next message.
    */
   readonly review?: 'always' | 'deferred';
+  /**
+   * An agent asks for an approval (a command, a file change outside what it
+   * may do alone): the user answers (R9). Absent: every request is declined,
+   * as before. The promise may reject when the loop stops: that declines.
+   */
+  onApproval?(
+    request: { readonly role: Role; readonly agent: string; readonly request: ApprovalRequest },
+    signal: AbortSignal,
+  ): Promise<ApprovalDecision>;
   /**
    * `gateway` mode: what the runtime verifies after the implementer's turn,
    * such as changed files and the verification commands run again, as text
@@ -1004,14 +1021,22 @@ export function runLoop(options: LoopOptions): Loop {
         options.onEvent?.({ type: 'text', role, text });
       },
       onApprovalRequest: async (request): Promise<ApprovalDecision> => {
-        await emit({
-          type: 'approval_denied',
-          role,
-          agent: session.name,
-          request,
-          message: APPROVAL_DENIED_MESSAGE,
-        });
-        return 'decline';
+        if (!options.onApproval) {
+          await emit({
+            type: 'approval_denied',
+            role,
+            agent: session.name,
+            request,
+            message: APPROVAL_DENIED_MESSAGE,
+          });
+          return 'decline';
+        }
+        // The user decides (R9); stopping the loop declines what is still waiting.
+        const decision = await options
+          .onApproval({ role, agent: session.name, request }, controller.signal)
+          .catch((): ApprovalDecision => 'decline');
+        await emit({ type: 'approval_decided', role, agent: session.name, request, decision });
+        return decision;
       },
       onActivity: (activity) => {
         void emit({ type: 'activity', role, ...activity });

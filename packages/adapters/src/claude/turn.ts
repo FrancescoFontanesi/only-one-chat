@@ -184,6 +184,17 @@ export interface ClaudeTurnOptions {
    * denied. Only for a fresh, disposable working directory.
    */
   readonly sandbox?: { readonly commands: readonly string[] };
+  /**
+   * Interactive permissions (R9): what would ask goes to the user through a
+   * PermissionRequest hook and its bridge (permission.ts), instead of being
+   * denied. With `askAll`, nothing is allowed in advance: every edit and
+   * command asks. Anything the hook cannot answer stays denied.
+   */
+  readonly permissionHook?: {
+    readonly settings: string;
+    readonly env: Readonly<Record<string, string>>;
+    readonly askAll?: boolean;
+  };
 }
 
 /**
@@ -269,12 +280,16 @@ export function claudeTurnArgs(options: ClaudeTurnOptions): string[] {
     ].join(','),
     '--disallowedTools',
     (options.sandbox ? SANDBOX_DENIED_TOOLS : DENIED_TOOLS).join(','),
-    ...(options.sandbox
+    ...(options.sandbox && options.permissionHook?.askAll !== true
       ? ['--allowedTools', sandboxAllowedTools(options.sandbox.commands).join(',')]
       : []),
     // No MCP servers: the claude.ai connectors include tools that write elsewhere.
     '--strict-mcp-config',
-    // Anything that would ask for permission is denied: nobody answers in -p mode.
+    // The PermissionRequest hook, for this run only: it asks the user.
+    ...(options.permissionHook ? ['--settings', options.permissionHook.settings] : []),
+    // What would still ask is denied: no SDK host answers in -p mode. With the
+    // hook, this is only what the hook could not decide (verified on 2.1.308:
+    // the hook's allow is applied first).
     '--permission-prompts',
     'none',
     // Explicit, so the user's defaultMode (acceptEdits, bypassPermissions, …) never applies.
@@ -396,6 +411,7 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
       env: {
         ...withoutApiKeys(options.baseEnv ?? process.env),
         ...(options.subagents ? subagentEnv(options.subagents) : {}),
+        ...(options.permissionHook?.env ?? {}),
       },
       stdio: 'pipe',
       windowsHide: true,

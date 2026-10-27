@@ -31,13 +31,18 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true, maxRetries: 5 });
 });
 
-function session(mode: 'auto' | 'manual', review: 'always' | 'deferred' = 'always') {
+function session(
+  mode: 'auto' | 'manual',
+  review: 'always' | 'deferred' = 'always',
+  resume?: ChatConfig['resume'],
+) {
   const updates: ThreadUpdate[] = [];
   const busy: boolean[] = [];
+  const sessionIds: [string, string][] = [];
   const config: ChatConfig = {
     cwd,
-    leader: { cli: 'codex', model: 'gpt-6.1-sol', effort: 'low' },
-    implementer: { cli: 'claude', model: 'sonnet', effort: 'low' },
+    leader: { cli: 'codex', model: 'gpt-6.1-sol', effort: 'low', permission: 'auto' },
+    implementer: { cli: 'claude', model: 'sonnet', effort: 'low', permission: 'auto' },
     subagents: {
       codex: { model: 'gpt-6-luna', effort: 'low' },
       claude: { model: 'claude-haiku-5-5', effort: 'low' },
@@ -50,14 +55,68 @@ function session(mode: 'auto' | 'manual', review: 'always' | 'deferred' = 'alway
     verifyCommand: [],
     mode,
     review,
+    ...(resume ? { resume } : {}),
     logPath: join(root, 'logs', 'chat.jsonl'),
   };
   const chat = new ChatSession(config, {
     update: (update) => updates.push(update),
     busy: (value) => busy.push(value),
+    sessionId: (role, id) => sessionIds.push([role, id]),
   });
-  return { chat, updates, busy };
+  return { chat, updates, busy, sessionIds };
 }
+
+describe('chat session: a reopened chat (R5)', () => {
+  it('continues the leader’s own thread and reports the session ids to keep', async () => {
+    const { chat, sessionIds } = session('auto', 'always', { leader: 'kept-42' });
+    try {
+      await chat.send('dove eravamo?');
+    } finally {
+      await chat.dispose();
+    }
+    expect(sessionIds).toContainEqual(['leader', 'kept-42']);
+  });
+});
+
+describe('chat session: permissions (R9)', () => {
+  it('shows an agent’s request and sends the user’s answer back to the CLI', async () => {
+    const { chat, updates } = session('auto');
+    try {
+      // The fake Codex leader asks to run `git push` and answers with the decision it got.
+      const sent = chat.send('[approval] pubblica');
+      await expect.poll(() => updates.find((u) => u.type === 'permission')).toBeTruthy();
+      const request = updates.find((u) => u.type === 'permission');
+      if (request?.type !== 'permission') throw new Error('no permission request');
+      expect(request).toMatchObject({ role: 'leader', summary: 'git push — needs network' });
+      chat.permit(request.id, 'accept');
+      await sent;
+    } finally {
+      await chat.dispose();
+    }
+    const leader = updates.find((u) => u.type === 'turn' && u.status === 'done');
+    expect(leader).toMatchObject({ text: 'decision={"decision":"accept"}' });
+    expect(updates).toContainEqual({
+      type: 'permission_closed',
+      id: expect.any(String) as string,
+      decision: 'accept',
+    });
+  });
+
+  it('declines what is still waiting when the user stops', async () => {
+    const { chat, updates } = session('auto');
+    try {
+      const sent = chat.send('[approval] pubblica');
+      await expect.poll(() => updates.find((u) => u.type === 'permission')).toBeTruthy();
+      await chat.stop();
+      await sent;
+    } finally {
+      await chat.dispose();
+    }
+    expect(updates.some((u) => u.type === 'permission_closed' && u.decision === 'decline')).toBe(
+      true,
+    );
+  });
+});
 
 describe('chat session', () => {
   it('lets the leader answer by itself, and keeps its session for the next message', async () => {

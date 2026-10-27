@@ -12,6 +12,7 @@ import {
   CodexAuthError,
   createClaudeAgentFactory,
   createCodexAgentFactory,
+  approvalResponse,
   declineResponse,
   writableThreadConfig,
   type AgentApprovalRequest,
@@ -96,6 +97,42 @@ describe('Codex agent session', () => {
       input: [{ type: 'text', text: 'ciao' }],
       model: 'gpt-6-luna',
       effort: 'low',
+    });
+  });
+
+  it('resumes a kept thread with the same rules, and starts a persistent one otherwise', async () => {
+    const received = join(dir, 'received.jsonl');
+    const factory = createCodexAgentFactory({
+      executable: process.execPath,
+      baseEnv: testEnv(),
+      launcherArgs: [FAKE_CODEX, '--account=chatgpt', `--log=${received}`],
+      cwd: dir,
+      model: 'gpt-6-luna',
+      effort: 'low',
+      requestTimeoutMs: 5_000,
+      persistent: true,
+    });
+    const kept = await factory({ instructions: 'Sei il leader.', resume: 'kept-7' });
+    sessions.push(kept);
+    const first = await kept.runTurn('ciao', handlers().value).done;
+    expect(first.identity.sessionId).toBe('kept-7');
+    // The thread's totals before this session are unknown: no usage for this turn.
+    expect(first.usage).toBeUndefined();
+    const lost = await factory({ instructions: 'Sei il leader.', resume: 'gone-1' });
+    sessions.push(lost);
+    expect((await lost.runTurn('ciao', handlers().value).done).identity.sessionId).toBe('thread-1');
+    const sent = readFileSync(received, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
+    expect(sent.find((m) => m.method === 'thread/resume')?.params).toMatchObject({
+      threadId: 'kept-7',
+      developerInstructions: 'Sei il leader.',
+      approvalsReviewer: 'user',
+      excludeTurns: true,
+    });
+    expect(sent.find((m) => m.method === 'thread/start')?.params).toMatchObject({
+      ephemeral: false,
     });
   });
 
@@ -363,6 +400,40 @@ describe('Codex agent session', () => {
     expect(text).toBe('decision={"decision":"decline"}');
   });
 
+  it('sends the user’s approval of a command, once or for the session, back to Codex', async () => {
+    for (const decision of ['accept', 'acceptForSession'] as const) {
+      const session = await codex();
+      const h = handlers();
+      const value: AgentTurnHandlers = {
+        ...h.value,
+        onApprovalRequest: () => Promise.resolve(decision),
+      };
+      const { text } = await session.runTurn('[approval] pubblica', value).done;
+      expect(text).toBe(`decision=${JSON.stringify({ decision })}`);
+    }
+    // Requests other than commands and file changes are never granted.
+    expect(approvalResponse('item/permissions/requestApproval', 'accept')).toEqual({
+      permissions: {},
+      scope: 'turn',
+    });
+  });
+
+  it('asks before any untrusted command when the policy says so', async () => {
+    const received = join(dir, 'received.jsonl');
+    const session = await codex('chatgpt', {
+      launcherArgs: [FAKE_CODEX, '--account=chatgpt', `--log=${received}`],
+      writable: true,
+      approvalPolicy: 'untrusted',
+    });
+    await session.runTurn('ciao', handlers().value).done;
+    const start = readFileSync(received, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+      .find((m) => m.method === 'thread/start')?.params;
+    expect(start).toMatchObject({ sandbox: 'workspace-write', approvalPolicy: 'untrusted' });
+  });
+
   it('interrupts a running turn with turn/interrupt', async () => {
     const session = await codex();
     const turn = session.runTurn('[hang] lungo', handlers().value);
@@ -496,6 +567,24 @@ describe('Claude agent session', () => {
     expect(Object.keys(result.usage?.byModel ?? {})).toEqual(['claude-haiku-5-5']);
     expect(result.usage?.costUsd).toBeCloseTo(0.004476445);
     expect(result.quota?.windows[0]).toMatchObject({ name: '5h', usedPercent: 69 });
+  });
+
+  it('resumes an earlier session, without counting its earlier usage as this turn’s', async () => {
+    const session = await createClaudeAgentFactory({
+      executable: process.execPath,
+      launcherArgs: [FAKE_CLAUDE, `--log=${log()}`, '--echo'],
+      cwd: dir,
+      model: 'haiku',
+      effort: 'low',
+      baseEnv: testEnv(),
+      shutdownTimeoutMs: 300,
+    })({ instructions: 'Sei il worker.', resume: 'session-earlier' });
+    sessions.push(session);
+    const first = await session.runTurn('di nuovo', handlers().value).done;
+    expect(turnArgs()[0]).toEqual(expect.arrayContaining(['--resume', 'session-earlier']));
+    expect(first.usage).toBeUndefined();
+    const second = await session.runTurn('ancora', handlers().value).done;
+    expect(second.usage).toBeDefined();
   });
 
   it('changes the effort of the next turns in the same session', async () => {

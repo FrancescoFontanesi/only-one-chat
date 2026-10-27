@@ -80,6 +80,36 @@
           "default": "low",
           "description": "Reasoning effort of the leader."
         },
+        "onlyOneChat.leader.permission": {
+          "type": "string",
+          "enum": [
+            "read-only",
+            "ask",
+            "auto"
+          ],
+          "enumDescriptions": [
+            "Reads only: no file changes, no commands that write.",
+            "Asks you before acting: Codex before any command it does not know to be safe; Claude before any edit or command not allowed.",
+            "Acts inside the folder; asks you to go beyond it."
+          ],
+          "default": "auto",
+          "description": "What the leader may do without asking. Applies to the next chat."
+        },
+        "onlyOneChat.implementer.permission": {
+          "type": "string",
+          "enum": [
+            "read-only",
+            "ask",
+            "auto"
+          ],
+          "enumDescriptions": [
+            "Reads only: no file changes, no commands that write.",
+            "Asks you before acting: Codex before any command it does not know to be safe; Claude before any edit or command not allowed.",
+            "Acts inside the folder; asks you to go beyond it."
+          ],
+          "default": "auto",
+          "description": "What the implementer may do without asking. Applies to the next chat."
+        },
         "onlyOneChat.implementer.cli": {
           "type": "string",
           "enum": [

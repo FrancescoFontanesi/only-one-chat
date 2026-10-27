@@ -57,9 +57,18 @@ export {
   CODEX_SUBAGENT_FORBIDDEN_NAMES,
   createCodexAgentFactory,
   declineResponse,
+  approvalResponse,
   type CodexAgentConfig,
 } from './codex/agent.js';
 export { createClaudeAgentFactory, type ClaudeAgentConfig } from './claude/agent.js';
+export {
+  startPermissionBridge,
+  summarizeToolCall,
+  type PermissionBridge,
+  type PermissionBridgeOptions,
+  type PermissionDecision,
+  type PermissionRequest,
+} from './claude/permission.js';
 export {
   ExecutableNotFoundError,
   resolveNativeExecutable,

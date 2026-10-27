@@ -4,6 +4,7 @@ import {
   parseHostMessage,
   type ApprovalMode,
   type Effort,
+  type PermitDecision,
   type RoleInfo,
   type RoleName,
   type SessionInfo,
@@ -19,6 +20,12 @@ const post = (message: WebviewToHostMessage) => {
 const STATUS_GLYPH = { running: '▶', done: '■', failed: '×' } as const;
 const NOTICE_GLYPH = { info: '■', warn: '▲', error: '×' } as const;
 
+const PERMISSION_LABEL = {
+  'read-only': 'SOLA LETTURA',
+  ask: 'CHIEDE',
+  auto: 'AUTO NELLA CARTELLA',
+} as const;
+
 /** A role with its model and the reasoning level, which the user chooses (ADR 0010). */
 function Role({ name, title, info }: { name: RoleName; title: string; info: RoleInfo }) {
   return (
@@ -26,6 +33,9 @@ function Role({ name, title, info }: { name: RoleName; title: string; info: Role
       <span class="label role">{title}</span>
       <span>
         {info.cli === 'codex' ? 'Codex' : 'Claude'} {info.model}
+      </span>
+      <span class="tag" title="Livello di autorizzazione (impostazioni)">
+        {PERMISSION_LABEL[info.permission]}
       </span>
       <label class="label" for={`effort-${name}`}>
         REASONING
@@ -67,6 +77,36 @@ function Header({ session }: { session: SessionInfo | undefined }) {
       </div>
       <Role name="leader" title="LEADER" info={session.leader} />
       <Role name="implementer" title="IMPLEMENTA" info={session.implementer} />
+      <div class="bar-row data">
+        <label class="label role" for="chat-select">
+          CHAT
+        </label>
+        <select
+          id="chat-select"
+          class="select"
+          value={session.chatId ?? ''}
+          disabled={session.busy}
+          onChange={(event) => {
+            const id = (event.target as HTMLSelectElement).value;
+            if (id && id !== session.chatId) post({ type: 'openChat', id });
+          }}
+        >
+          {!session.chats.some((chat) => chat.id === session.chatId) && (
+            <option value={session.chatId ?? ''}>nuova chat</option>
+          )}
+          {session.chats.map((chat) => (
+            <option key={chat.id} value={chat.id}>
+              {new Date(chat.updatedAt).toLocaleString([], {
+                day: 'numeric',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}{' '}
+              · {chat.title || 'senza titolo'}
+            </option>
+          ))}
+        </select>
+      </div>
       <div class="bar-row data">
         <span class="label">CARTELLA</span>
         <span class="path">{session.workspace ?? 'nessuna cartella aperta'}</span>
@@ -158,6 +198,63 @@ function Approval({ item }: { item: Extract<ThreadItem, { kind: 'approval' }> })
   );
 }
 
+const PERMIT_LABEL: Record<string, string> = {
+  accept: '■ consentito una volta',
+  acceptForSession: '■ consentito per la sessione',
+  decline: '× negato',
+};
+
+/** An agent asks before acting (R9): once, for the session, or no. */
+function Permission({ item }: { item: Extract<ThreadItem, { kind: 'permission' }> }) {
+  const answer = (decision: PermitDecision) => {
+    post({ type: 'permit', id: item.id, decision });
+  };
+  return (
+    <section class={item.closed ? 'card approval closed' : 'card approval waiting'}>
+      <div class="card-head">
+        <span class="label">PERMESSO</span>
+        <span class="data">
+          {item.role === 'leader' ? 'leader' : 'implementatore'} · {item.agent}
+        </span>
+      </div>
+      <pre class="data">{item.summary}</pre>
+      {item.closed ? (
+        <div class="data">{PERMIT_LABEL[item.closed] ?? item.closed}</div>
+      ) : (
+        <div class="actions">
+          <button
+            type="button"
+            class="btn primary"
+            onClick={() => {
+              answer('accept');
+            }}
+          >
+            CONSENTI
+          </button>
+          <button
+            type="button"
+            class="btn"
+            onClick={() => {
+              answer('acceptForSession');
+            }}
+          >
+            CONSENTI PER LA SESSIONE
+          </button>
+          <button
+            type="button"
+            class="btn"
+            onClick={() => {
+              answer('decline');
+            }}
+          >
+            NEGA
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Turn({ item }: { item: Extract<ThreadItem, { kind: 'turn' }> }) {
   const usage = item.usage;
   return (
@@ -211,6 +308,8 @@ function Item({ item }: { item: ThreadItem }) {
       return <Turn item={item} />;
     case 'approval':
       return <Approval item={item} />;
+    case 'permission':
+      return <Permission item={item} />;
     case 'notice':
       return (
         <section class={`notice ${item.level}`}>

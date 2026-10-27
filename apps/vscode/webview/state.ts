@@ -34,6 +34,15 @@ export type ThreadItem =
       readonly closed?: string;
     }
   | {
+      readonly kind: 'permission';
+      readonly id: string;
+      readonly role: TurnRole;
+      readonly agent: string;
+      readonly summary: string;
+      /** The user's answer, once given. */
+      readonly closed?: string;
+    }
+  | {
       readonly kind: 'notice';
       readonly id: string;
       readonly level: 'info' | 'warn' | 'error';
@@ -121,6 +130,23 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
       return items.map((item) =>
         item.kind === 'approval' && item.id === update.id
           ? { ...item, closed: update.action }
+          : item,
+      );
+    case 'permission':
+      return [
+        ...items,
+        {
+          kind: 'permission',
+          id: update.id,
+          role: update.role,
+          agent: update.agent,
+          summary: update.summary,
+        },
+      ];
+    case 'permission_closed':
+      return items.map((item) =>
+        item.kind === 'permission' && item.id === update.id
+          ? { ...item, closed: update.decision }
           : item,
       );
     case 'notice':

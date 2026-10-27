@@ -39,7 +39,10 @@ export type AgentSubagentEvent =
 
 export interface AgentTurnHandlers {
   onText(text: string): void;
-  onApprovalRequest(request: AgentApprovalRequest): Promise<'decline'>;
+  /** `acceptForSession` as the CLI scopes it; see the runtime's ApprovalDecision. */
+  onApprovalRequest(
+    request: AgentApprovalRequest,
+  ): Promise<'accept' | 'acceptForSession' | 'decline'>;
   onActivity?(activity: { readonly kind: string; readonly detail: string }): void;
   onSubagent?(event: AgentSubagentEvent): void;
 }
@@ -86,4 +89,6 @@ export interface AgentSubagentOptions {
 export type AgentFactory = (options: {
   readonly instructions: string;
   readonly subagents?: AgentSubagentOptions;
+  /** The CLI's own session to continue; see the runtime's AgentSessionOptions. */
+  readonly resume?: string;
 }) => Promise<AgentSession>;

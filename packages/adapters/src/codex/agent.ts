@@ -59,6 +59,16 @@ export interface CodexAgentConfig extends Omit<
    * Default: the user's hooks run.
    */
   readonly withoutUserHooks?: boolean;
+  /**
+   * When Codex asks before acting: `on-request` (default) only to leave the
+   * sandbox; `untrusted` before any command it does not know to be safe.
+   */
+  readonly approvalPolicy?: 'on-request' | 'untrusted';
+  /**
+   * Threads Codex keeps on disk, in its own history, so a reopened chat can
+   * resume them (R5); default ephemeral (benchmarks, checks).
+   */
+  readonly persistent?: boolean;
 }
 
 /** Per-thread overrides for a writable thread; see CodexAgentConfig.writable. */
@@ -145,6 +155,25 @@ export function declineResponse(method: string): unknown {
   }
 }
 
+/**
+ * The answer to an approval request. Commands and file changes take the
+ * user's decision (Codex: `accept`, `acceptForSession`, `decline`); other
+ * requests (permission grants, MCP elicitations) are always declined here.
+ */
+export function approvalResponse(
+  method: string,
+  decision: 'accept' | 'acceptForSession' | 'decline',
+): unknown {
+  if (
+    decision !== 'decline' &&
+    (method === 'item/commandExecution/requestApproval' ||
+      method === 'item/fileChange/requestApproval')
+  ) {
+    return { decision };
+  }
+  return declineResponse(method);
+}
+
 function summarize(method: string, params: unknown): string {
   if (!isRecord(params)) return method;
   const command = params['command'];
@@ -174,7 +203,8 @@ type TurnOutcome =
   | {
       text: string;
       identity: AgentIdentity;
-      usage: { byModel: Record<string, TokenUsage>; costUsd: null; durationMs: number };
+      /** Absent for the first turn of a resumed thread: its own usage is unknown. */
+      usage?: { byModel: Record<string, TokenUsage>; costUsd: null; durationMs: number };
       quota: QuotaSnapshot | null;
     }
   | Error;
@@ -205,7 +235,7 @@ const FINISHED: Readonly<Record<string, 'completed' | 'interrupted' | 'failed'>>
 };
 
 export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory {
-  return async ({ instructions, subagents }): Promise<AgentSession> => {
+  return async ({ instructions, subagents, resume }): Promise<AgentSession> => {
     const {
       cwd,
       model,
@@ -213,10 +243,14 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
       interruptTimeoutMs = 10_000,
       writable = false,
       withoutUserHooks = false,
+      approvalPolicy = 'on-request',
+      persistent = false,
       ...sessionOptions
     } = config;
     let current: RunningTurn | undefined;
     let threadId = '';
+    /** Set when the thread was resumed; see the first completed turn. */
+    let baselineUnknown = false;
     let identity: AgentIdentity = { provider: 'Codex', model: '', effort: null, sessionId: '' };
     const children = new Map<string, Child>();
     /** Latest cumulative tokens per thread (thread/tokenUsage/updated). */
@@ -329,14 +363,22 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
           if (turn.turnId !== undefined && completed['id'] !== turn.turnId) return;
           const status = completed['status'];
           if (status === 'completed') {
+            // A resumed thread's totals before this session are unknown: the
+            // first turn's own usage cannot be told apart, so it is not reported.
+            const ownUsageKnown = !baselineUnknown;
+            baselineUnknown = false;
             turn.settle({
               text: turn.messages.join('\n\n'),
               identity,
-              usage: {
-                byModel: turnUsage(turn),
-                costUsd: null,
-                durationMs: Date.now() - turn.startedAt,
-              },
+              ...(ownUsageKnown
+                ? {
+                    usage: {
+                      byModel: turnUsage(turn),
+                      costUsd: null,
+                      durationMs: Date.now() - turn.startedAt,
+                    },
+                  }
+                : {}),
               quota: turn.quota,
             });
           } else {
@@ -347,10 +389,11 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
       },
       async onServerRequest(method, params) {
         const summary = summarize(method, params);
-        // The runtime records the request; without a turn there is nobody to ask.
-        // Its only possible decision in this iteration is to decline.
-        if (current) await current.handlers.onApprovalRequest({ kind: method, summary });
-        return declineResponse(method);
+        // Without a turn there is nobody to ask: declined.
+        const decision = current
+          ? await current.handlers.onApprovalRequest({ kind: method, summary })
+          : 'decline';
+        return approvalResponse(method, decision);
       },
     });
     if (!isUsable(session.auth)) {
@@ -365,17 +408,27 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         ...(writable ? writableThreadConfig(process.platform) : {}),
         ...(withoutUserHooks ? { 'features.hooks': false } : {}),
       };
-      const started = await session.request('thread/start', {
+      const threadParams = {
         cwd,
         sandbox: writable ? 'workspace-write' : 'read-only',
-        approvalPolicy: 'on-request',
+        approvalPolicy,
         // Approvals go to us, never to Codex's own automatic reviewer.
         approvalsReviewer: 'user',
         developerInstructions: instructions,
-        ephemeral: true,
         ...(model ? { model } : {}),
         ...(Object.keys(threadConfig).length > 0 ? { config: threadConfig } : {}),
-      });
+      };
+      // A reopened chat continues its thread, with the same rules; if Codex no
+      // longer has it, a new thread starts.
+      const resumed = resume
+        ? await session
+            .request('thread/resume', { threadId: resume, ...threadParams, excludeTurns: true })
+            .catch(() => undefined)
+        : undefined;
+      const started =
+        resumed ??
+        (await session.request('thread/start', { ...threadParams, ephemeral: !persistent }));
+      baselineUnknown = resumed !== undefined;
       const response = isRecord(started) ? started : {};
       const thread = isRecord(response['thread']) ? response['thread'] : {};
       threadId = typeof thread['id'] === 'string' ? thread['id'] : '';

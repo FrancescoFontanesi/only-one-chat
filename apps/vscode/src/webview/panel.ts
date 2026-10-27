@@ -1,31 +1,46 @@
+import { realpathSync } from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { resolveClaudeExecutable, resolveCodexExecutable } from '@only-one-chat/adapters';
 import { getRuntimeInfo } from '@only-one-chat/runtime';
 import { ChatSession, type AgentChoice, type ChatConfig } from '../session/chat.js';
 import { providerOf, type UsageStore } from '../session/usage.js';
+import { ChatHistory, forReplay, newChatId, type ChatRecord } from '../session/history.js';
 import { createNonce, renderWebviewHtml } from './html.js';
 import {
   parseWebviewMessage,
   type ApprovalMode,
   type HostToWebviewMessage,
   type SessionInfo,
+  type ThreadUpdate,
   type WebviewToHostMessage,
 } from './protocol.js';
 
 const TITLE = 'Only One Chat';
 
-/** The folder the agents work in: the first workspace folder (ADR 0010). */
+/**
+ * The folder the agents work in: the first workspace folder (ADR 0010), in
+ * its long form. Claude asks for manual approval on 8.3 short names, which no
+ * hook can give (verified on 2.1.308).
+ */
 function workspaceFolder(): string | null {
-  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) return null;
+  try {
+    return realpathSync.native(folder);
+  } catch {
+    return folder;
+  }
 }
 
 function agentChoice(settings: vscode.WorkspaceConfiguration, role: string): AgentChoice {
   const cli = settings.get<string>(`${role}.cli`);
+  const permission = settings.get<string>(`${role}.permission`);
   return {
     cli: cli === 'claude' ? 'claude' : 'codex',
     model: settings.get<string>(`${role}.model`) ?? '',
     effort: settings.get<string>(`${role}.effort`) ?? 'low',
+    permission: permission === 'read-only' || permission === 'ask' ? permission : 'auto',
   };
 }
 
@@ -74,6 +89,10 @@ export class OnlyOneChatPanel {
 
   private readonly disposables: vscode.Disposable[] = [];
   private chat: ChatSession | undefined;
+  /** The chats of this folder (R5), and the one shown: saved after each update. */
+  private readonly history: ChatHistory;
+  private record: ChatRecord;
+  private saveTimer: NodeJS.Timeout | undefined;
   private mode: ApprovalMode;
   /** The user agreed that the agents may change this folder. */
   private confirmedFolder: string | undefined;
@@ -88,6 +107,11 @@ export class OnlyOneChatPanel {
   ) {
     const mode = vscode.workspace.getConfiguration('onlyOneChat').get<string>('approvalMode');
     this.mode = mode === 'auto' ? 'auto' : 'manual';
+    const storage = context.storageUri ?? context.globalStorageUri;
+    this.history = new ChatHistory(vscode.Uri.joinPath(storage, 'chats').fsPath);
+    // The most recent chat of this folder comes back; otherwise a new one.
+    const latest = this.history.list()[0];
+    this.record = (latest && this.history.load(latest.id)) ?? this.emptyRecord();
     const webview = panel.webview;
     webview.html = renderWebviewHtml({
       cspSource: webview.cspSource,
@@ -129,7 +153,72 @@ export class OnlyOneChatPanel {
       mode: this.mode,
       fake: this.fake,
       busy: this.chat?.busy ?? false,
+      chats: this.history.list(),
+      chatId: this.record.id,
     };
+  }
+
+  private emptyRecord(): ChatRecord {
+    const now = Date.now();
+    return {
+      version: 1,
+      id: newChatId(now),
+      title: '',
+      createdAt: now,
+      updatedAt: now,
+      sessions: {},
+      updates: [],
+    };
+  }
+
+  /** Keeps an update of the shown chat; written to disk shortly after (R5). */
+  private remember(update: ThreadUpdate): void {
+    const record = this.record;
+    if (update.type === 'user' && record.title === '') record.title = update.text.slice(0, 60);
+    record.updates.push(update);
+    record.updatedAt = Date.now();
+    this.scheduleSave();
+  }
+
+  private scheduleSave(): void {
+    clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => {
+      this.saveNow();
+    }, 1000);
+  }
+
+  private saveNow(): void {
+    clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
+    // An empty chat is not kept.
+    if (this.record.updates.length === 0) return;
+    try {
+      this.history.save(this.record);
+    } catch (error) {
+      this.notice(
+        'warn',
+        `La chat non è stata salvata: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /** Redraws the shown chat in the webview, as it was left. */
+  private async replay(): Promise<void> {
+    await this.post({ type: 'reset' });
+    for (const update of forReplay(this.record.updates)) {
+      await this.post({ type: 'thread', update });
+    }
+  }
+
+  /** Shows another chat: the current one is saved and its agents closed. */
+  private async switchTo(record: ChatRecord): Promise<void> {
+    this.saveNow();
+    await this.chat?.dispose();
+    this.chat = undefined;
+    this.usage.resetChat();
+    this.record = record;
+    await this.replay();
+    void this.postSession();
   }
 
   private postSession(): Thenable<boolean> {
@@ -152,6 +241,7 @@ export class OnlyOneChatPanel {
             workspaceTrusted: vscode.workspace.isTrusted,
           },
         });
+        await this.replay();
         await this.postSession();
         OnlyOneChatPanel.readyEmitter.fire();
         break;
@@ -165,6 +255,9 @@ export class OnlyOneChatPanel {
       }
       case 'decide':
         this.chat?.decide(message.id, message.action, message.text);
+        break;
+      case 'permit':
+        this.chat?.permit(message.id, message.decision);
         break;
       case 'stop':
         await this.chat?.stop();
@@ -184,12 +277,13 @@ export class OnlyOneChatPanel {
         void this.postSession();
         break;
       case 'newChat':
-        await this.chat?.dispose();
-        this.chat = undefined;
-        this.usage.resetChat();
-        await this.post({ type: 'reset' });
-        void this.postSession();
+        await this.switchTo(this.emptyRecord());
         break;
+      case 'openChat': {
+        const record = this.history.load(message.id);
+        if (record) await this.switchTo(record);
+        break;
+      }
       case 'refreshUsage':
         await this.refreshCodexUsage();
         break;
@@ -283,13 +377,33 @@ export class OnlyOneChatPanel {
         ...fakeArgs,
         allowedCommands: settings.get<string[]>('allowedCommands') ?? [],
         verifyCommand: settings.get<string[]>('verifyCommand') ?? [],
+        // The editor's own Node runs the PermissionRequest hook script (R9).
+        permissionHook: {
+          nodeExecutable: process.execPath,
+          nodeEnv: { ELECTRON_RUN_AS_NODE: '1' },
+          hookScript: path.join(
+            this.context.extensionPath,
+            'dist',
+            'hooks',
+            'permission-request.mjs',
+          ),
+        },
         mode: this.mode,
+        // A reopened chat continues the CLIs' own sessions; Codex keeps its threads.
+        resume: { ...this.record.sessions },
+        persistent: true,
         review: settings.get<string>('leaderReview') === 'deferred' ? 'deferred' : 'always',
         logPath: path.join(logDir, `chat-${stamp}.jsonl`),
       },
       {
         update: (update) => {
+          this.remember(update);
           void this.post({ type: 'thread', update });
+        },
+        sessionId: (role, id) => {
+          if (this.record.sessions[role] === id) return;
+          this.record.sessions[role] = id;
+          this.scheduleSave();
         },
         busy: () => {
           void this.postSession();
@@ -310,6 +424,7 @@ export class OnlyOneChatPanel {
   }
 
   private dispose(): void {
+    this.saveNow();
     OnlyOneChatPanel.current = undefined;
     void this.chat?.dispose();
     this.chat = undefined;

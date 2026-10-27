@@ -59,13 +59,28 @@ subscription in use it shows the 5-hour and weekly windows, and what the current
 
 Nothing is read from credential files or session files.
 
+## Chats are kept
+
+- **Each chat of the folder is saved** in the extension's workspace storage, together with the
+  ids of the agents' own sessions.
+- **When you open the panel again**, the most recent chat comes back, and the leader and the
+  implementer continue their sessions (`--resume` for Claude, `thread/resume` for Codex).
+- **Earlier chats** are in the CHAT selector of the header; "Nuova chat" starts an empty one.
+- **What was running or waiting** when the chat was closed is shown as interrupted.
+
 ## Scope and safety
 
 - The agents work only in the folder open in VS Code, once it is trusted (Workspace Trust).
 - The first request asks for your consent.
 - Claude may run only the programs in `onlyOneChat.allowedCommands`; Codex writes inside the
   folder, without network.
-- Other permission requests are declined and shown in the chat: approvals are not in the
-  panel yet.
+- **Permission levels per role**, set in `onlyOneChat.leader.permission` and
+  `onlyOneChat.implementer.permission`:
+  - `read-only`: no file changes, no commands that write;
+  - `ask`: asks you before acting. Codex asks before any command it does not know to be safe,
+    Claude before every edit and command;
+  - `auto`: acts inside the folder and asks you to go beyond it.
+- **When an agent asks**, a PERMESSO card appears in the chat: once, for the session (the same
+  command or file only), or no. Stopping the chat declines what is still waiting.
 
 License: MIT.

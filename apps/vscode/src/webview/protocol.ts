@@ -21,6 +21,7 @@ export interface RoleInfo {
   readonly cli: 'codex' | 'claude';
   readonly model: string;
   readonly effort: string;
+  readonly permission: PermissionLevel;
 }
 
 /** The chat session as the panel shows it in its header. */
@@ -34,6 +35,13 @@ export interface SessionInfo {
   /** Fake CLIs: no model turn, no quota (development only). */
   readonly fake: boolean;
   readonly busy: boolean;
+  /** The chats kept for this folder, most recent first, and the one shown. */
+  readonly chats: readonly {
+    readonly id: string;
+    readonly title: string;
+    readonly updatedAt: number;
+  }[];
+  readonly chatId: string | null;
 }
 
 export type TurnRole = 'leader' | 'implementer';
@@ -79,6 +87,15 @@ export type ThreadUpdate =
       readonly text: string;
     }
   | { readonly type: 'approval_closed'; readonly id: string; readonly action: string }
+  | {
+      /** An agent asks before acting (a command, a file change): the user answers (R9). */
+      readonly type: 'permission';
+      readonly id: string;
+      readonly role: TurnRole;
+      readonly agent: string;
+      readonly summary: string;
+    }
+  | { readonly type: 'permission_closed'; readonly id: string; readonly decision: string }
   | { readonly type: 'notice'; readonly level: 'info' | 'warn' | 'error'; readonly text: string };
 
 /** One usage window of a subscription, as its CLI reported it. */
@@ -112,6 +129,12 @@ export type HostToWebviewMessage =
 
 export type ApprovalAction = 'approve' | 'edit' | 'cancel';
 
+/** The answer to an agent's permission request; "for the session" as the CLI scopes it. */
+export type PermitDecision = 'accept' | 'acceptForSession' | 'decline';
+
+/** What a role may do without asking: nothing, ask first, or act inside the folder. */
+export type PermissionLevel = 'read-only' | 'ask' | 'auto';
+
 export type WebviewToHostMessage =
   | { readonly type: 'ready' }
   | { readonly type: 'ping'; readonly id: number }
@@ -123,9 +146,11 @@ export type WebviewToHostMessage =
       readonly text?: string;
     }
   | { readonly type: 'stop' }
+  | { readonly type: 'permit'; readonly id: string; readonly decision: PermitDecision }
   | { readonly type: 'setMode'; readonly mode: ApprovalMode }
   | { readonly type: 'setEffort'; readonly role: RoleName; readonly effort: Effort }
   | { readonly type: 'newChat' }
+  | { readonly type: 'openChat'; readonly id: string }
   | { readonly type: 'refreshUsage' };
 
 /** Longest text the webview may send: a large brief fits, a pasted log does not. */
@@ -168,6 +193,15 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
     }
     case 'stop':
       return { type: 'stop' };
+    case 'permit': {
+      const id = msg['id'];
+      const decision = msg['decision'];
+      return typeof id === 'string' &&
+        ID_PATTERN.test(id) &&
+        (decision === 'accept' || decision === 'acceptForSession' || decision === 'decline')
+        ? { type: 'permit', id, decision }
+        : undefined;
+    }
     case 'setMode': {
       const mode = msg['mode'];
       return mode === 'auto' || mode === 'manual' ? { type: 'setMode', mode } : undefined;
@@ -183,6 +217,10 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
     }
     case 'newChat':
       return { type: 'newChat' };
+    case 'openChat': {
+      const id = msg['id'];
+      return typeof id === 'string' && ID_PATTERN.test(id) ? { type: 'openChat', id } : undefined;
+    }
     case 'refreshUsage':
       return { type: 'refreshUsage' };
     default:

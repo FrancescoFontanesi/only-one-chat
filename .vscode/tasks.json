@@ -9,6 +9,12 @@
       "problemMatcher": []
     },
     {
+      "label": "build and playground",
+      "type": "shell",
+      "command": "pnpm build && pnpm playground",
+      "problemMatcher": []
+    },
+    {
       "label": "build tests",
       "type": "shell",
       "command": "pnpm --filter only-one-chat exec node esbuild.mjs --tests",

@@ -134,6 +134,30 @@ tocca e come le mitiga.
   - Per il gateway resta una richiesta da verificare, non un'istruzione di sistema.
   - Nella modalità automatica la cattura viene notificata.
 
+### T11. Agenti avviati dal pannello (ADR 0010)
+
+- **Minaccia:** dal pannello, leader e implementatore scrivono ed eseguono comandi sulla
+  macchina dell'utente.
+- **Mitigazioni sul perimetro:**
+  - Gli agenti lavorano solo nella prima cartella aperta in VS Code, che è il loro confine.
+  - Partono solo se la cartella è attendibile per il Workspace Trust. Altrimenti il pannello
+    si apre, ma nessun agente parte (`untrustedWorkspaces: limited`).
+  - Alla prima richiesta un avviso modale chiede il consenso per quella cartella.
+- **Mitigazioni sui permessi:**
+  - Valgono quelli della modalità sandbox (ADR 0008): Claude scrive con `Edit(./**)` ed esegue
+    solo i programmi di `onlyOneChat.allowedCommands`; Codex scrive con `workspace-write`, senza
+    rete.
+  - Le altre richieste di approvazione dei CLI vengono rifiutate e mostrate: R9 è ancora da
+    fare.
+  - I percorsi degli eseguibili, i comandi ammessi e il comando di verifica hanno scope
+    `machine`: un repository non li può impostare con le sue impostazioni di workspace.
+- **Mitigazioni nella Webview:**
+  - Ogni messaggio della Webview è validato, con un limite di 50 000 caratteri.
+  - I testi dei modelli sono resi come testo, mai come HTML.
+- **Limite noto:** come nella sandbox, un comando ammesso (per esempio `python`) può fare
+  quello che può fare quel programma. Per provare l'estensione si usa una cartella separata
+  (`pnpm playground`).
+
 ## Sicurezza della supply chain (bootstrap)
 
 - Versioni esatte e lockfile (`pnpm install --frozen-lockfile`).

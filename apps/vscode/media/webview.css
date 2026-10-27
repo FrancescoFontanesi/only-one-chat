@@ -1,42 +1,318 @@
-body {
-  padding: 0 20px;
-  color: var(--vscode-foreground);
-  background-color: var(--vscode-editor-background);
-  font-family: var(--vscode-font-family);
-  font-size: var(--vscode-font-size);
-}
+/*
+ * Only One Chat panel. Visual language from the user's design system "Cyber Nihilism"
+ * (F:\cyber-nihilism, tokens/tokens.css): 1-bit, black and white, no shadows, no colour
+ * for status (■ ok, ▲ warning, × error), Rajdhani for labels and JetBrains Mono for data.
+ * Fonts: SIL OFL 1.1, licences in media/fonts. The theme follows VS Code's (body class).
+ */
 
-.muted {
-  color: var(--vscode-descriptionForeground);
-}
-
-dl {
-  display: grid;
-  grid-template-columns: max-content auto;
-  gap: 4px 16px;
-}
-
-dt {
+@font-face {
+  font-family: 'Rajdhani';
+  src: url('fonts/Rajdhani-SemiBold.woff2') format('woff2');
   font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Rajdhani';
+  src: url('fonts/Rajdhani-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('fonts/JetBrainsMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('fonts/JetBrainsMono-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('fonts/JetBrainsMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
 }
 
-dd {
+:root {
+  color-scheme: dark;
+  --ground: #000000;
+  --ink: #ffffff;
+  --ink-muted: #a3a3a3;
+  --line-strong: #7a7a7a;
+  --line: #333333;
+  --grid: #141414;
+  --ink-disabled: #5e5e5e;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --chamfer-sm: 6px;
+  --font-display: 'Rajdhani', 'Arial Narrow', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+body.vscode-light {
+  color-scheme: light;
+  --ground: #ffffff;
+  --ink: #000000;
+  --ink-muted: #595959;
+  --line-strong: #8a8a8a;
+  --line: #d4d4d4;
+  --grid: #ebebeb;
+  --ink-disabled: #a6a6a6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
   margin: 0;
+  padding: 0;
+  color: var(--ink);
+  background-color: var(--ground);
+  font-family: var(--font-mono);
+  font-size: 13px;
 }
 
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* Type */
+.label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.data {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.muted {
+  color: var(--ink-muted);
+}
+.brand {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: 0.08em;
+}
+
+/* Header */
+.bar {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 2px solid var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.bar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.path {
+  overflow-wrap: anywhere;
+}
+.state {
+  margin-left: auto;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+}
+.state.busy {
+  animation: blink 1s steps(2, start) infinite;
+}
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+.tag {
+  border: 1px solid var(--line-strong);
+  padding: 0 var(--space-1);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+}
+.tag-strong {
+  background: var(--ink);
+  color: var(--ground);
+  border-color: var(--ink);
+}
+
+/* Buttons */
 button {
-  padding: 4px 12px;
-  border: none;
-  color: var(--vscode-button-foreground);
-  background-color: var(--vscode-button-background);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
   cursor: pointer;
 }
-
-button:hover {
-  background-color: var(--vscode-button-hoverBackground);
+.btn,
+.seg {
+  padding: var(--space-1) var(--space-3);
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--ink);
+  clip-path: polygon(
+    var(--chamfer-sm) 0,
+    100% 0,
+    100% calc(100% - var(--chamfer-sm)),
+    calc(100% - var(--chamfer-sm)) 100%,
+    0 100%,
+    0 var(--chamfer-sm)
+  );
+}
+.btn.primary,
+.seg.on {
+  background: var(--ink);
+  color: var(--ground);
+}
+.btn:hover:not(:disabled),
+.seg:hover {
+  background: var(--ink);
+  color: var(--ground);
+}
+button:disabled {
+  color: var(--ink-disabled);
+  border-color: var(--ink-disabled);
+  background: transparent;
+  cursor: default;
+}
+button:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
 
-button:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
-  outline-offset: 2px;
+/* Thread */
+.thread {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+.empty {
+  max-width: 60ch;
+}
+.card {
+  border: 1px solid var(--line-strong);
+  background: var(--ground);
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.card-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.user {
+  flex-direction: row;
+  border-color: var(--line);
+  align-self: flex-end;
+  max-width: 85%;
+}
+.prompt {
+  font-weight: 700;
+}
+/* The agent working now: heavier frame, blinking glyph. */
+.turn.running {
+  border: 2px solid var(--ink);
+}
+.turn.running .glyph {
+  animation: blink 1s steps(2, start) infinite;
+}
+.turn.implementer {
+  margin-left: var(--space-4);
+}
+.turn.failed {
+  border-style: dashed;
+}
+.subagents {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 var(--space-3);
+}
+.activity pre {
+  margin: var(--space-1) 0 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--ink-muted);
+}
+.activity summary {
+  cursor: pointer;
+}
+.usage {
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-1);
+}
+.approval.waiting {
+  border: 2px solid var(--ink);
+}
+.approval.closed {
+  border-color: var(--line);
+}
+.notice {
+  display: flex;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+  color: var(--ink-muted);
+}
+.notice.error,
+.notice.warn {
+  color: var(--ink);
+}
+.notice pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Composer */
+.composer {
+  border-top: 2px solid var(--ink);
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.editor {
+  width: 100%;
+  resize: vertical;
+  color: var(--ink);
+  background: var(--ground);
+  border: 1px solid var(--line-strong);
+  padding: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }

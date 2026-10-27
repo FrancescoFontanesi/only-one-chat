@@ -21,7 +21,14 @@
   "activationEvents": [],
   "capabilities": {
     "untrustedWorkspaces": {
-      "supported": true
+      "supported": "limited",
+      "description": "In an untrusted folder the panel opens, but no agent runs.",
+      "restrictedConfigurations": [
+        "onlyOneChat.codexPath",
+        "onlyOneChat.claudePath",
+        "onlyOneChat.allowedCommands",
+        "onlyOneChat.verifyCommand"
+      ]
     },
     "virtualWorkspaces": false
   },
@@ -32,7 +39,112 @@
         "title": "Open Panel",
         "category": "Only One Chat"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Only One Chat",
+      "properties": {
+        "onlyOneChat.leader.cli": {
+          "type": "string",
+          "enum": [
+            "codex",
+            "claude"
+          ],
+          "default": "codex",
+          "description": "CLI of the leader, the model you chat with."
+        },
+        "onlyOneChat.leader.model": {
+          "type": "string",
+          "default": "gpt-6.1-sol",
+          "description": "Model of the leader, as its CLI names it."
+        },
+        "onlyOneChat.leader.effort": {
+          "type": "string",
+          "default": "low",
+          "description": "Reasoning effort of the leader."
+        },
+        "onlyOneChat.implementer.cli": {
+          "type": "string",
+          "enum": [
+            "codex",
+            "claude"
+          ],
+          "default": "claude",
+          "description": "CLI of the implementer, which takes the larger changes."
+        },
+        "onlyOneChat.implementer.model": {
+          "type": "string",
+          "default": "sonnet",
+          "description": "Model of the implementer, as its CLI names it."
+        },
+        "onlyOneChat.implementer.effort": {
+          "type": "string",
+          "default": "low",
+          "description": "Reasoning effort of the implementer."
+        },
+        "onlyOneChat.subagents.codexModel": {
+          "type": "string",
+          "default": "gpt-6-luna",
+          "description": "Model of Codex's own sub-agents."
+        },
+        "onlyOneChat.subagents.claudeModel": {
+          "type": "string",
+          "default": "claude-haiku-5-5",
+          "description": "Model of Claude's own sub-agents."
+        },
+        "onlyOneChat.subagents.effort": {
+          "type": "string",
+          "default": "low",
+          "description": "Reasoning effort of the sub-agents."
+        },
+        "onlyOneChat.approvalMode": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "auto"
+          ],
+          "default": "manual",
+          "description": "manual: you approve each message between agents; auto: they pass, logged."
+        },
+        "onlyOneChat.codexPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Path of the Codex executable; empty: searched on PATH."
+        },
+        "onlyOneChat.claudePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Path of the Claude Code executable; empty: searched on PATH."
+        },
+        "onlyOneChat.allowedCommands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "python",
+            "py"
+          ],
+          "scope": "machine",
+          "description": "Programs Claude may run without asking, for example to run the tests."
+        },
+        "onlyOneChat.verifyCommand": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "machine",
+          "description": "Run again by the extension after each delegation, e.g. [\"python\", \"-m\", \"unittest\"]."
+        },
+        "onlyOneChat.fake": {
+          "type": "boolean",
+          "default": false,
+          "description": "Development host only: fake CLIs, no model turns, no quota."
+        }
+      }
+    }
   },
   "scripts": {
     "build": "node esbuild.mjs",
@@ -42,6 +154,7 @@
     "package": "node esbuild.mjs --production && vsce package --no-dependencies"
   },
   "dependencies": {
+    "@only-one-chat/adapters": "workspace:*",
     "@only-one-chat/runtime": "workspace:*",
     "preact": "10.29.8"
   },

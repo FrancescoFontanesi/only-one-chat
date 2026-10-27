@@ -64,6 +64,14 @@ ChatGPT web ◄──(l'utente incolla e invia)── appunti ◄──(risposta
   apre i diff, legge il Workspace Trust, persiste lo stato dove previsto e presenta le
   richieste di approvazione.
 - Non contiene logica di orchestrazione.
+- **La chat con il leader** (ADR 0010) sta in `apps/vscode/src/session/`. `chat.ts` collega il
+  modo `leader` del runtime agli adapter, e trasforma gli eventi del runtime in aggiornamenti
+  del thread; `facts.ts` ricava i fatti verificati. Nessuno dei due file importa `vscode`, e
+  sono testati contro i CLI fake.
+- **Il pannello** (`webview/panel.ts`) legge le impostazioni `onlyOneChat.*` e controlla
+  cartella, Workspace Trust e consenso.
+- **La Webview** (`apps/vscode/webview/`) mostra intestazione, thread, approvazioni e campo di
+  input.
 
 ### Orchestration runtime
 

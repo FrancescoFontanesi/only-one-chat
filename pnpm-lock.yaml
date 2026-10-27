@@ -35,6 +35,9 @@ importers:
 
   apps/vscode:
     dependencies:
+      '@only-one-chat/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
       '@only-one-chat/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime

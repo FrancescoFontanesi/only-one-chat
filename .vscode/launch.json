@@ -10,6 +10,18 @@
       "preLaunchTask": "build"
     },
     {
+      "name": "Run Extension (playground)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "${env:LOCALAPPDATA}/only-one-chat/playground/calc",
+        "--extensionDevelopmentPath=${workspaceFolder}/apps/vscode",
+        "--disable-extensions"
+      ],
+      "outFiles": ["${workspaceFolder}/apps/vscode/dist/**/*.js"],
+      "preLaunchTask": "build and playground"
+    },
+    {
       "name": "Run Extension Tests",
       "type": "extensionHost",
       "request": "launch",

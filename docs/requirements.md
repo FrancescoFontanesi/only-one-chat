@@ -10,6 +10,20 @@ i worker eseguono, e l'attività di ciascun agente compare come elemento subordi
 quel thread. L'esperienza d'uso si ispira all'estensione Codex. Il codice è
 indipendente e originale (vedi [decisions/0002](decisions/0002-reuse-policy.md)).
 
+### Flusso principale (ADR 0010)
+
+Il flusso principale è quello dell'[ADR 0010](decisions/0010-leader-chat-adaptive-delegation.md):
+
+- **Una sola chat con il leader** (R1, R2). Il leader è scelto in configurazione e ragiona con
+  l'utente.
+- **Per ogni richiesta il leader sceglie la via più economica:**
+  - risponde lui, facendo esplorare il codice ai sotto-agenti;
+  - fa da sé le modifiche piccole;
+  - delega le grandi all'implementatore su un'altra subscription.
+- **Il brief è il contratto unico** (R4). ChatGPT web è una fonte opzionale di brief, che
+  passano dagli appunti ([ADR 0009](decisions/0009-chatgpt-web-and-three-turn-layer.md)):
+  così il ragionamento lungo resta fuori dalle quote.
+
 ### Cosa il prodotto non è
 
 - Non è un router generalista che sceglie un modello per ogni prompt.

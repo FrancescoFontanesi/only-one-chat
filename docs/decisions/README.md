@@ -3,13 +3,15 @@
 Un file per ogni decisione: `NNNN-titolo.md`, con Stato, Contesto, Decisione e Conseguenze.
 Una decisione superata non si cancella: si marca "Sostituita da NNNN".
 
-| ADR                                               | Titolo                                                               | Stato              |
-| ------------------------------------------------- | -------------------------------------------------------------------- | ------------------ |
-| [0001](0001-toolchain.md)                         | Toolchain e versioni del bootstrap                                   | Accettata          |
-| [0002](0002-reuse-policy.md)                      | Riuso dei sorgenti di riferimento: solo reimplementazione            | Accettata          |
-| [0003](0003-monorepo-layout.md)                   | Layout del monorepo e package interni                                | Accettata          |
-| [0004](0004-codex-app-server-client.md)           | Client Codex App Server: stdio, niente shell, terminazione garantita | Accettata          |
-| [0005](0005-subscription-only-auth.md)            | Solo abbonamenti: gate di autenticazione e profilo Codex dedicato    | Sostituita da 0006 |
-| [0006](0006-personal-cli-profiles.md)             | Profili personali dei CLI                                            | Accettata          |
-| [0007](0007-subagents-visible-not-intercepted.md) | D13: sotto-agenti visibili e vincolati, non intercettati             | Accettata          |
-| [0008](0008-sandbox-mode.md)                      | Modalità sandbox: scrittura confinata per le prove locali            | Accettata          |
+| ADR                                               | Titolo                                                               | Stato                       |
+| ------------------------------------------------- | -------------------------------------------------------------------- | --------------------------- |
+| [0001](0001-toolchain.md)                         | Toolchain e versioni del bootstrap                                   | Accettata                   |
+| [0002](0002-reuse-policy.md)                      | Riuso dei sorgenti di riferimento: solo reimplementazione            | Accettata                   |
+| [0003](0003-monorepo-layout.md)                   | Layout del monorepo e package interni                                | Accettata                   |
+| [0004](0004-codex-app-server-client.md)           | Client Codex App Server: stdio, niente shell, terminazione garantita | Accettata                   |
+| [0005](0005-subscription-only-auth.md)            | Solo abbonamenti: gate di autenticazione e profilo Codex dedicato    | Sostituita da 0006          |
+| [0006](0006-personal-cli-profiles.md)             | Profili personali dei CLI                                            | Accettata                   |
+| [0007](0007-subagents-visible-not-intercepted.md) | D13: sotto-agenti visibili e vincolati, non intercettati             | Accettata                   |
+| [0008](0008-sandbox-mode.md)                      | Modalità sandbox: scrittura confinata per le prove locali            | Accettata                   |
+| [0009](0009-chatgpt-web-and-three-turn-layer.md)  | Flusso principale: ChatGPT web e strato agentico a tre turni         | Sostituita in parte da 0010 |
+| [0010](0010-leader-chat-adaptive-delegation.md)   | La chat del leader come nucleo: delega adattiva fra subscription     | Accettata                   |

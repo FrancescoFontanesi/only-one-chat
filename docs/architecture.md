@@ -33,6 +33,20 @@ fisseremo soltanto dopo aver verificato i protocolli reali dei CLI (vedi
    strumenti esterni opzionali (MCP, Graft, Basic Memory, ...)
 ```
 
+### Ponte con ChatGPT web
+
+Il flusso principale ([ADR 0009](decisions/0009-chatgpt-web-and-three-turn-layer.md)) usa una
+chat di ChatGPT web, fuori da VS Code. Il ponte passa solo dagli appunti.
+
+```text
+ChatGPT web ──(l'utente clicca Copia)──► appunti ──(focus, marcatore + id)────► extension host
+ChatGPT web ◄──(l'utente incolla e invia)── appunti ◄──(risposta T3)──────────── extension host
+```
+
+- **Dove sta il ponte.** Nell'extension host, perché usa `vscode.env.clipboard`. Il runtime
+  riceve il brief già validato come dato.
+- **Cosa non fa.** Nessun componente legge o scrive la pagina di ChatGPT.
+
 ### Webview
 
 - Codice in `apps/vscode/webview/`, bundle in `dist/webview/main.js`.

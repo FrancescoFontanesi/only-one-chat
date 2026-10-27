@@ -115,6 +115,25 @@ tocca e come le mitiga.
 - Stato: **attiva per Codex** (milestone 1.2). Ambiente in allow-list, profilo dedicato e
   gate fail-closed su `account/read`. Vedi [codex-auth.md](codex-auth.md).
 
+### T10. Lettura degli appunti (ADR 0009)
+
+- **Minacce.**
+  - Gli appunti contengono di tutto: password, token, dati personali. Un ascolto
+    permanente li esporrebbe al runtime o ai log.
+  - Un testo copiato da una pagina o da un documento potrebbe contenere il marcatore del
+    brief e far partire un ciclo che l'utente non voleva.
+- **Mitigazioni sull'ascolto.**
+  - Gli appunti si leggono una sola volta, quando la finestra riceve il focus, e solo se il
+    pannello è aperto, il workspace è fidato e l'ascolto è acceso.
+  - Gli appunti non vengono mai interrogati a intervalli.
+  - È sempre visibile nel pannello.
+  - Il testo senza marcatore viene scartato subito: mai registrato né persistito.
+- **Mitigazioni sul brief catturato.**
+  - Un brief con l'id di un altro progetto non parte senza conferma.
+  - Il brief ha un limite di dimensione e viene validato come ogni messaggio non fidato.
+  - Per il gateway resta una richiesta da verificare, non un'istruzione di sistema.
+  - Nella modalità automatica la cattura viene notificata.
+
 ## Sicurezza della supply chain (bootstrap)
 
 - Versioni esatte e lockfile (`pnpm install --frozen-lockfile`).

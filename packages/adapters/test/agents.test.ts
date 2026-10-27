@@ -13,6 +13,7 @@ import {
   createClaudeAgentFactory,
   createCodexAgentFactory,
   declineResponse,
+  writableThreadConfig,
   type AgentApprovalRequest,
   type AgentSubagentEvent,
   type AgentSession,
@@ -96,6 +97,39 @@ describe('Codex agent session', () => {
       model: 'gpt-6-luna',
       effort: 'low',
     });
+  });
+
+  it('starts a writable thread only when asked, with the unelevated sandbox on Windows', async () => {
+    const received = join(dir, 'received.jsonl');
+    const session = await codex('chatgpt', {
+      launcherArgs: [FAKE_CODEX, '--account=chatgpt', `--log=${received}`],
+      writable: true,
+    });
+    await session.runTurn('ciao', handlers().value).done;
+    const start = readFileSync(received, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+      .find((m) => m.method === 'thread/start')?.params;
+    expect(start).toMatchObject({ sandbox: 'workspace-write', approvalPolicy: 'on-request' });
+    expect(start?.['config']).toEqual(
+      process.platform === 'win32' ? { 'windows.sandbox': 'unelevated' } : undefined,
+    );
+    expect(writableThreadConfig('win32')).toEqual({ 'windows.sandbox': 'unelevated' });
+
+    const isolated = join(dir, 'isolated.jsonl');
+    const quiet = await codex('chatgpt', {
+      launcherArgs: [FAKE_CODEX, '--account=chatgpt', `--log=${isolated}`],
+      withoutUserHooks: true,
+    });
+    await quiet.runTurn('ciao', handlers().value).done;
+    const quietStart = readFileSync(isolated, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+      .find((m) => m.method === 'thread/start')?.params;
+    expect(quietStart?.['config']).toEqual({ 'features.hooks': false });
+    expect(writableThreadConfig('linux')).toEqual({});
   });
 
   it('streams deltas and resolves with the completed agent message', async () => {
@@ -428,6 +462,7 @@ describe('Claude agent session', () => {
       CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1',
       CLAUDE_CODE_EFFORT_LEVEL: 'low',
       CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: '1',
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1', // sub-agents report within the turn
     });
     expect(tools(second?.argv)).toBe('Read,Grep,Glob');
     expect(second?.argv).not.toContain('--forward-subagent-text');
@@ -440,6 +475,23 @@ describe('Claude agent session', () => {
     expect(Object.keys(result.usage?.byModel ?? {})).toEqual(['claude-haiku-5-5']);
     expect(result.usage?.costUsd).toBeCloseTo(0.004476445);
     expect(result.quota?.windows[0]).toMatchObject({ name: '5h', usedPercent: 69 });
+  });
+
+  it('reports a resumed turn as the difference from the session so far, not the running total', async () => {
+    // A resumed `claude -p` reports the session's cumulative modelUsage and cost
+    // (2.1.308, observed on real sessions). The fake reports the same total each
+    // turn, so the second turn adds nothing.
+    const session = await claudeWithPolicy(['--scenario=turn-subagent']);
+    await session.runTurn('primo', handlers().value).done;
+    const second = await session.runTurn('secondo', handlers().value).done;
+    expect(second.usage?.byModel['claude-haiku-5-5']).toEqual({
+      input: 0,
+      cachedInput: 0,
+      cacheWrite: 0,
+      output: 0,
+      reasoning: 0,
+    });
+    expect(second.usage?.costUsd).toBeCloseTo(0);
   });
 
   it('labels the answer with the model and session reported by init', async () => {

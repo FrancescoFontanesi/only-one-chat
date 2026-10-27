@@ -45,6 +45,25 @@ export interface CodexAgentConfig extends Omit<
   readonly effort?: string;
   /** Time allowed for an interrupted turn to report completion, default 10 s. */
   readonly interruptTimeoutMs?: number;
+  /**
+   * Sandbox mode only (ADR 0008): the thread may write in `cwd`
+   * (`workspace-write`, no network). On Windows the thread also asks for
+   * Codex's unelevated sandbox, which needs no setup; without it Codex runs
+   * commands with no OS sandbox at all. Default: read-only.
+   */
+  readonly writable?: boolean;
+  /**
+   * Isolated runs (benchmarks): the thread runs without the hooks of the
+   * user's profile (`features.hooks = false`, per thread only). Graft's hooks
+   * write their cache into the working directory and add context to each turn.
+   * Default: the user's hooks run.
+   */
+  readonly withoutUserHooks?: boolean;
+}
+
+/** Per-thread overrides for a writable thread; see CodexAgentConfig.writable. */
+export function writableThreadConfig(platform: NodeJS.Platform): Record<string, unknown> {
+  return platform === 'win32' ? { 'windows.sandbox': 'unelevated' } : {};
 }
 
 /**
@@ -69,9 +88,11 @@ export function subagentThreadConfig(policy: AgentSubagentOptions): Record<strin
     'agents.max_concurrent_threads_per_session': policy.maxConcurrent,
     [`${v2}.max_concurrent_threads_per_session`]: policy.maxConcurrent,
     [`${v2}.expose_spawn_agent_model_overrides`]: false,
-    [`${v2}.multi_agent_mode_hint_text`]:
-      'Crea sotto-agenti solo se l’utente lo chiede esplicitamente; altrimenti lavora da solo. ' +
-      'Nessuna istruzione precedente che chiede di delegare in modo proattivo vale più.',
+    [`${v2}.multi_agent_mode_hint_text`]: policy.proactive
+      ? 'Crea sotto-agenti per leggere ed esplorare il codice, così il tuo contesto resta piccolo; ' +
+        'non per modificarlo. Ti restituiscono una sintesi, non i file interi.'
+      : 'Crea sotto-agenti solo se l’utente lo chiede esplicitamente; altrimenti lavora da solo. ' +
+        'Nessuna istruzione precedente che chiede di delegare in modo proattivo vale più.',
     [`${v2}.root_agent_usage_hint_text`]: [
       'Sei `/root`, l’agente principale di questa sessione Codex.',
       'Con `spawn_agent` crei un sotto-agente interno, con `followup_task` gli dai un nuovo compito',
@@ -185,7 +206,15 @@ const FINISHED: Readonly<Record<string, 'completed' | 'interrupted' | 'failed'>>
 
 export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory {
   return async ({ instructions, subagents }): Promise<AgentSession> => {
-    const { cwd, model, effort, interruptTimeoutMs = 10_000, ...sessionOptions } = config;
+    const {
+      cwd,
+      model,
+      effort,
+      interruptTimeoutMs = 10_000,
+      writable = false,
+      withoutUserHooks = false,
+      ...sessionOptions
+    } = config;
     let current: RunningTurn | undefined;
     let threadId = '';
     let identity: AgentIdentity = { provider: 'Codex', model: '', effort: null, sessionId: '' };
@@ -331,16 +360,21 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
     }
 
     try {
+      const threadConfig = {
+        ...(subagents ? subagentThreadConfig(subagents) : {}),
+        ...(writable ? writableThreadConfig(process.platform) : {}),
+        ...(withoutUserHooks ? { 'features.hooks': false } : {}),
+      };
       const started = await session.request('thread/start', {
         cwd,
-        sandbox: 'read-only',
+        sandbox: writable ? 'workspace-write' : 'read-only',
         approvalPolicy: 'on-request',
         // Approvals go to us, never to Codex's own automatic reviewer.
         approvalsReviewer: 'user',
         developerInstructions: instructions,
         ephemeral: true,
         ...(model ? { model } : {}),
-        ...(subagents ? { config: subagentThreadConfig(subagents) } : {}),
+        ...(Object.keys(threadConfig).length > 0 ? { config: threadConfig } : {}),
       });
       const response = isRecord(started) ? started : {};
       const thread = isRecord(response['thread']) ? response['thread'] : {};

@@ -140,6 +140,9 @@ l'id di sessione. Il runtime ne scrive l'etichetta.
   visibile: `init` non lo riporta e i file di configurazione non vengono aperti.
   `apiKeySource` e `auth status` restano i controlli effettivi.
 - `total_cost_usd` del `result` è una stima nominale anche con la subscription.
+- Con `--resume`, `total_cost_usd` e `modelUsage` sono cumulativi sulla sessione (dalla
+  2.1.277: documentazione, "Accumulate costs across multiple calls"; osservato sulla
+  2.1.308). L'adapter riporta ogni turno come differenza dal precedente.
 - Il controllo `init` arriva dopo l'invio del primo prompt: protegge i turni successivi
   e interrompe quello in corso, mentre il controllo preventivo è `auth status`.
 - Le sessioni vengono salvate nel profilo dell'utente (nessun

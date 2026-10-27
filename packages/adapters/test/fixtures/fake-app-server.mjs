@@ -12,7 +12,10 @@
 //        --account=<kind> (see ACCOUNTS) | --log=<file> (received messages, JSONL)
 //        --provider=<id> --provider-name=<name> (config/read; `readError` fails it)
 // Prompts with [delegation] get a valid delegation block to @claude, and a
-// verdict prompt ("Rispondi solo SUCCESS o FAIL") gets SUCCESS.
+// verdict prompt ("Rispondi solo SUCCESS o FAIL") gets SUCCESS. Prompts with
+// [spec] get a gateway's specification to @claude, [light] a light leader's
+// notes to @claude, and a prompt that carries
+// the result template ("<<<OOC-RESULT v1 ...") gets a result block.
 // Unknown arguments (such as Codex `-c key=value` overrides) are ignored.
 
 import { spawn } from 'node:child_process';
@@ -293,6 +296,31 @@ const handlers = {
       ].join('\n');
     } else if (text.includes('Rispondi solo SUCCESS o FAIL')) {
       answer = 'SUCCESS';
+    } else if (text.includes('[spec]')) {
+      // A gateway's specification (gateway mode).
+      answer = [
+        'Autonomous decisions:',
+        'None',
+        '<<<DELEGA @claude',
+        ...['Purpose', 'Context', 'Steps', 'Tests', 'Verification', 'Constraints', 'Stop if'].map(
+          (section) => `## ${section}\nNone`,
+        ),
+        'DELEGA>>>',
+      ].join('\n');
+    } else if (text.includes('[light]')) {
+      // A light leader's notes (gateway mode, light): the runtime forwards the brief.
+      answer = [
+        'Autonomous decisions:',
+        'None',
+        '<<<DELEGA @claude',
+        '## Notes',
+        'None',
+        'DELEGA>>>',
+      ].join('\n');
+    } else {
+      // A gateway's result: the template's start line, then a short block.
+      const start = text.split('\n').find((line) => line.startsWith('<<<OOC-RESULT v1'));
+      if (start) answer = [start, '## Outcome', 'done', 'OOC-RESULT>>>'].join('\n');
     }
     if (text.includes('[approval]')) {
       const serverId = nextServerRequestId++;

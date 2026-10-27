@@ -47,10 +47,15 @@ verificato su un `thread/start` reale, senza turni.
 
 **Claude** (ambiente del solo processo figlio; nomi dalla documentazione e presenti nel
 binario 2.1.308): `CLAUDE_CODE_SUBAGENT_MODEL` con `_FORCE=1`, `CLAUDE_CODE_EFFORT_LEVEL`,
-`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`, strumento `Agent` aggiunto a `Read,Grep,Glob` e
-`--forward-subagent-text`. I sotto-agenti ereditano gli strumenti del padre e restano in
-sola lettura. `CLAUDE_CODE_EFFORT_LEVEL` vale anche per la sessione principale, quindi
-l'effort della policy deve coincidere con il suo.
+`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`, `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`,
+strumento `Agent` aggiunto a `Read,Grep,Glob` e `--forward-subagent-text`.
+
+- I sotto-agenti ereditano gli strumenti del padre e restano in sola lettura.
+- Senza `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` un sotto-agente parte in background e riporta
+  in un turno successivo, che un turno `-p` ripreso non riceve in modo affidabile. Con la
+  variabile, Claude lo aspetta dentro il turno. Il caso è documentato in
+  [calc-session](../sandbox/results/calc-session-2026-10-27-confronto.md). `CLAUDE_CODE_EFFORT_LEVEL` vale anche per la sessione principale, quindi
+  l'effort della policy deve coincidere con il suo.
 
 ## Monitoraggio
 

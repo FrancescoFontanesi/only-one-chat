@@ -53,6 +53,7 @@ export type {
 } from './agent.js';
 export {
   subagentThreadConfig,
+  writableThreadConfig,
   CODEX_SUBAGENT_FORBIDDEN_NAMES,
   createCodexAgentFactory,
   declineResponse,

@@ -16,6 +16,7 @@ import {
   type ClaudeTurn,
   type ClaudeTurnOptions,
 } from './turn.js';
+import { NO_TOKENS, subtractTokens, type TokenUsage } from '../usage.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -30,6 +31,10 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
   return ({ instructions, subagents }): Promise<AgentSession> => {
     let sessionId: string | undefined;
     let running: ClaudeTurn | undefined;
+    // A resumed turn reports the whole session's usage and cost so far, not
+    // its own: each turn is the difference from the previous one.
+    let sessionUsage: Readonly<Record<string, TokenUsage>> = {};
+    let sessionCost = 0;
 
     function runTurn(prompt: string, handlers: AgentTurnHandlers): AgentTurn {
       const startedAt = Date.now();
@@ -106,13 +111,18 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
           );
         }
         if (result.isError) throw new Error(`Claude turn failed: ${result.text}`);
+        const byModel = Object.fromEntries(
+          Object.entries(result.usage).map(([model, total]) => [
+            model,
+            subtractTokens(total, sessionUsage[model] ?? NO_TOKENS),
+          ]),
+        );
+        const costUsd = result.costUsd === null ? null : result.costUsd - sessionCost;
+        sessionUsage = result.usage;
+        if (result.costUsd !== null) sessionCost = result.costUsd;
         return {
           text: result.text,
-          usage: {
-            byModel: result.usage,
-            costUsd: result.costUsd,
-            durationMs: Date.now() - startedAt,
-          },
+          usage: { byModel, costUsd, durationMs: Date.now() - startedAt },
           quota: result.quota,
           identity: {
             provider: 'Claude Code',

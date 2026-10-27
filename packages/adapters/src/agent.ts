@@ -76,6 +76,8 @@ export interface AgentSubagentOptions {
   readonly effort: string;
   readonly maxConcurrent: number;
   readonly forbiddenNames: readonly string[];
+  /** Sub-agents may be created unasked, to read and explore (see the runtime's SubagentPolicy). */
+  readonly proactive?: boolean;
   readonly rules: string;
 }
 

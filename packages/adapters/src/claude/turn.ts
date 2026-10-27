@@ -194,7 +194,13 @@ export interface ClaudeTurnOptions {
  *   choice and over agent definitions;
  * - CLAUDE_CODE_EFFORT_LEVEL: wins over a sub-agent's own effort; it also
  *   sets the main session's effort, so the policy effort should match it;
- * - CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1: sub-agents cannot nest.
+ * - CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1: sub-agents cannot nest;
+ * - CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1: Claude waits for every sub-agent
+ *   within the turn (docs: env-vars, sub-agents). By default a sub-agent starts
+ *   in the background and reports in a later turn, which a `-p` turn resumed
+ *   by the runtime does not reliably get: a leader ended a turn on "I'm
+ *   examining the code" and the next resumed turn came back empty
+ *   (sandbox/results/calc-session-2026-10-27-confronto.md).
  * Sub-agents inherit the parent's tools, so they stay read-only.
  */
 export function subagentEnv(subagents: {
@@ -206,6 +212,7 @@ export function subagentEnv(subagents: {
     CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1',
     CLAUDE_CODE_EFFORT_LEVEL: subagents.effort,
     CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: '1',
+    CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
   };
 }
 

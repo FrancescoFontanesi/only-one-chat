@@ -15,3 +15,4 @@ Una decisione superata non si cancella: si marca "Sostituita da NNNN".
 | [0008](0008-sandbox-mode.md)                      | Modalità sandbox: scrittura confinata per le prove locali            | Accettata                   |
 | [0009](0009-chatgpt-web-and-three-turn-layer.md)  | Flusso principale: ChatGPT web e strato agentico a tre turni         | Sostituita in parte da 0010 |
 | [0010](0010-leader-chat-adaptive-delegation.md)   | La chat del leader come nucleo: delega adattiva fra subscription     | Accettata                   |
+| [0011](0011-panels-roles-approvals-continuity.md) | Pannelli, ruoli, approvazioni e continuità dell'implementatore       | Proposta                    |

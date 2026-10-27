@@ -10,6 +10,7 @@ import {
   WORKER_ANSWER_START,
   checkSubagent,
   frameWorkerAnswer,
+  leaderInstructions,
   parseVerdict,
   openEventLog,
   runLoop,
@@ -685,6 +686,224 @@ describe('pipeline mode with auto-approval (benchmark)', () => {
     expect(parseVerdict('  FAIL\n')).toBe('FAIL');
     expect(parseVerdict('Non è un SUCCESS ma nemmeno un FAIL')).toBeNull();
     expect(parseVerdict('ok')).toBeNull();
+  });
+});
+
+describe('gateway mode (ADR 0009)', () => {
+  const brief = [
+    '<<<OOC-BRIEF v1 project=calc track=user-functions',
+    '## Goal',
+    'Funzioni utente.',
+    '## Acceptance criteria',
+    '1. f(3) stampa 10.',
+    'OOC-BRIEF>>>',
+  ].join('\n');
+  const never = () => {
+    throw new Error('not called in autoApprove runs');
+  };
+  const spec = [
+    'Autonomous decisions:',
+    '- Le funzioni stanno in un dizionario: è la soluzione più semplice.',
+    '<<<DELEGA @claude',
+    '## Purpose',
+    'Funzioni utente.',
+    '## Context',
+    'evaluator.py',
+    '## Steps',
+    '1. Aggiungi def.',
+    '## Tests',
+    'C1: f(3) → 10',
+    '## Verification',
+    'python -m unittest',
+    '## Constraints',
+    'None',
+    '## Stop if',
+    'Serve una dipendenza.',
+    'DELEGA>>>',
+  ].join('\n');
+  const result = [
+    '<<<OOC-RESULT v1 project=calc track=user-functions',
+    '## Outcome',
+    'done',
+    'OOC-RESULT>>>',
+  ].join('\n');
+
+  async function gatewayLoop(codex: FakeAgent, claude: FakeAgent, request = brief) {
+    return loop(codex, claude, [], [], {
+      request,
+      mode: 'gateway',
+      autoApprove: true,
+      intercept: never,
+      onMalformedDelegation: never,
+      facts: () => Promise.resolve('python -m unittest: exit 0'),
+    });
+  }
+
+  it('specifies, implements and writes the result from the report and the runtime facts', async () => {
+    const codex = fakeAgent('Codex', [{ answer: spec }, { answer: `Fatto.\n${result}` }]);
+    const claude = fakeAgent('Claude', [{ answer: '## Files\nevaluator.py' }]);
+    const { running } = await gatewayLoop(codex, claude);
+    const outcome = await running.done;
+
+    expect(outcome).toMatchObject({ status: 'result', result, resultFound: true });
+    expect(outcome).toMatchObject({ facts: 'python -m unittest: exit 0' });
+    expect(codex.instructions[0]).toMatch(/Sei il gateway/);
+    expect(codex.instructions[0]).toContain('## Stop if');
+    expect(claude.instructions[0]).toMatch(/Sei l'implementatore/);
+    // The gateway gets the brief body, not the marker lines.
+    expect(codex.prompts[0]).toContain('project=calc, track=user-functions');
+    expect(codex.prompts[0]).toContain('## Goal');
+    expect(codex.prompts[0]).not.toContain('<<<OOC-BRIEF');
+    // The implementer gets the specification only, without the gateway's own decisions.
+    expect(claude.prompts).toEqual([expect.stringMatching(/^## Purpose/) as string]);
+    expect(claude.prompts[0]).not.toContain('Autonomous decisions');
+    // The result prompt frames the report and carries the facts and the result template.
+    expect(codex.prompts[1]).toContain(WORKER_ANSWER_START);
+    expect(codex.prompts[1]).toContain('python -m unittest: exit 0');
+    expect(codex.prompts[1]).toContain('<<<OOC-RESULT v1 project=calc track=user-functions');
+  });
+
+  it('returns the questions when the gateway writes no specification', async () => {
+    const codex = fakeAgent('Codex', [{ answer: 'Manca la sintassi: def o let?' }]);
+    const claude = fakeAgent('Claude', []);
+    const { running } = await gatewayLoop(codex, claude);
+    expect(await running.done).toEqual({
+      status: 'clarification',
+      questions: 'Manca la sintassi: def o let?',
+    });
+    expect(claude.prompts).toEqual([]);
+  });
+
+  it('refuses a brief whose marker lines are wrong, before any turn', async () => {
+    const codex = fakeAgent('Codex', []);
+    const { running } = await gatewayLoop(codex, fakeAgent('Claude', []), 'Fai le funzioni.');
+    expect(await running.done).toMatchObject({ status: 'failed', error: /Invalid brief/ });
+    expect(codex.prompts).toEqual([]);
+  });
+
+  it('with a light leader, forwards the brief itself with the notes and judges on the facts', async () => {
+    const forward = [
+      'Autonomous decisions:',
+      'None',
+      '<<<DELEGA @claude',
+      '## Notes',
+      '- Usa il dizionario delle variabili esistente.',
+      'DELEGA>>>',
+    ].join('\n');
+    const codex = fakeAgent('Codex', [{ answer: forward }, { answer: result }]);
+    const claude = fakeAgent('Claude', [{ answer: '## Files\nevaluator.py' }]);
+    const { running } = await loop(codex, claude, [], [], {
+      request: brief,
+      mode: 'gateway',
+      light: true,
+      autoApprove: true,
+      intercept: never,
+      onMalformedDelegation: never,
+    });
+    expect(await running.done).toMatchObject({ status: 'result', resultFound: true });
+    expect(codex.instructions[0]).toMatch(/contesto è la risorsa da proteggere/);
+    expect(claude.instructions[0]).toMatch(/Esplora il repository solo quanto serve/);
+    // The runtime forwards the brief body, then the leader's notes: the leader never copies it.
+    expect(claude.prompts).toEqual([
+      [
+        'Brief (project=calc, track=user-functions):',
+        '',
+        '## Goal\nFunzioni utente.\n## Acceptance criteria\n1. f(3) stampa 10.',
+        '',
+        'Note del leader:',
+        '- Usa il dizionario delle variabili esistente.',
+      ].join('\n'),
+    ]);
+    expect(codex.prompts[1]).toMatch(/senza rileggere il codice/);
+  });
+
+  it('keeps the whole answer when the gateway writes no result block', async () => {
+    const codex = fakeAgent('Codex', [{ answer: spec }, { answer: 'Tutto bene.' }]);
+    const { running } = await gatewayLoop(codex, fakeAgent('Claude', [{ answer: 'rapporto' }]));
+    expect(await running.done).toMatchObject({
+      status: 'result',
+      result: 'Tutto bene.',
+      resultFound: false,
+    });
+  });
+});
+
+describe('leader mode: one chat across requests', () => {
+  const never = () => {
+    throw new Error('not called in autoApprove runs');
+  };
+
+  async function ask(leader: FakeAgent, worker: FakeAgent, request: string) {
+    const session = await leader.factory({ instructions: leaderInstructions('claude') });
+    const { running } = await loop(leader, worker, [], [], {
+      request,
+      mode: 'leader',
+      leaderSession: session,
+      autoApprove: true,
+      intercept: never,
+      onMalformedDelegation: never,
+      facts: () => Promise.resolve('python -m unittest: exit 0'),
+    });
+    return running.done;
+  }
+
+  it('answers a question by itself, and leaves its session open for the next request', async () => {
+    const codex = fakeAgent('Codex', [{ answer: 'La ricorsione si rileva in call().' }]);
+    expect(await ask(codex, fakeAgent('Claude', []), 'Dove si rileva la ricorsione?')).toEqual({
+      status: 'completed',
+      conclusion: 'La ricorsione si rileva in call().',
+      exchanges: 0,
+    });
+    expect(codex.prompts).toEqual(['Dove si rileva la ricorsione?']);
+    expect(codex.closed).toBe(false);
+    expect(codex.instructions[0]).toMatch(/il tuo contesto|Il tuo contesto dura/);
+    expect(codex.instructions[0]).toMatch(
+      /per leggere ed esplorare il codice, non per modificarlo/,
+    );
+  });
+
+  it('delegates a free request with its own brief, headings included, and answers on the facts', async () => {
+    const own = [
+      'Assumo che ans valga l’ultimo risultato stampato.',
+      '<<<DELEGA @claude',
+      '## Goal',
+      'ans riusa l’ultimo risultato.',
+      '## Acceptance criteria',
+      '1. 1 + 2, poi ans * 10 stampa 30.',
+      'DELEGA>>>',
+    ].join('\n');
+    const codex = fakeAgent('Codex', [{ answer: own }, { answer: 'Fatto: ans funziona.' }]);
+    const claude = fakeAgent('Claude', [{ answer: '## Files\nmain.py' }]);
+    expect(await ask(codex, claude, 'Vorrei riusare l’ultimo risultato.')).toEqual({
+      status: 'completed',
+      conclusion: 'Fatto: ans funziona.',
+      exchanges: 1,
+    });
+    expect(claude.prompts[0]).toMatch(/^## Goal/);
+    expect(claude.instructions[0]).toMatch(/Esplora il repository solo quanto serve/);
+    expect(codex.prompts[1]).toContain('python -m unittest: exit 0');
+    expect(codex.prompts[1]).toMatch(/rispondi all’utente in breve/);
+  });
+
+  it('forwards a structured brief with its notes only and writes the result block', async () => {
+    const brief = [
+      '<<<OOC-BRIEF v1 project=calc track=ans',
+      '## Goal',
+      'ans.',
+      'OOC-BRIEF>>>',
+    ].join('\n');
+    const result = '<<<OOC-RESULT v1 project=calc track=ans\n## Outcome\ndone\nOOC-RESULT>>>';
+    const codex = fakeAgent('Codex', [
+      { answer: '<<<DELEGA @claude\n- Nessuna nota di rilievo.\nDELEGA>>>' },
+      { answer: result },
+    ]);
+    const claude = fakeAgent('Claude', [{ answer: 'rapporto' }]);
+    expect(await ask(codex, claude, brief)).toMatchObject({ status: 'result', result });
+    expect(claude.prompts[0]).toBe(
+      'Brief (project=calc, track=ans):\n\n## Goal\nans.\n\nNote del leader:\n- Nessuna nota di rilievo.',
+    );
+    expect(codex.prompts[0]).toMatch(/^Brief dalla chat di ragionamento/);
+    expect(codex.prompts[1]).toMatch(/senza rileggere il codice/);
   });
 });
 

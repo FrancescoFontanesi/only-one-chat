@@ -46,9 +46,32 @@ export {
   type DelegationParse,
   type DelegationSection,
 } from './delegation.js';
+export {
+  BRIEF_END,
+  RESULT_END,
+  extractResult,
+  parseBrief,
+  resultTemplate,
+  type Brief,
+  type BriefParse,
+} from './brief.js';
 export { openEventLog, type EventLog, type LoggedEvent } from './event-log.js';
 export {
   APPROVAL_DENIED_MESSAGE,
+  BRIEF_AGENT_INSTRUCTIONS,
+  IMPLEMENTER_INSTRUCTIONS,
+  LIGHT_IMPLEMENTER_INSTRUCTIONS,
+  LIGHT_SECTIONS,
+  SPEC_SECTIONS,
+  agentSessionOptions,
+  leaderInstructions,
+  leaderResultPrompt,
+  lightDelegation,
+  lightGatewayInstructions,
+  briefAgentPrompt,
+  briefPrompt,
+  gatewayInstructions,
+  resultPrompt,
   MAX_EXCHANGES,
   ORCHESTRATOR_INSTRUCTIONS,
   WORKER_INSTRUCTIONS,

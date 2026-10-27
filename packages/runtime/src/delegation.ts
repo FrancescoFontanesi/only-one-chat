@@ -1,7 +1,8 @@
 // The fixed format of a delegation message from the orchestrator to a worker,
 // and its parser. The block is delimited by marker lines so it can be found in
-// a longer answer (plan first, then the block), and must contain the six
-// sections in order, none empty. The start line may name the recipient:
+// a longer answer (plan first, then the block), and must contain the expected
+// sections in order, none empty: the delegation's six by default, the
+// gateway's specification sections in gateway mode. The start line may name the recipient:
 // `<<<DELEGA @claude`.
 
 export const DELEGATION_START = '<<<DELEGA';
@@ -21,7 +22,8 @@ export type DelegationSection = (typeof DELEGATION_SECTIONS)[number];
 export interface Delegation {
   /** Recipient named on the start line, lowercase; null when none is given. */
   readonly recipient: string | null;
-  readonly sections: Readonly<Record<DelegationSection, string>>;
+  /** Content by section name: the sections the block was checked against. */
+  readonly sections: Readonly<Record<string, string>>;
   /** The block as it will be forwarded, markers excluded. */
   readonly text: string;
 }
@@ -33,11 +35,17 @@ export type DelegationParse =
 
 const START_LINE = /^<<<DELEGA(?:\s+@([\w.-]+))?$/;
 
-/** Template shown to the orchestrator in its role instructions. */
-export function delegationTemplate(recipient?: string): string {
+/**
+ * Template shown to the orchestrator in its role instructions. `sections`
+ * defaults to the delegation's; the gateway's specification has its own.
+ */
+export function delegationTemplate(
+  recipient?: string,
+  sections: readonly string[] = DELEGATION_SECTIONS,
+): string {
   return [
     recipient ? `${DELEGATION_START} @${recipient}` : DELEGATION_START,
-    ...DELEGATION_SECTIONS.map((section) => `## ${section}\n<testo>`),
+    ...sections.map((section) => `## ${section}\n<testo>`),
     DELEGATION_END,
   ].join('\n');
 }
@@ -50,7 +58,14 @@ function lines(text: string): string[] {
  * Finds and checks the delegation block in an agent answer. `absent` means no
  * start marker at all (the answer is a conclusion, not a delegation).
  */
-export function parseDelegation(answer: string): DelegationParse {
+/**
+ * `expected` null: the body is free (a leader's own brief, with its own `## `
+ * headings), and only the marker lines are checked.
+ */
+export function parseDelegation(
+  answer: string,
+  expected: readonly string[] | null = DELEGATION_SECTIONS,
+): DelegationParse {
   const all = lines(answer);
   const starts = all.flatMap((line, at) => (START_LINE.test(line.trim()) ? [at] : []));
   const ends = all.flatMap((line, at) => (line.trim() === DELEGATION_END ? [at] : []));
@@ -68,14 +83,19 @@ export function parseDelegation(answer: string): DelegationParse {
     return { status: 'malformed', errors: ['the end marker comes before the start marker'] };
 
   const body = all.slice(start + 1, end);
+  if (expected === null) {
+    const text = body.join('\n').trim();
+    if (text === '') return { status: 'malformed', errors: ['the block is empty'] };
+    return { status: 'valid', delegation: { recipient, sections: {}, text } };
+  }
   const headings = body.flatMap((line, at) => {
     const match = /^##\s+(.+?)\s*$/.exec(line);
     return match?.[1] === undefined ? [] : [{ name: match[1], at }];
   });
   const names = headings.map((heading) => heading.name);
-  if (names.join('|') !== DELEGATION_SECTIONS.join('|')) {
+  if (names.join('|') !== expected.join('|')) {
     errors.push(
-      `sections must be exactly, in order: ${DELEGATION_SECTIONS.join(', ')}; found: ${
+      `sections must be exactly, in order: ${expected.join(', ')}; found: ${
         names.length > 0 ? names.join(', ') : 'none'
       }`,
     );
@@ -83,24 +103,17 @@ export function parseDelegation(answer: string): DelegationParse {
   if (body.slice(0, headings[0]?.at ?? body.length).some((line) => line.trim() !== '')) {
     errors.push('text before the first section');
   }
-  const sections: Partial<Record<DelegationSection, string>> = {};
+  const sections: Record<string, string> = {};
   headings.forEach((heading, index) => {
     const content = body
       .slice(heading.at + 1, headings[index + 1]?.at ?? body.length)
       .join('\n')
       .trim();
-    if ((DELEGATION_SECTIONS as readonly string[]).includes(heading.name)) {
+    if (expected.includes(heading.name)) {
       if (content === '') errors.push(`section "${heading.name}" is empty`);
-      sections[heading.name as DelegationSection] = content;
+      sections[heading.name] = content;
     }
   });
   if (errors.length > 0) return { status: 'malformed', errors };
-  return {
-    status: 'valid',
-    delegation: {
-      recipient,
-      sections: sections as Record<DelegationSection, string>,
-      text: body.join('\n').trim(),
-    },
-  };
+  return { status: 'valid', delegation: { recipient, sections, text: body.join('\n').trim() } };
 }

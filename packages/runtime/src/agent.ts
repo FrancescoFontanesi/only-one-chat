@@ -134,6 +134,12 @@ export interface SubagentPolicy {
   readonly maxConcurrent: number;
   /** Names of external agents and their models; matched as whole words, any case. */
   readonly forbiddenNames: readonly string[];
+  /**
+   * The agent may create sub-agents unasked, to read and explore the code so
+   * its own context stays small (the leader, ADR 0009). Default: only when the
+   * user asks explicitly.
+   */
+  readonly proactive?: boolean;
 }
 
 export interface AgentSessionOptions {

@@ -1,0 +1,45 @@
+{
+  "description": "Hidden acceptance tests for the calc-session scenario, run after the whole session: the calc-functions suite (calc included) plus ans and the recursion message naming the function. Written from script.json before any run. Never copied into the agents' working directory.",
+  "include": ["../calc-functions/hidden-tests.json"],
+  "command": ["python", "main.py"],
+  "cases": [
+    {
+      "name": "ans-reuses-last-result",
+      "args": [],
+      "stdin": "1 + 2\nans * 10\n",
+      "stdout": "3\n30",
+      "exitCode": 0
+    },
+    {
+      "name": "ans-follows-each-result",
+      "args": [],
+      "stdin": "2 * 3\nans + ans\nans\n",
+      "stdout": "6\n12\n12",
+      "exitCode": 0
+    },
+    {
+      "name": "ans-before-any-result",
+      "args": [],
+      "stdin": "ans\n",
+      "stdout": "",
+      "stderrIncludes": "ans",
+      "exitCode": 1
+    },
+    {
+      "name": "recursion-names-direct",
+      "args": [],
+      "stdin": "def g(x) = g(x)\ng(1)\n",
+      "stdout": "",
+      "stderrIncludes": "Error: recursion is not supported in 'g'",
+      "exitCode": 1
+    },
+    {
+      "name": "recursion-names-indirect",
+      "args": [],
+      "stdin": "def a(x) = b(x)\ndef b(x) = a(x)\na(1)\n",
+      "stdout": "",
+      "stderrIncludes": "Error: recursion is not supported in 'a'",
+      "exitCode": 1
+    }
+  ]
+}

@@ -1,0 +1,152 @@
+{
+  "description": "Hidden acceptance tests for the calc-functions scenario: the calc suite, unchanged behaviour, plus user-defined functions. Written from brief.txt before any run. Never copied into the agents' working directory.",
+  "include": ["../calc/hidden-tests.json"],
+  "command": ["python", "main.py"],
+  "cases": [
+    {
+      "name": "fn-define-and-call",
+      "args": [],
+      "stdin": "def f(x) = x^2 + 1\nf(3)\n2 * f(1)\n",
+      "stdout": "10\n4",
+      "exitCode": 0
+    },
+    {
+      "name": "fn-definition-prints-nothing",
+      "args": ["-e", "def f(x) = x"],
+      "stdout": "",
+      "exitCode": 0
+    },
+    {
+      "name": "fn-many-parameters",
+      "args": [],
+      "stdin": "def h(a, b, c) = a * b + c\nh(2, 3, 4)\n",
+      "stdout": "10",
+      "exitCode": 0
+    },
+    {
+      "name": "fn-no-parameters",
+      "args": [],
+      "stdin": "def k() = 42\nk() + 1\n",
+      "stdout": "43",
+      "exitCode": 0
+    },
+    {
+      "name": "fn-calls-builtin",
+      "args": [],
+      "stdin": "def hyp(a, b) = sqrt(a^2 + b^2)\nhyp(3, 4)\n",
+      "stdout": "5",
+      "exitCode": 0
+    },
+    {
+      "name": "fn-float-result",
+      "args": [],
+      "stdin": "def half(x) = x / 2\nhalf(3)\n",
+      "stdout": "1.5",
+      "exitCode": 0
+    },
+    {
+      "name": "fn-calls-later-defined",
+      "args": [],
+      "stdin": "def a(x) = b(x) * 2\ndef b(x) = x + 1\na(3)\n",
+      "stdout": "8",
+      "exitCode": 0
+    },
+    {
+      "name": "fn-parameter-shadows-global",
+      "args": [],
+      "stdin": "x = 100\ndef f(x) = x + 1\nf(1)\nx\n",
+      "stdout": "2\n100",
+      "exitCode": 0
+    },
+    {
+      "name": "fn-globals-read-at-call",
+      "args": [],
+      "stdin": "def g(a) = a + y\ny = 10\ng(1)\ny = 20\ng(1)\n",
+      "stdout": "11\n21",
+      "exitCode": 0
+    },
+    {
+      "name": "fn-redefinition-replaces",
+      "args": [],
+      "stdin": "def f(x) = x\ndef f(x) = x * 10\nf(2)\n",
+      "stdout": "20",
+      "exitCode": 0
+    },
+    {
+      "name": "fn-separate-namespaces",
+      "args": [],
+      "stdin": "x = 3\ndef x(a) = a * 2\nx(x)\n",
+      "stdout": "6",
+      "exitCode": 0
+    },
+    {
+      "name": "fn-wrong-arity",
+      "args": [],
+      "stdin": "def f(x) = x\nf(1, 2)\n",
+      "stdout": "",
+      "stderrIncludes": "Error: wrong number of arguments for f",
+      "exitCode": 1
+    },
+    {
+      "name": "fn-unknown-variable-at-call",
+      "args": [],
+      "stdin": "def f(x) = x + z\nf(1)\n",
+      "stdout": "",
+      "stderrIncludes": "Error: unknown variable 'z'",
+      "exitCode": 1
+    },
+    {
+      "name": "fn-builtin-redefinition",
+      "args": [],
+      "stdin": "def sqrt(x) = x\nsqrt(16)\n",
+      "stdout": "4",
+      "stderrIncludes": "Error: cannot redefine built-in function 'sqrt'",
+      "exitCode": 1
+    },
+    {
+      "name": "fn-duplicate-parameter",
+      "args": ["-e", "def f(x, x) = x"],
+      "stdout": "",
+      "stderrIncludes": "Error: duplicate parameter 'x'",
+      "exitCode": 1
+    },
+    {
+      "name": "fn-direct-recursion",
+      "args": [],
+      "stdin": "def g(x) = g(x)\ng(1)\n",
+      "stdout": "",
+      "stderrIncludes": "Error: recursion is not supported",
+      "exitCode": 1
+    },
+    {
+      "name": "fn-indirect-recursion",
+      "args": [],
+      "stdin": "def a(x) = b(x)\ndef b(x) = a(x)\na(1)\n",
+      "stdout": "",
+      "stderrIncludes": "Error: recursion is not supported",
+      "exitCode": 1
+    },
+    {
+      "name": "fn-usable-after-recursion-error",
+      "args": [],
+      "stdin": "def g(x) = g(x)\ndef f(x) = x\ng(1)\nf(5)\ng(2)\n",
+      "stdout": "5",
+      "stderrIncludes": "Error: recursion is not supported",
+      "exitCode": 1
+    },
+    {
+      "name": "fn-definition-syntax-error",
+      "args": ["-e", "def f(x = x"],
+      "stdout": "",
+      "stderrIncludes": "Error at column",
+      "exitCode": 1
+    },
+    {
+      "name": "fn-def-is-reserved",
+      "args": ["-e", "def = 3"],
+      "stdout": "",
+      "stderrIncludes": "Error",
+      "exitCode": 1
+    }
+  ]
+}

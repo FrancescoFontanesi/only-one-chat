@@ -46,6 +46,28 @@ stdin. I test nascosti sono 30.
 | A       | Codex Sol 6.1 medium pianifica e giudica; Claude Sonnet 5.5 low esegue; sotto-agenti Luna e Haiku, low | 3     |
 | B       | Claude Opus 5.5 medium, un solo turno, senza sotto-agenti                                              | 1     |
 
+## Scenario `calc-functions`
+
+Funzioni definite dall'utente sulla calcolatrice di `calc`, che il runner copia nella cartella
+del run (`seed`). La richiesta è un brief nel formato della chat di ragionamento
+([brief.txt](scenarios/calc-functions/brief.txt), [ADR 0009](../docs/decisions/0009-chatgpt-web-and-three-turn-layer.md)).
+I test nascosti sono i 30 di `calc`, che controllano che il comportamento esistente non
+cambi, più 20 nuovi, scritti a partire dal brief prima di qualsiasi run.
+
+| Sistema | Configurazione                                                  | Turni |
+| ------- | --------------------------------------------------------------- | ----- |
+| GC      | Sol 6.1 gateway, Sonnet 5.5 implementa, Sol scrive il risultato | 3     |
+| GA      | Opus 5.5 gateway, Luna 6 implementa, Opus scrive il risultato   | 3     |
+| SS      | Sol 6.1 da solo: interpreta, implementa e scrive il risultato   | 1     |
+| SO      | Opus 5.5 da solo: interpreta, implementa e scrive il risultato  | 1     |
+
+- **Effort:** tutti a low.
+- **Permessi:** gateway in sola lettura; implementatori e modelli da soli scrivono nella cartella
+  del run (ADR 0008).
+- **Fatti per il gateway:** dopo l'implementatore il runner riesegue `python -m unittest` ed
+  elenca i file cambiati.
+- **La stessa verifica gira alla fine per ogni sistema**, solo per la valutazione.
+
 ## Cosa si misura e limiti
 
 - **Funzionamento**: test nascosti superati e, per A, se il verdetto di Codex li rispecchia.

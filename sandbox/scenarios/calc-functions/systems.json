@@ -1,0 +1,64 @@
+{
+  "description": "Systems compared on the calc-functions scenario: the same brief, through a gateway or given to one model. Models and effort are configuration; everything at low effort.",
+  "seed": "../calc/reference",
+  "verify": ["python", "-m", "unittest"],
+  "systems": {
+    "GC": {
+      "kind": "gateway",
+      "title": "Sol 6.1 gateway, Sonnet 5.5 implements, Sol writes the result",
+      "gateway": { "cli": "codex", "model": "gpt-6.1-sol", "effort": "low" },
+      "implementer": { "cli": "claude", "model": "sonnet", "effort": "low" },
+      "subagents": {
+        "codex": { "model": "gpt-6-luna", "effort": "low" },
+        "claude": { "model": "claude-haiku-5-5", "effort": "low" },
+        "maxConcurrent": 2
+      }
+    },
+    "GA": {
+      "kind": "gateway",
+      "title": "Opus 5.5 gateway, Luna 6 implements, Opus writes the result",
+      "gateway": { "cli": "claude", "model": "opus", "effort": "low" },
+      "implementer": { "cli": "codex", "model": "gpt-6-luna", "effort": "low" },
+      "subagents": {
+        "codex": { "model": "gpt-6-luna", "effort": "low" },
+        "claude": { "model": "claude-haiku-5-5", "effort": "low" },
+        "maxConcurrent": 2
+      }
+    },
+    "GCL": {
+      "kind": "gateway",
+      "light": true,
+      "title": "Light leader Sol 6.1 forwards the brief, Sonnet 5.5 implements, Sol judges on the facts",
+      "gateway": { "cli": "codex", "model": "gpt-6.1-sol", "effort": "low" },
+      "implementer": { "cli": "claude", "model": "sonnet", "effort": "low" },
+      "subagents": {
+        "codex": { "model": "gpt-6-luna", "effort": "low" },
+        "claude": { "model": "claude-haiku-5-5", "effort": "low" },
+        "maxConcurrent": 2
+      }
+    },
+    "GOL": {
+      "kind": "gateway",
+      "light": true,
+      "title": "Light leader Opus 5.5 forwards the brief, Sol 6.1 implements, Opus judges on the facts",
+      "gateway": { "cli": "claude", "model": "opus", "effort": "low" },
+      "implementer": { "cli": "codex", "model": "gpt-6.1-sol", "effort": "low" },
+      "subagents": {
+        "codex": { "model": "gpt-6-luna", "effort": "low" },
+        "claude": { "model": "claude-haiku-5-5", "effort": "low" },
+        "maxConcurrent": 2
+      }
+    },
+    "SS": {
+      "kind": "single",
+      "title": "Sol 6.1 alone: interprets, implements and writes the result",
+      "agent": { "cli": "codex", "model": "gpt-6.1-sol", "effort": "low" }
+    },
+    "SO": {
+      "kind": "single",
+      "title": "Opus 5.5 alone: interprets, implements and writes the result",
+      "agent": { "cli": "claude", "model": "opus", "effort": "low" }
+    }
+  },
+  "sandboxCommands": ["python", "py"]
+}

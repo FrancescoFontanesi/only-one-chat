@@ -1,0 +1,48 @@
+<<<OOC-BRIEF v1 project=calc track=user-functions
+
+## Goal
+L'utente può definire funzioni proprie e usarle nelle espressioni come le funzioni predefinite.
+
+## Context
+- La calcolatrice ha già variabili, assegnazioni e le funzioni predefinite sqrt, abs, min e max.
+- Serve a riusare una formula senza riscriverla a ogni riga, soprattutto negli script da stdin.
+
+## Decisions
+- Sintassi: def nome(p1, p2, ...) = espressione, solo come istruzione intera, come l'assegnazione: è coerente con nome = espressione.
+- Sono ammesse funzioni senza parametri: def k() = 42.
+- def diventa una parola riservata: def = 3 è un errore. Accettiamo la piccola incompatibilità per avere una sintassi senza ambiguità.
+- Una definizione non stampa nulla, in entrambe le modalità; con -e esce con codice 0 e nessun output.
+- Il corpo non si valuta alla definizione ma a ogni chiamata: così può usare variabili e funzioni definite dopo.
+- Nel corpo i parametri oscurano le variabili globali; le altre variabili globali si leggono al momento della chiamata.
+- Ridefinire una funzione utente la sostituisce.
+- Le funzioni predefinite non si possono ridefinire: Error: cannot redefine built-in function '<nome>'.
+- Variabili e funzioni hanno spazi di nomi separati: x = 3 e def x(a) = a * 2 convivono.
+- La ricorsione, diretta o indiretta, non è supportata: il linguaggio non ha condizioni, quindi non terminerebbe mai. Dà Error: recursion is not supported.
+- Parametri duplicati: Error: duplicate parameter '<nome>'.
+- Gli altri errori restano quelli di oggi: numero sbagliato di argomenti, funzione o variabile sconosciuta, sintassi con la colonna, anche dentro una definizione.
+
+## Plan
+1. Definizione e chiamata, con gli errori sugli argomenti. Prima di tutto, perché il resto si appoggia sulla chiamata.
+2. Ricorsione, nomi riservati e casi limite.
+
+## Latitude
+- Come rappresentare e conservare le funzioni.
+- Come rilevare la ricorsione.
+
+## Constraints
+- Solo libreria standard.
+- Il comportamento esistente non cambia, salvo def riservato: i test esistenti devono continuare a passare.
+- Nessuna nuova opzione da riga di comando.
+
+## Acceptance criteria
+1. Dopo def f(x) = x^2 + 1, f(3) stampa 10, anche dentro un'espressione più grande: 2 * f(1) stampa 4.
+2. Funzionano le funzioni a più parametri, quelle senza parametri e le chiamate fra funzioni, anche a una funzione definita dopo.
+3. I parametri oscurano le variabili globali, che restano invariate; le altre variabili globali si leggono al momento della chiamata.
+4. Una chiamata con il numero sbagliato di argomenti, una funzione predefinita ridefinita, un parametro duplicato e una ricorsione danno gli errori stabiliti, con exit code 1.
+5. Dopo un errore, anche una ricorsione, lo script da stdin continua e le funzioni restano utilizzabili.
+6. I test esistenti passano ancora.
+
+## Report
+- Come è stata rilevata la ricorsione.
+
+OOC-BRIEF>>>

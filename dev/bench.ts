@@ -1,12 +1,15 @@
 // Benchmark of a sandbox scenario (sandbox/README.md): one run of one system,
 // measured. Dev tooling only.
 //
-//   pnpm bench --system A|B [--scenario calc] [--fake]
+//   pnpm bench --system <name> [--scenario calc] [--fake]
 //
-// Each run gets a fresh, empty working directory outside the repository
-// (%LOCALAPPDATA%\only-one-chat\sandbox\<run>); the agents work there in
-// sandbox mode (ADR 0008), messages between agents approved automatically and
-// logged. Afterwards the scenario's hidden tests run on what they wrote.
+// Each run gets a fresh working directory outside the repository
+// (%LOCALAPPDATA%\only-one-chat\sandbox\<run>), empty or holding a copy of the
+// scenario's seed project; the agents work there in sandbox mode (ADR 0008),
+// messages between agents approved automatically and logged. A scenario with a
+// brief.txt runs it as a brief from the reasoning chat (ADR 0009): through a
+// gateway and an implementer, or given to a single agent. Afterwards the
+// scenario's hidden tests run on what they wrote.
 // Results: sandbox/results/<run>.json and .md (with --fake, in the run
 // directory instead). --fake drives the fake CLIs: no model turns, no quota.
 //
@@ -18,7 +21,17 @@
 // --no-claude-quota skips them.
 // Executables: CODEX_EXECUTABLE, CLAUDE_EXECUTABLE (else searched on PATH).
 
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { join, relative } from 'node:path';
 import {
@@ -34,10 +47,18 @@ import {
   type QuotaSnapshot,
 } from '../packages/adapters/src/index.js';
 import {
+  BRIEF_AGENT_INSTRUCTIONS,
   agentLabel,
+  agentSessionOptions,
+  briefAgentPrompt,
+  extractResult,
+  leaderInstructions,
   openEventLog,
+  parseBrief,
   requestPrompt,
   runLoop,
+  type Brief,
+  type SubagentPolicy,
   type AgentFactory,
   type LoopOutcome,
   type ThreadEvent,
@@ -60,10 +81,17 @@ interface AgentConfig {
 }
 
 interface SystemConfig {
-  readonly kind: 'pipeline' | 'single';
+  /** `leader` and `session` run a scenario's script.json, one message after another. */
+  readonly kind: 'pipeline' | 'gateway' | 'single' | 'leader' | 'session';
   readonly title: string;
+  /** `leader`: the leader, read-only, kept for the whole session; `implementer` writes. */
+  readonly leader?: AgentConfig;
   readonly planner?: AgentConfig;
   readonly executor?: AgentConfig;
+  readonly gateway?: AgentConfig;
+  readonly implementer?: AgentConfig;
+  /** Gateway systems: a light leader (forwards the brief, judges on the facts). */
+  readonly light?: boolean;
   readonly agent?: AgentConfig;
   readonly subagents?: {
     readonly codex: { readonly model: string; readonly effort: string };
@@ -73,12 +101,23 @@ interface SystemConfig {
 }
 
 interface TurnRecord {
+  /** The script message the turn belongs to, in a session. */
+  readonly message?: string;
   readonly role: string;
   readonly agent: string;
   readonly label: string;
   readonly usage: TurnUsage | null;
   readonly quota: QuotaSnapshot | null;
 }
+
+/** A session system: one model, one long chat, every message of the script in it. */
+const SESSION_AGENT_INSTRUCTIONS = [
+  "Sei un agente di Only One Chat: conversi con l'utente in questa chat e lavori sul progetto nella",
+  'cartella corrente; crea e modifica file solo lì. Per una richiesta di modifica: implementa, scrivi',
+  'test automatici, eseguili insieme a quelli esistenti e correggi finché passano; poi rispondi in',
+  'breve con cosa hai fatto, le decisioni prese e i problemi. Per una domanda rispondi senza',
+  'modificare nulla. Se manca una decisione che cambia il risultato, chiedila.',
+].join('\n');
 
 /** System B's only turn: implement, test and report like the pipeline's executor. */
 const SINGLE_AGENT_INSTRUCTIONS = [
@@ -119,6 +158,89 @@ function listFiles(dir: string): { path: string; lines: number }[] {
   return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
+/** Content hash of every file in the run directory, by relative path. */
+function snapshot(dir: string): Map<string, string> {
+  return new Map(
+    listFiles(dir).map((file) => [
+      file.path,
+      createHash('sha256')
+        .update(readFileSync(join(dir, file.path)))
+        .digest('hex'),
+    ]),
+  );
+}
+
+function changes(before: Map<string, string>, after: Map<string, string>): string[] {
+  const out: string[] = [];
+  for (const [path, hash] of after) {
+    if (!before.has(path)) out.push(`added ${path}`);
+    else if (before.get(path) !== hash) out.push(`modified ${path}`);
+  }
+  for (const path of before.keys()) if (!after.has(path)) out.push(`deleted ${path}`);
+  return out.sort((a, b) => a.slice(a.indexOf(' ')).localeCompare(b.slice(b.indexOf(' '))));
+}
+
+/** Runs a verification command; its output (stdout and stderr) is kept whole. */
+function runCommand(
+  command: readonly string[],
+  cwd: string,
+  timeoutMs = 120_000,
+): Promise<{ code: number | null; output: string; timedOut: boolean }> {
+  const [program = 'python', ...args] = command;
+  return new Promise((resolve) => {
+    const child = spawn(program, args, {
+      cwd,
+      env: { ...env, PYTHONDONTWRITEBYTECODE: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    let output = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, timeoutMs);
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => (output += chunk));
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => (output += chunk));
+    child.on('error', (error) => (output += String(error)));
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, output, timedOut });
+    });
+  });
+}
+
+/**
+ * What the runtime verified, as text for the gateway: the files changed since
+ * the seed and the scenario's verification command, run again here.
+ */
+async function verifiedFacts(
+  runDir: string,
+  baseline: Map<string, string>,
+  verify: readonly string[] | undefined,
+): Promise<string> {
+  const changed = changes(baseline, snapshot(runDir));
+  const lines = [
+    'File cambiati rispetto al progetto di partenza:',
+    ...(changed.length > 0 ? changed.map((change) => `- ${change}`) : ['- nessuno']),
+  ];
+  if (verify) {
+    const run = await runCommand(verify, runDir);
+    const output = run.output.replace(/\r\n/g, '\n').trim();
+    const tail = output.split('\n').slice(-15).join('\n');
+    // unittest names each failure on a "FAIL: test (module.Class.test)" line.
+    const failed = output.split('\n').filter((line) => /^(FAIL|ERROR): /.test(line));
+    lines.push(
+      '',
+      `Verifica eseguita dal runtime: ${verify.join(' ')} → exit ${String(run.code)}${run.timedOut ? ' (timeout)' : ''}`,
+      ...(failed.length > 0 ? ['Test falliti:', ...failed.map((line) => `- ${line}`)] : []),
+      'Ultime righe dell’output:',
+      tail || '(nessun output)',
+    );
+  }
+  return lines.join('\n');
+}
+
 function sumTokens(turns: readonly TurnRecord[]): Record<string, TokenUsage> {
   const totals: Record<string, TokenUsage> = {};
   for (const turn of turns) {
@@ -155,16 +277,54 @@ async function main(): Promise<void> {
   const systems = JSON.parse(readFileSync(join(scenarioDir, 'systems.json'), 'utf8')) as {
     systems: Record<string, SystemConfig>;
     sandboxCommands: string[];
+    /** Project copied into the run directory first, relative to the scenario. */
+    seed?: string;
+    /** Verification command the runtime runs again after the implementer. */
+    verify?: string[];
   };
   const system = systemName ? systems.systems[systemName] : undefined;
-  if (!systemName || !system)
-    throw new Error('usage: bench --system A|B [--scenario calc] [--fake]');
-  const prompt = readFileSync(join(scenarioDir, 'prompt.md'), 'utf8').trim();
+  if (!systemName || !system) {
+    const names = Object.keys(systems.systems).join('|');
+    throw new Error(`usage: bench --system ${names} [--scenario ${scenario}] [--fake]`);
+  }
+  const scriptPath = join(scenarioDir, 'script.json');
+  /** A session scenario: the user's messages, in order (a file is read as it is: a brief). */
+  const script = existsSync(scriptPath)
+    ? (
+        JSON.parse(readFileSync(scriptPath, 'utf8')) as {
+          messages: { name: string; text?: string; file?: string }[];
+        }
+      ).messages.map((message) => ({
+        name: message.name,
+        text: message.file
+          ? readFileSync(join(scenarioDir, message.file), 'utf8')
+          : (message.text ?? ''),
+      }))
+    : undefined;
+  const briefPath = join(scenarioDir, 'brief.txt');
+  const prompt = script
+    ? script.map((message) => message.text).join('\n\n---\n\n')
+    : existsSync(briefPath)
+      ? readFileSync(briefPath, 'utf8')
+      : readFileSync(join(scenarioDir, 'prompt.md'), 'utf8').trim();
+  let brief: Brief | undefined;
+  if (!script && existsSync(briefPath)) {
+    const parsed = parseBrief(prompt);
+    if (parsed.status === 'invalid') throw new Error(`brief.txt: ${parsed.error}`);
+    brief = parsed.brief;
+  }
   const suite = loadSuite(join(scenarioDir, 'hidden-tests.json'));
 
   const runId = `${scenario}-${systemName}-${new Date().toISOString().replace(/[:.]/g, '-')}${fake ? '-fake' : ''}`;
   const runDir = join(stateDir(), 'sandbox', runId);
   mkdirSync(runDir, { recursive: true });
+  if (systems.seed) {
+    cpSync(join(scenarioDir, systems.seed), runDir, {
+      recursive: true,
+      filter: (source) => !source.split(/[\\/]/).includes('__pycache__'),
+    });
+  }
+  const baseline = snapshot(runDir);
   const log = await openEventLog(join(stateDir(), 'logs', `bench-${runId}.jsonl`), runDir);
 
   const fakes = join(REPO, 'packages', 'adapters', 'test', 'fixtures');
@@ -177,7 +337,8 @@ async function main(): Promise<void> {
   const codexLauncher = fake ? [join(fakes, 'fake-app-server.mjs'), '--account=chatgpt'] : [];
   const claudeLauncher = fake ? [join(fakes, 'fake-claude.mjs'), '--echo'] : [];
 
-  const codex = (config: AgentConfig): AgentFactory =>
+  // Who writes depends on the role: planners and gateways read only (ADR 0008).
+  const codex = (config: AgentConfig, writable: boolean): AgentFactory =>
     createCodexAgentFactory({
       executable: codexExecutable,
       launcherArgs: codexLauncher,
@@ -185,18 +346,37 @@ async function main(): Promise<void> {
       model: config.model,
       effort: config.effort,
       requestTimeoutMs: 120_000,
+      writable,
+      // Experiments run isolated from the user's hooks (graft writes into the run directory).
+      withoutUserHooks: true,
     });
-  const claude = (config: AgentConfig): AgentFactory =>
+  const claude = (config: AgentConfig, writable: boolean): AgentFactory =>
     createClaudeAgentFactory({
       executable: claudeExecutable,
       launcherArgs: claudeLauncher,
       cwd: runDir,
       model: config.model,
       effort: config.effort,
-      sandbox: { commands: systems.sandboxCommands },
+      ...(writable ? { sandbox: { commands: systems.sandboxCommands } } : {}),
     });
-  const factory = (config: AgentConfig) =>
-    config.cli === 'codex' ? codex(config) : claude(config);
+  const factory = (config: AgentConfig, writable: boolean) =>
+    config.cli === 'codex' ? codex(config, writable) : claude(config, writable);
+  /** The sub-agent policy of an agent, from its CLI. */
+  const policy = (config: AgentConfig): SubagentPolicy | undefined => {
+    const sub = system.subagents;
+    if (!sub) return undefined;
+    return config.cli === 'codex'
+      ? {
+          ...sub.codex,
+          maxConcurrent: sub.maxConcurrent,
+          forbiddenNames: CODEX_SUBAGENT_FORBIDDEN_NAMES,
+        }
+      : {
+          ...sub.claude,
+          maxConcurrent: sub.maxConcurrent,
+          forbiddenNames: CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
+        };
+  };
 
   /** Claude quota now: a minimal Haiku turn; see the module comment. */
   async function claudeProbe(): Promise<{
@@ -241,6 +421,8 @@ async function main(): Promise<void> {
   process.stdout.write(`Run ${runId}\n${system.title}\nCartella: ${runDir}\n\n`);
   const turns: TurnRecord[] = [];
   const events: string[] = [];
+  /** The script message being handled, for the turn records. */
+  let currentMessage: string | undefined;
   /** The single system bypasses the runtime: its events are logged here, as the loop does. */
   const record = (event: ThreadEvent): void => {
     onEvent(event);
@@ -252,6 +434,7 @@ async function main(): Promise<void> {
     if (event.type === 'text' || event.type === 'subagent_text') return;
     if (event.type === 'message') {
       turns.push({
+        ...(currentMessage === undefined ? {} : { message: currentMessage }),
         role: event.role,
         agent: event.agent,
         label: event.label,
@@ -278,31 +461,143 @@ async function main(): Promise<void> {
   const codexBefore = await codexQuotaNow();
   const claudeBefore = await claudeProbe();
   const startedAt = Date.now();
-  const request = fake && system.kind === 'pipeline' ? `${prompt}\n\n[delegation]` : prompt;
+  // The fakes answer by marker: [delegation], [spec] or [light] asks for a delegation.
+  const request = !fake
+    ? prompt
+    : system.kind === 'pipeline'
+      ? `${prompt}\n\n[delegation]`
+      : system.kind === 'gateway'
+        ? prompt.replace('\n', system.light === true ? '\n[light]\n' : '\n[spec]\n')
+        : prompt;
+  const [lead, doer] =
+    system.kind === 'pipeline'
+      ? [system.planner, system.executor]
+      : system.kind === 'gateway'
+        ? [system.gateway, system.implementer]
+        : [undefined, undefined];
+  /** A session's answers, one per script message. */
+  type Answer = { readonly name: string; readonly status: string; readonly text: string };
   let outcome:
-    LoopOutcome | { status: 'single'; report: string } | { status: 'failed'; error: string };
-  if (system.kind === 'pipeline' && system.planner && system.executor && system.subagents) {
-    const sub = system.subagents;
+    | LoopOutcome
+    | { status: 'single'; report: string }
+    | { status: 'session'; answers: Answer[] }
+    | { status: 'failed'; error: string };
+  if (script && system.kind === 'leader' && system.leader && system.implementer) {
+    // One leader session for the whole script; a new implementer for each delegation.
+    const leaderConfig = system.leader;
+    const leaderPolicy = policy(leaderConfig);
+    const proactive = leaderPolicy ? { ...leaderPolicy, proactive: true } : undefined;
+    const implementerPolicy = policy(system.implementer);
+    // The leader writes too: it makes the small, focused changes itself.
+    const leaderSession = await factory(
+      leaderConfig,
+      true,
+    )(agentSessionOptions(leaderInstructions(system.implementer.cli), proactive));
+    const answers: Answer[] = [];
+    try {
+      for (const message of script) {
+        currentMessage = message.name;
+        process.stdout.write(`\n— ${message.name}\n`);
+        // The fake leader answers [light] with a delegation block.
+        const isBrief = parseBrief(message.text).status === 'valid';
+        const text = fake && isBrief ? message.text.replace('\n', '\n[light]\n') : message.text;
+        const loop = runLoop({
+          request: text,
+          log,
+          onEvent,
+          mode: 'leader',
+          leaderSession,
+          autoApprove: true,
+          orchestrator: () => Promise.reject(new Error('the leader session is given')),
+          worker: factory(system.implementer, true),
+          subagents: {
+            ...(proactive ? { orchestrator: proactive } : {}),
+            ...(implementerPolicy ? { worker: implementerPolicy } : {}),
+          },
+          facts: () => verifiedFacts(runDir, baseline, systems.verify),
+          intercept: () => Promise.reject(new Error('not used with autoApprove')),
+          onMalformedDelegation: () => Promise.reject(new Error('not used with autoApprove')),
+        });
+        const done = await loop.done;
+        answers.push({
+          name: message.name,
+          status: done.status,
+          text:
+            done.status === 'completed'
+              ? done.conclusion
+              : done.status === 'result'
+                ? done.result
+                : done.status === 'failed'
+                  ? done.error
+                  : done.status,
+        });
+        if (done.status === 'failed') break;
+      }
+    } finally {
+      await leaderSession.close();
+    }
+    outcome = { status: 'session', answers };
+  } else if (script && system.kind === 'session' && system.agent) {
+    await log.append('loop_started', { request, mode: 'session', autoApprove: true });
+    const session = await factory(system.agent, true)({ instructions: SESSION_AGENT_INSTRUCTIONS });
+    const answers: Answer[] = [];
+    try {
+      for (const message of script) {
+        currentMessage = message.name;
+        process.stdout.write(`\n— ${message.name}\n`);
+        const parsed = parseBrief(message.text);
+        record({ type: 'turn_started', role: 'worker', agent: session.name });
+        try {
+          const result = await session.runTurn(
+            parsed.status === 'valid' ? briefAgentPrompt(parsed.brief) : message.text,
+            {
+              onText: () => undefined,
+              onApprovalRequest: () => Promise.resolve('decline'),
+              onActivity: (activity) => {
+                record({ type: 'activity', role: 'worker', ...activity });
+              },
+            },
+          ).done;
+          record({
+            type: 'message',
+            role: 'worker',
+            agent: session.name,
+            text: result.text,
+            label: agentLabel(result.identity),
+            identity: result.identity,
+            ...(result.usage ? { usage: result.usage } : {}),
+            ...(result.quota !== undefined ? { quota: result.quota } : {}),
+          });
+          answers.push({ name: message.name, status: 'completed', text: result.text });
+        } catch (error) {
+          const text = error instanceof Error ? error.message : String(error);
+          answers.push({ name: message.name, status: 'failed', text });
+          break;
+        }
+      }
+    } finally {
+      await session.close();
+    }
+    outcome = { status: 'session', answers };
+  } else if ((system.kind === 'pipeline' || system.kind === 'gateway') && lead && doer) {
+    const leadPolicy = policy(lead);
+    const doerPolicy = policy(doer);
     const loop = runLoop({
       request,
       log,
       onEvent,
-      mode: 'pipeline',
+      mode: system.kind,
+      ...(system.light === true ? { light: true } : {}),
       autoApprove: true,
-      orchestrator: factory(system.planner),
-      worker: factory(system.executor),
+      orchestrator: factory(lead, false),
+      worker: factory(doer, true),
       subagents: {
-        orchestrator: {
-          ...sub.codex,
-          maxConcurrent: sub.maxConcurrent,
-          forbiddenNames: CODEX_SUBAGENT_FORBIDDEN_NAMES,
-        },
-        worker: {
-          ...sub.claude,
-          maxConcurrent: sub.maxConcurrent,
-          forbiddenNames: CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
-        },
+        ...(leadPolicy ? { orchestrator: leadPolicy } : {}),
+        ...(doerPolicy ? { worker: doerPolicy } : {}),
       },
+      ...(system.kind === 'gateway'
+        ? { facts: () => verifiedFacts(runDir, baseline, systems.verify) }
+        : {}),
       intercept: () => Promise.reject(new Error('not used with autoApprove')),
       onMalformedDelegation: () => Promise.reject(new Error('not used with autoApprove')),
     });
@@ -310,10 +605,13 @@ async function main(): Promise<void> {
     outcome = await loop.done;
   } else if (system.kind === 'single' && system.agent) {
     await log.append('loop_started', { request, mode: 'single', autoApprove: true });
-    const session = await factory(system.agent)({ instructions: SINGLE_AGENT_INSTRUCTIONS });
+    const session = await factory(
+      system.agent,
+      true,
+    )({ instructions: brief ? BRIEF_AGENT_INSTRUCTIONS : SINGLE_AGENT_INSTRUCTIONS });
     record({ type: 'turn_started', role: 'worker', agent: session.name });
     try {
-      const turn = session.runTurn(requestPrompt(request), {
+      const turn = session.runTurn(brief ? briefAgentPrompt(brief) : requestPrompt(request), {
         onText: () => undefined,
         onApprovalRequest: () => Promise.resolve('decline'),
         onActivity: (activity) => {
@@ -350,6 +648,16 @@ async function main(): Promise<void> {
     PYTHONDONTWRITEBYTECODE: '1',
   });
   const files = listFiles(runDir);
+  // The same check for every system, for the evaluation: not shown to any agent.
+  const finalFacts = brief || script ? await verifiedFacts(runDir, baseline, systems.verify) : null;
+  const resultForChat =
+    outcome.status === 'result'
+      ? outcome.result
+      : outcome.status === 'single' && brief
+        ? (extractResult(outcome.report) ?? outcome.report)
+        : outcome.status === 'clarification'
+          ? outcome.questions
+          : null;
   const tokens = sumTokens(turns);
   const costUsd = turns.reduce((sum, t) => sum + (t.usage?.costUsd ?? 0), 0);
   const result = {
@@ -361,6 +669,8 @@ async function main(): Promise<void> {
     runDir,
     wallMs,
     outcome,
+    resultForChat,
+    finalFacts,
     hidden,
     files,
     turns,
@@ -388,12 +698,15 @@ async function main(): Promise<void> {
     `- Costo nominale Claude: $${costUsd.toFixed(4)}`,
     `- File: ${files.map((f) => `${f.path} (${String(f.lines)})`).join(', ') || 'nessuno'}`,
     '',
-    '| Turno | Etichetta | Tempo | Quota vista |',
-    '| --- | --- | --- | --- |',
-    ...turns.map(
-      (t) =>
-        `| ${t.role} | ${t.label} | ${((t.usage?.durationMs ?? 0) / 1000).toFixed(1)} s | ${quotaText(t.quota)} |`,
-    ),
+    '| Messaggio | Turno | Etichetta | Tempo | Contesto letto | Output | Quota vista |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    ...turns.map((t) => {
+      // Context read in the turn: every model's input, cached or not, cache writes included.
+      const models = Object.values(t.usage?.byModel ?? {});
+      const read = models.reduce((s, m) => s + m.input + m.cachedInput + m.cacheWrite, 0);
+      const out = models.reduce((s, m) => s + m.output, 0);
+      return `| ${t.message ?? ''} | ${t.role} | ${t.label} | ${((t.usage?.durationMs ?? 0) / 1000).toFixed(1)} s | ${String(read)} | ${String(out)} | ${quotaText(t.quota)} |`;
+    }),
     '',
     '| Modello | Input | Cache letta | Cache scritta | Output | di cui ragionamento |',
     '| --- | --- | --- | --- | --- | --- |',
@@ -405,6 +718,22 @@ async function main(): Promise<void> {
     'Test nascosti falliti:',
     ...hidden.cases.filter((c) => !c.passed).map((c) => `- ${c.name}: ${c.reason ?? ''}`),
     '',
+    ...(resultForChat === null
+      ? []
+      : ['## Risultato per la chat di ragionamento', '', '```text', resultForChat, '```', '']),
+    ...(outcome.status === 'session'
+      ? outcome.answers.flatMap((answer) => [
+          `## Risposta a ${answer.name} (${answer.status})`,
+          '',
+          '```text',
+          answer.text,
+          '```',
+          '',
+        ])
+      : []),
+    ...(finalFacts === null
+      ? []
+      : ['## Verifica finale del runner', '', '```text', finalFacts, '```', '']),
   ].join('\n');
   // The results go into the repository: redacted like the fixtures, and kept in
   // the run directory instead if the scanner still finds something personal.

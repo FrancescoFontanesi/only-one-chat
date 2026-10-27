@@ -1,0 +1,409 @@
+{
+  "runId": "calc-functions-SS-2026-10-27T11-50-15-277Z",
+  "scenario": "calc-functions",
+  "system": "SS",
+  "config": {
+    "kind": "single",
+    "title": "Sol 6.1 alone: interprets, implements and writes the result",
+    "agent": {
+      "cli": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low"
+    }
+  },
+  "fake": false,
+  "runDir": "<RUN>",
+  "wallMs": 92495,
+  "outcome": {
+    "status": "single",
+    "report": "[AXIOM] Esamino parser, valutazione e test esistenti; applico il workflow Ponytail per mantenere la modifica minima e verificare i criteri del brief.\n\n\n[AXIOM] Il corpo viene controllato sintatticamente alla definizione e valutato alla chiamata. Rilevo la ricorsione con un insieme delle chiamate attive, ripulito in `finally`; ogni funzione vede i propri parametri e le variabili globali correnti.\n\n\n<<<OOC-RESULT v1 project=calc track=user-functions\n## Outcome\ndone\n## Acceptance criteria\n1. ✓ Test: f(3) stampa 10; 2 * f(1) stampa 4.\n2. ✓ Test: più parametri, zero parametri, chiamate annidate e riferimenti a funzioni definite dopo.\n3. ✓ Test: oscuramento dei globali, globali invariati e lettura dei valori correnti; namespace separati.\n4. ✓ Test: arità errata, ridefinizione built-in, parametri duplicati e ricorsione producono gli errori previsti ed exit code 1.\n5. ✓ Test: stdin continua dopo errori e ricorsione; funzioni ancora utilizzabili e ridefinibili.\n6. ✓ Tutti i 9 test passano, inclusi i 3 preesistenti.\n## Verified facts\n- `rtk python -m unittest -v`: exit code 0, 9 test passati.\n- `python -m unittest -v`: exit code 0.\n- File modificati: `lexer.py`, `evaluator.py`, `main.py`, `test_calc.py`.\n## Autonomous decisions\n- Definizioni conservate come parametri e token del corpo, con colonne originali; sintassi verificata senza valutazione.\n- Ricorsione rilevata tramite insieme condiviso delle funzioni attive: rientrare in una funzione attiva genera l’errore stabilito. Pulizia in `finally` per consentire chiamate successive anche dopo errori.\n- Parametri risolti tramite `ChainMap` sui globali, senza ereditare i parametri del chiamante.\n## Problems and risks\nNone\nOOC-RESULT>>>"
+  },
+  "resultForChat": "<<<OOC-RESULT v1 project=calc track=user-functions\n## Outcome\ndone\n## Acceptance criteria\n1. ✓ Test: f(3) stampa 10; 2 * f(1) stampa 4.\n2. ✓ Test: più parametri, zero parametri, chiamate annidate e riferimenti a funzioni definite dopo.\n3. ✓ Test: oscuramento dei globali, globali invariati e lettura dei valori correnti; namespace separati.\n4. ✓ Test: arità errata, ridefinizione built-in, parametri duplicati e ricorsione producono gli errori previsti ed exit code 1.\n5. ✓ Test: stdin continua dopo errori e ricorsione; funzioni ancora utilizzabili e ridefinibili.\n6. ✓ Tutti i 9 test passano, inclusi i 3 preesistenti.\n## Verified facts\n- `rtk python -m unittest -v`: exit code 0, 9 test passati.\n- `python -m unittest -v`: exit code 0.\n- File modificati: `lexer.py`, `evaluator.py`, `main.py`, `test_calc.py`.\n## Autonomous decisions\n- Definizioni conservate come parametri e token del corpo, con colonne originali; sintassi verificata senza valutazione.\n- Ricorsione rilevata tramite insieme condiviso delle funzioni attive: rientrare in una funzione attiva genera l’errore stabilito. Pulizia in `finally` per consentire chiamate successive anche dopo errori.\n- Parametri risolti tramite `ChainMap` sui globali, senza ereditare i parametri del chiamante.\n## Problems and risks\nNone\nOOC-RESULT>>>",
+  "finalFacts": "File cambiati rispetto al progetto di partenza:\n- added .gitignore\n- added .ignore\n- modified evaluator.py\n- added graft\\.cache\\ask-index.json\n- added graft\\.cache\\extract.496c9d83e6eb3668.json\n- added graft\\.cache\\fingerprint.496c9d83e6eb3668.json\n- added graft\\.cache\\session\\<uuid-1>.json\n- added graft\\.cache\\stats.json\n- added graft\\.cache\\telemetry-repo-id.json\n- added graft\\.graph\\wiring.json\n- added graft\\evaluator.md\n- added graft\\INDEX.md\n- added graft\\lexer.md\n- added graft\\main.md\n- added graft\\test_calc.md\n- modified lexer.py\n- modified main.py\n- modified test_calc.py\n\nVerifica eseguita dal runtime: python -m unittest → exit 0\nUltime righe dell’output:\n.........\r\n----------------------------------------------------------------------\r\nRan 9 tests in 1.667s\r\n\r\nOK",
+  "hidden": {
+    "passed": 50,
+    "total": 50,
+    "cases": [
+      {
+        "name": "addition",
+        "passed": true
+      },
+      {
+        "name": "precedence-left",
+        "passed": true
+      },
+      {
+        "name": "precedence-right",
+        "passed": true
+      },
+      {
+        "name": "parentheses",
+        "passed": true
+      },
+      {
+        "name": "float-division",
+        "passed": true
+      },
+      {
+        "name": "float-repr",
+        "passed": true
+      },
+      {
+        "name": "integral-float",
+        "passed": true
+      },
+      {
+        "name": "modulo",
+        "passed": true
+      },
+      {
+        "name": "power-right-assoc",
+        "passed": true
+      },
+      {
+        "name": "unary-below-power",
+        "passed": true
+      },
+      {
+        "name": "negative-exponent",
+        "passed": true
+      },
+      {
+        "name": "unary-parentheses",
+        "passed": true
+      },
+      {
+        "name": "decimals",
+        "passed": true
+      },
+      {
+        "name": "sqrt",
+        "passed": true
+      },
+      {
+        "name": "max-many",
+        "passed": true
+      },
+      {
+        "name": "min-negative",
+        "passed": true
+      },
+      {
+        "name": "abs",
+        "passed": true
+      },
+      {
+        "name": "assignment-prints",
+        "passed": true
+      },
+      {
+        "name": "script-variables",
+        "passed": true
+      },
+      {
+        "name": "script-continues-after-error",
+        "passed": true
+      },
+      {
+        "name": "division-by-zero",
+        "passed": true
+      },
+      {
+        "name": "modulo-by-zero",
+        "passed": true
+      },
+      {
+        "name": "unknown-function",
+        "passed": true
+      },
+      {
+        "name": "sqrt-negative",
+        "passed": true
+      },
+      {
+        "name": "sqrt-arity",
+        "passed": true
+      },
+      {
+        "name": "max-no-arguments",
+        "passed": true
+      },
+      {
+        "name": "unknown-variable",
+        "passed": true
+      },
+      {
+        "name": "unclosed-parenthesis",
+        "passed": true
+      },
+      {
+        "name": "missing-operand",
+        "passed": true
+      },
+      {
+        "name": "two-numbers",
+        "passed": true
+      },
+      {
+        "name": "fn-define-and-call",
+        "passed": true
+      },
+      {
+        "name": "fn-definition-prints-nothing",
+        "passed": true
+      },
+      {
+        "name": "fn-many-parameters",
+        "passed": true
+      },
+      {
+        "name": "fn-no-parameters",
+        "passed": true
+      },
+      {
+        "name": "fn-calls-builtin",
+        "passed": true
+      },
+      {
+        "name": "fn-float-result",
+        "passed": true
+      },
+      {
+        "name": "fn-calls-later-defined",
+        "passed": true
+      },
+      {
+        "name": "fn-parameter-shadows-global",
+        "passed": true
+      },
+      {
+        "name": "fn-globals-read-at-call",
+        "passed": true
+      },
+      {
+        "name": "fn-redefinition-replaces",
+        "passed": true
+      },
+      {
+        "name": "fn-separate-namespaces",
+        "passed": true
+      },
+      {
+        "name": "fn-wrong-arity",
+        "passed": true
+      },
+      {
+        "name": "fn-unknown-variable-at-call",
+        "passed": true
+      },
+      {
+        "name": "fn-builtin-redefinition",
+        "passed": true
+      },
+      {
+        "name": "fn-duplicate-parameter",
+        "passed": true
+      },
+      {
+        "name": "fn-direct-recursion",
+        "passed": true
+      },
+      {
+        "name": "fn-indirect-recursion",
+        "passed": true
+      },
+      {
+        "name": "fn-usable-after-recursion-error",
+        "passed": true
+      },
+      {
+        "name": "fn-definition-syntax-error",
+        "passed": true
+      },
+      {
+        "name": "fn-def-is-reserved",
+        "passed": true
+      }
+    ]
+  },
+  "files": [
+    {
+      "path": ".gitignore",
+      "lines": 3
+    },
+    {
+      "path": ".ignore",
+      "lines": 6
+    },
+    {
+      "path": "evaluator.py",
+      "lines": 209
+    },
+    {
+      "path": "graft\\.cache\\ask-index.json",
+      "lines": 2
+    },
+    {
+      "path": "graft\\.cache\\extract.496c9d83e6eb3668.json",
+      "lines": 1
+    },
+    {
+      "path": "graft\\.cache\\fingerprint.496c9d83e6eb3668.json",
+      "lines": 1
+    },
+    {
+      "path": "graft\\.cache\\session\\<uuid-1>.json",
+      "lines": 9
+    },
+    {
+      "path": "graft\\.cache\\stats.json",
+      "lines": 14
+    },
+    {
+      "path": "graft\\.cache\\telemetry-repo-id.json",
+      "lines": 3
+    },
+    {
+      "path": "graft\\.graph\\wiring.json",
+      "lines": 1341
+    },
+    {
+      "path": "graft\\evaluator.md",
+      "lines": 19
+    },
+    {
+      "path": "graft\\INDEX.md",
+      "lines": 16
+    },
+    {
+      "path": "graft\\lexer.md",
+      "lines": 8
+    },
+    {
+      "path": "graft\\main.md",
+      "lines": 6
+    },
+    {
+      "path": "graft\\test_calc.md",
+      "lines": 17
+    },
+    {
+      "path": "lexer.py",
+      "lines": 65
+    },
+    {
+      "path": "main.py",
+      "lines": 50
+    },
+    {
+      "path": "test_calc.py",
+      "lines": 115
+    }
+  ],
+  "turns": [
+    {
+      "role": "worker",
+      "agent": "Codex (gpt-6.1-sol)",
+      "label": "Codex via Headroom persistent proxy · gpt-6.1-sol · effort low · sessione <uuid-1>",
+      "usage": {
+        "byModel": {
+          "gpt-6.1-sol": {
+            "input": 30585,
+            "cachedInput": 176000,
+            "cacheWrite": 0,
+            "output": 3606,
+            "reasoning": 205
+          }
+        },
+        "costUsd": null,
+        "durationMs": 91277
+      },
+      "quota": {
+        "windows": [
+          {
+            "name": "5h",
+            "usedPercent": 77,
+            "resetsAt": 1793105257
+          },
+          {
+            "name": "weekly",
+            "usedPercent": 40,
+            "resetsAt": 1793606078
+          }
+        ]
+      }
+    }
+  ],
+  "tokens": {
+    "gpt-6.1-sol": {
+      "input": 30585,
+      "cachedInput": 176000,
+      "cacheWrite": 0,
+      "output": 3606,
+      "reasoning": 205
+    }
+  },
+  "claudeNominalCostUsd": 0,
+  "codexQuota": {
+    "before": {
+      "windows": [
+        {
+          "name": "5h",
+          "usedPercent": 75,
+          "resetsAt": 1793105257
+        },
+        {
+          "name": "weekly",
+          "usedPercent": 40,
+          "resetsAt": 1793606078
+        }
+      ]
+    },
+    "after": {
+      "windows": [
+        {
+          "name": "5h",
+          "usedPercent": 77,
+          "resetsAt": 1793105257
+        },
+        {
+          "name": "weekly",
+          "usedPercent": 40,
+          "resetsAt": 1793606078
+        }
+      ]
+    }
+  },
+  "claudeQuota": {
+    "before": {
+      "windows": [
+        {
+          "name": "5h",
+          "usedPercent": 29,
+          "resetsAt": 1793106000
+        },
+        {
+          "name": "weekly",
+          "usedPercent": 47,
+          "resetsAt": 1793512800
+        }
+      ]
+    },
+    "after": {
+      "windows": [
+        {
+          "name": "5h",
+          "usedPercent": 29,
+          "resetsAt": 1793106000
+        },
+        {
+          "name": "weekly",
+          "usedPercent": 47,
+          "resetsAt": 1793512800
+        }
+      ]
+    },
+    "probeCostUsd": 0.0013239000000000003
+  },
+  "otherEvents": ["activity", "activity", "activity", "activity", "activity"]
+}

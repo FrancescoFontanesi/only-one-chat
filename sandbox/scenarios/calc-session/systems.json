@@ -1,0 +1,40 @@
+{
+  "description": "Systems compared on the calc-session script: a leader that delegates across subscriptions, or one model in one long chat. Everything at low effort.",
+  "seed": "../calc/reference",
+  "verify": ["python", "-m", "unittest"],
+  "systems": {
+    "LS": {
+      "kind": "leader",
+      "title": "Leader Sol 6.1 for the whole session, Sonnet 5.5 implements, Luna sub-agents explore",
+      "leader": { "cli": "codex", "model": "gpt-6.1-sol", "effort": "low" },
+      "implementer": { "cli": "claude", "model": "sonnet", "effort": "low" },
+      "subagents": {
+        "codex": { "model": "gpt-6-luna", "effort": "low" },
+        "claude": { "model": "claude-haiku-5-5", "effort": "low" },
+        "maxConcurrent": 2
+      }
+    },
+    "LO": {
+      "kind": "leader",
+      "title": "Leader Opus 5.5 for the whole session, Sol 6.1 implements, Haiku sub-agents explore",
+      "leader": { "cli": "claude", "model": "opus", "effort": "low" },
+      "implementer": { "cli": "codex", "model": "gpt-6.1-sol", "effort": "low" },
+      "subagents": {
+        "codex": { "model": "gpt-6-luna", "effort": "low" },
+        "claude": { "model": "claude-haiku-5-5", "effort": "low" },
+        "maxConcurrent": 2
+      }
+    },
+    "1S": {
+      "kind": "session",
+      "title": "Sol 6.1 alone, the whole session in one chat",
+      "agent": { "cli": "codex", "model": "gpt-6.1-sol", "effort": "low" }
+    },
+    "1O": {
+      "kind": "session",
+      "title": "Opus 5.5 alone, the whole session in one chat",
+      "agent": { "cli": "claude", "model": "opus", "effort": "low" }
+    }
+  },
+  "sandboxCommands": ["python", "py"]
+}

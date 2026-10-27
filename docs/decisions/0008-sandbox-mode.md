@@ -28,7 +28,17 @@ profilo dell'utente):
   - Correzione dopo il primo benchmark: la prima versione usava `acceptEdits`, che approva
     da solo anche `mkdir`, `touch`, `rm`, `rmdir`, `mv`, `cp` e `sed` nella cartella di
     lavoro. Opus ha eseguito così `rm` sul proprio `parser.py`.
-- **Codex** resta in sola lettura (`sandbox: "read-only"`): nella demo pianifica e giudica.
+- **Codex** resta in sola lettura (`sandbox: "read-only"`) quando pianifica, giudica o fa da
+  gateway.
+  - Correzione per lo scenario `calc-functions` (ADR 0009), approvata dall'utente come
+    alleggerimento: quando implementa, o lavora da solo, il thread è `workspace-write`
+    nella cartella del run, senza rete.
+  - Su Windows il thread chiede anche la sandbox Windows non elevata (`windows.sandbox =
+"unelevated"`), che non richiede configurazione.
+  - Verifica senza turni di modello, con `command/exec`: Python gira e scrive nella
+    cartella di lavoro, mentre una scrittura fuori viene bloccata con un `PermissionError`.
+  - Le richieste di approvazione restano rifiutate, e nessuna modalità che salti i
+    controlli è attiva.
 - **Approvazione automatica** dei messaggi fra agenti, solo nella modalità benchmark del
   runtime: è dichiarata nelle opzioni, registrata nel log come decisione `auto_approve` e
   visibile nel thread.

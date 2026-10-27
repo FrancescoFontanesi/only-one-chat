@@ -5,6 +5,7 @@
 
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 export interface HiddenCase {
   readonly name: string;
@@ -34,8 +35,15 @@ export interface HiddenResults {
   readonly cases: readonly CaseResult[];
 }
 
+/** A suite, after the cases of the suites it includes (paths relative to it). */
 export function loadSuite(path: string): HiddenSuite {
-  return JSON.parse(readFileSync(path, 'utf8')) as HiddenSuite;
+  const suite = JSON.parse(readFileSync(path, 'utf8')) as HiddenSuite & {
+    include?: readonly string[];
+  };
+  const included = (suite.include ?? []).flatMap(
+    (other) => loadSuite(join(dirname(path), other)).cases,
+  );
+  return { command: suite.command, cases: [...included, ...suite.cases] };
 }
 
 function normalize(text: string): string {

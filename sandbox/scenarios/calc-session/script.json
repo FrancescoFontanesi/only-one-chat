@@ -1,0 +1,18 @@
+{
+  "description": "A scripted session of four user messages, the same for every system: a free request that leaves room for interpretation, a structured brief from the reasoning chat, a question about the code, a small correction. Sent in order in one chat.",
+  "messages": [
+    {
+      "name": "ans-free",
+      "text": "Mi piacerebbe poter riusare l'ultimo risultato negli script, un po' come il tasto ans delle calcolatrici: per esempio dopo 1 + 2 scrivere ans * 10 e ottenere 30. Se ans si usa prima di qualunque risultato deve dare un errore chiaro. Il resto decidilo tu con buon senso, e dimmi cosa hai scelto."
+    },
+    { "name": "functions-brief", "file": "../calc-functions/brief.txt" },
+    {
+      "name": "recursion-question",
+      "text": "Spiegami in due o tre frasi come il codice attuale rileva la ricorsione, e in quale funzione. Non modificare niente."
+    },
+    {
+      "name": "recursion-message",
+      "text": "Piccola correzione: il messaggio della ricorsione deve dire anche quale funzione è stata richiamata mentre era già in esecuzione, così: Error: recursion is not supported in 'g'."
+    }
+  ]
+}

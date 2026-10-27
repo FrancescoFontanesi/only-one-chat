@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { resolveClaudeExecutable, resolveCodexExecutable } from '@only-one-chat/adapters';
 import { getRuntimeInfo } from '@only-one-chat/runtime';
 import { ChatSession, type AgentChoice, type ChatConfig } from '../session/chat.js';
+import { providerOf, type UsageStore } from '../session/usage.js';
 import { createNonce, renderWebviewHtml } from './html.js';
 import {
   parseWebviewMessage,
@@ -28,9 +29,6 @@ function agentChoice(settings: vscode.WorkspaceConfiguration, role: string): Age
   };
 }
 
-const describe = (choice: AgentChoice) =>
-  `${choice.cli === 'codex' ? 'Codex' : 'Claude'} ${choice.model} · ${choice.effort}`;
-
 /** Single editor panel hosting the chat with the leader. */
 export class OnlyOneChatPanel {
   static readonly viewType = 'onlyOneChat.panel';
@@ -41,7 +39,11 @@ export class OnlyOneChatPanel {
   /** Fires each time a panel's webview has loaded and received its status. */
   static readonly onDidBecomeReady = OnlyOneChatPanel.readyEmitter.event;
 
-  static show(context: vscode.ExtensionContext): void {
+  static show(
+    context: vscode.ExtensionContext,
+    usage: UsageStore,
+    refreshCodexUsage: () => Promise<void>,
+  ): void {
     if (OnlyOneChatPanel.current) {
       OnlyOneChatPanel.current.panel.reveal();
       return;
@@ -60,7 +62,14 @@ export class OnlyOneChatPanel {
         localResourceRoots: [webviewRoot, mediaRoot],
       },
     );
-    OnlyOneChatPanel.current = new OnlyOneChatPanel(panel, context, webviewRoot, mediaRoot);
+    OnlyOneChatPanel.current = new OnlyOneChatPanel(
+      panel,
+      context,
+      usage,
+      refreshCodexUsage,
+      webviewRoot,
+      mediaRoot,
+    );
   }
 
   private readonly disposables: vscode.Disposable[] = [];
@@ -72,6 +81,8 @@ export class OnlyOneChatPanel {
   private constructor(
     private readonly panel: vscode.WebviewPanel,
     private readonly context: vscode.ExtensionContext,
+    private readonly usage: UsageStore,
+    private readonly refreshCodexUsage: () => Promise<void>,
     webviewRoot: vscode.Uri,
     mediaRoot: vscode.Uri,
   ) {
@@ -113,8 +124,8 @@ export class OnlyOneChatPanel {
     return {
       workspace: workspaceFolder(),
       trusted: vscode.workspace.isTrusted,
-      leader: describe(agentChoice(settings, 'leader')),
-      implementer: describe(agentChoice(settings, 'implementer')),
+      leader: agentChoice(settings, 'leader'),
+      implementer: agentChoice(settings, 'implementer'),
       mode: this.mode,
       fake: this.fake,
       busy: this.chat?.busy ?? false,
@@ -163,11 +174,24 @@ export class OnlyOneChatPanel {
         this.chat?.setMode(message.mode);
         void this.postSession();
         break;
+      case 'setEffort':
+        // The user's choice: kept in the settings for the next chats, and applied
+        // to this chat's sessions from their next turn.
+        await vscode.workspace
+          .getConfiguration('onlyOneChat')
+          .update(`${message.role}.effort`, message.effort, vscode.ConfigurationTarget.Global);
+        this.chat?.setEffort(message.role, message.effort);
+        void this.postSession();
+        break;
       case 'newChat':
         await this.chat?.dispose();
         this.chat = undefined;
+        this.usage.resetChat();
         await this.post({ type: 'reset' });
         void this.postSession();
+        break;
+      case 'refreshUsage':
+        await this.refreshCodexUsage();
         break;
     }
   }
@@ -269,6 +293,12 @@ export class OnlyOneChatPanel {
         },
         busy: () => {
           void this.postSession();
+        },
+        turnUsage: (identityProvider, turnUsage, quota) => {
+          const provider = providerOf(identityProvider);
+          if (!provider) return;
+          if (turnUsage) this.usage.addTurn(provider, turnUsage);
+          if (quota) this.usage.setQuota(provider, quota);
         },
       },
     );

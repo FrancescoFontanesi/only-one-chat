@@ -26,6 +26,7 @@ import {
   type EventLog,
   type InterceptDecision,
   type PendingReport,
+  type QuotaSnapshot,
   type SubagentPolicy,
   type ThreadEvent,
   type TurnUsage,
@@ -80,6 +81,12 @@ const DIRECT = /^@impl\b\s*/i;
 export interface ChatEvents {
   update(update: ThreadUpdate): void;
   busy(busy: boolean): void;
+  /** A turn ended: its CLI, what it used, and the usage windows it reported, if any. */
+  turnUsage?(
+    provider: string,
+    usage: TurnUsageSummary | undefined,
+    quota: QuotaSnapshot | null,
+  ): void;
 }
 
 function summarize(usage: TurnUsage | undefined): TurnUsageSummary | undefined {
@@ -110,12 +117,22 @@ export class ChatSession {
   private readonly pending = new Map<string, (decision: InterceptDecision) => void>();
   /** Implementer work the leader has not seen yet. */
   private unseen: PendingReport[] = [];
+  /** The roles as configured, with the effort the user chose during the chat. */
+  private readonly roles: { leader: AgentChoice; implementer: AgentChoice };
 
   constructor(
     private readonly config: ChatConfig,
     private readonly events: ChatEvents,
   ) {
     this.mode = config.mode;
+    this.roles = { leader: config.leader, implementer: config.implementer };
+  }
+
+  /** Reasoning effort of a role from its next turn on, in the same session. */
+  setEffort(role: TurnRole, effort: string): void {
+    this.roles[role] = { ...this.roles[role], effort };
+    const session = role === 'leader' ? this.leaderSession : this.implementerSession;
+    session?.setEffort?.(effort);
   }
 
   get busy(): boolean {
@@ -165,9 +182,9 @@ export class ChatSession {
   /** The implementer's session, opened once and continued (ADR 0011). */
   private async implementer(): Promise<AgentSession> {
     this.implementerSession ??= await this.factory(
-      this.config.implementer,
+      this.roles.implementer,
       true,
-    )(agentSessionOptions(LIGHT_IMPLEMENTER_INSTRUCTIONS, this.policy(this.config.implementer)));
+    )(agentSessionOptions(LIGHT_IMPLEMENTER_INSTRUCTIONS, this.policy(this.roles.implementer)));
     return this.implementerSession;
   }
 
@@ -267,6 +284,7 @@ export class ChatSession {
       text: result.text,
       ...(usage ? { usage } : {}),
     });
+    this.events.turnUsage?.(result.identity.provider, usage, result.quota ?? null);
     const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand);
     shown.facts = true;
     this.events.update({ type: 'notice', level: 'info', text: facts });
@@ -284,12 +302,12 @@ export class ChatSession {
     shown: { facts: boolean },
   ): Promise<void> {
     const { config } = this;
-    const leaderPolicy = { ...this.policy(config.leader), proactive: true };
+    const leaderPolicy = { ...this.policy(this.roles.leader), proactive: true };
     // Writable: on /fai, or with no implementer, it makes the change itself.
     this.leaderSession ??= await this.factory(
-      config.leader,
+      this.roles.leader,
       true,
-    )(agentSessionOptions(leaderInstructions(config.implementer.cli), leaderPolicy));
+    )(agentSessionOptions(leaderInstructions(this.roles.implementer.cli), leaderPolicy));
     const unseen = this.unseen;
     this.unseen = [];
     const manual = this.mode === 'manual';
@@ -307,7 +325,7 @@ export class ChatSession {
       autoApprove: !manual,
       orchestrator: () => Promise.reject(new Error('the leader session is given')),
       worker: () => Promise.reject(new Error('the implementer session is given')),
-      subagents: { orchestrator: leaderPolicy, worker: this.policy(config.implementer) },
+      subagents: { orchestrator: leaderPolicy, worker: this.policy(this.roles.implementer) },
       facts: async () => {
         const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand);
         shown.facts = true;
@@ -429,6 +447,7 @@ export class ChatSession {
           text: event.text,
           ...(usage ? { usage } : {}),
         });
+        this.events.turnUsage?.(event.identity.provider, usage, event.quota ?? null);
         break;
       }
       case 'activity':

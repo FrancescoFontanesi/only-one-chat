@@ -420,7 +420,10 @@ const handlers = {
         error: { code: -32600, message: 'chatgpt authentication required to read rate limits' },
       });
     }
-    // TODO(adapters): a logged-in result needs the recorded login-complete transcript.
+    // Signed in with ChatGPT: the windows recorded from account/rateLimits/updated;
+    // the read result has the same `rateLimits` shape (dev/bench.ts parses it alike).
+    if (accountKind === 'chatgpt') return send({ id, result: { rateLimits: RATE_LIMITS } });
+    // Not signed in: as recorded in startup.jsonl.
     return send({
       id,
       error: { code: -32600, message: 'codex account authentication required to read rate limits' },

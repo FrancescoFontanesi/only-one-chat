@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
+  EFFORTS,
   parseHostMessage,
   type ApprovalMode,
+  type Effort,
+  type RoleInfo,
+  type RoleName,
   type SessionInfo,
   type WebviewToHostMessage,
 } from '../src/webview/protocol.js';
@@ -14,6 +18,38 @@ const post = (message: WebviewToHostMessage) => {
 
 const STATUS_GLYPH = { running: '▶', done: '■', failed: '×' } as const;
 const NOTICE_GLYPH = { info: '■', warn: '▲', error: '×' } as const;
+
+/** A role with its model and the reasoning level, which the user chooses (ADR 0010). */
+function Role({ name, title, info }: { name: RoleName; title: string; info: RoleInfo }) {
+  return (
+    <div class="bar-row data">
+      <span class="label role">{title}</span>
+      <span>
+        {info.cli === 'codex' ? 'Codex' : 'Claude'} {info.model}
+      </span>
+      <label class="label" for={`effort-${name}`}>
+        REASONING
+      </label>
+      <select
+        id={`effort-${name}`}
+        class="select"
+        value={info.effort}
+        onChange={(event) => {
+          const effort = (event.target as HTMLSelectElement).value;
+          if ((EFFORTS as readonly string[]).includes(effort)) {
+            post({ type: 'setEffort', role: name, effort: effort as Effort });
+          }
+        }}
+      >
+        {EFFORTS.map((effort) => (
+          <option key={effort} value={effort}>
+            {effort}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 function Header({ session }: { session: SessionInfo | undefined }) {
   if (!session) return <header class="bar">Collegamento all’estensione…</header>;
@@ -29,12 +65,8 @@ function Header({ session }: { session: SessionInfo | undefined }) {
           {session.busy ? '▶ IN CORSO' : '■ PRONTO'}
         </span>
       </div>
-      <div class="bar-row data">
-        <span class="label">LEADER</span>
-        <span>{session.leader}</span>
-        <span class="label">IMPLEMENTA</span>
-        <span>{session.implementer}</span>
-      </div>
+      <Role name="leader" title="LEADER" info={session.leader} />
+      <Role name="implementer" title="IMPLEMENTA" info={session.implementer} />
       <div class="bar-row data">
         <span class="label">CARTELLA</span>
         <span class="path">{session.workspace ?? 'nessuna cartella aperta'}</span>

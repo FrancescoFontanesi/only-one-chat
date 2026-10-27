@@ -10,13 +10,26 @@ export interface ExtensionStatus {
 
 export type ApprovalMode = 'auto' | 'manual';
 
+/** Reasoning levels the user can choose for a role, the same for Codex and Claude. */
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type Effort = (typeof EFFORTS)[number];
+
+export type RoleName = 'leader' | 'implementer';
+
+/** A role as the header shows it; the effort is the user's choice (ADR 0010). */
+export interface RoleInfo {
+  readonly cli: 'codex' | 'claude';
+  readonly model: string;
+  readonly effort: string;
+}
+
 /** The chat session as the panel shows it in its header. */
 export interface SessionInfo {
   /** Folder the agents work in; null without an open folder. */
   readonly workspace: string | null;
   readonly trusted: boolean;
-  readonly leader: string;
-  readonly implementer: string;
+  readonly leader: RoleInfo;
+  readonly implementer: RoleInfo;
   readonly mode: ApprovalMode;
   /** Fake CLIs: no model turn, no quota (development only). */
   readonly fake: boolean;
@@ -68,12 +81,34 @@ export type ThreadUpdate =
   | { readonly type: 'approval_closed'; readonly id: string; readonly action: string }
   | { readonly type: 'notice'; readonly level: 'info' | 'warn' | 'error'; readonly text: string };
 
+/** One usage window of a subscription, as its CLI reported it. */
+export interface UsageWindow {
+  /** "5h" or "weekly". */
+  readonly name: string;
+  readonly usedPercent: number;
+  /** Unix seconds; null when not reported. */
+  readonly resetsAt: number | null;
+}
+
+/** A subscription in use, for the usage view. */
+export interface ProviderUsage {
+  readonly provider: 'codex' | 'claude';
+  readonly windows: readonly UsageWindow[];
+  /** When the windows were read (ms since epoch); null before the first reading. */
+  readonly updatedAt: number | null;
+  /** How the windows are read, or why they are missing. */
+  readonly note: string;
+  /** What this chat has used so far, summed over its turns. */
+  readonly chat: { readonly context: number; readonly output: number; readonly costUsd: number };
+}
+
 export type HostToWebviewMessage =
   | { readonly type: 'status'; readonly status: ExtensionStatus }
   | { readonly type: 'pong'; readonly id: number; readonly receivedAt: string }
   | { readonly type: 'session'; readonly session: SessionInfo }
   | { readonly type: 'thread'; readonly update: ThreadUpdate }
-  | { readonly type: 'reset' };
+  | { readonly type: 'reset' }
+  | { readonly type: 'usage'; readonly providers: readonly ProviderUsage[] };
 
 export type ApprovalAction = 'approve' | 'edit' | 'cancel';
 
@@ -89,7 +124,9 @@ export type WebviewToHostMessage =
     }
   | { readonly type: 'stop' }
   | { readonly type: 'setMode'; readonly mode: ApprovalMode }
-  | { readonly type: 'newChat' };
+  | { readonly type: 'setEffort'; readonly role: RoleName; readonly effort: Effort }
+  | { readonly type: 'newChat' }
+  | { readonly type: 'refreshUsage' };
 
 /** Longest text the webview may send: a large brief fits, a pasted log does not. */
 export const MAX_TEXT_LENGTH = 50_000;
@@ -135,8 +172,19 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
       const mode = msg['mode'];
       return mode === 'auto' || mode === 'manual' ? { type: 'setMode', mode } : undefined;
     }
+    case 'setEffort': {
+      const role = msg['role'];
+      const effort = (EFFORTS as readonly unknown[]).includes(msg['effort'])
+        ? (msg['effort'] as Effort)
+        : undefined;
+      return (role === 'leader' || role === 'implementer') && effort
+        ? { type: 'setEffort', role, effort }
+        : undefined;
+    }
     case 'newChat':
       return { type: 'newChat' };
+    case 'refreshUsage':
+      return { type: 'refreshUsage' };
     default:
       return undefined;
   }
@@ -172,6 +220,10 @@ export function parseHostMessage(value: unknown): HostToWebviewMessage | undefin
     }
     case 'reset':
       return { type: 'reset' };
+    case 'usage':
+      return Array.isArray(msg['providers'])
+        ? { type: 'usage', providers: msg['providers'] as ProviderUsage[] }
+        : undefined;
     default:
       return undefined;
   }

@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { registerCommands } from './commands/index.js';
+import { UsageStore } from './session/usage.js';
 import { OnlyOneChatPanel } from './webview/panel.js';
+import { UsageViewProvider } from './webview/usageView.js';
 
 /**
  * Value returned by `activate`. Only the integration tests use it; it is not
@@ -11,8 +13,31 @@ export interface OnlyOneChatExports {
   whenPanelReady(): Promise<void>;
 }
 
+/** The subscriptions shown in the usage view: the CLIs of the configured roles. */
+function configuredProviders(): ('codex' | 'claude')[] {
+  const settings = vscode.workspace.getConfiguration('onlyOneChat');
+  const clis = ['leader', 'implementer'].map((role) =>
+    settings.get<string>(`${role}.cli`) === 'claude' ? 'claude' : 'codex',
+  );
+  return [...new Set(clis)];
+}
+
 export function activate(context: vscode.ExtensionContext): OnlyOneChatExports {
-  registerCommands(context);
+  const usage = new UsageStore();
+  usage.setProviders(configuredProviders());
+  const usageView = new UsageViewProvider(context, usage);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(UsageViewProvider.viewType, usageView),
+    {
+      dispose: () => {
+        usageView.dispose();
+      },
+    },
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('onlyOneChat')) usage.setProviders(configuredProviders());
+    }),
+  );
+  registerCommands(context, usage, () => usageView.refreshCodex());
   return {
     whenPanelReady: () =>
       new Promise<void>((resolve) => {

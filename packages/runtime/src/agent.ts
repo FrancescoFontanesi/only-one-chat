@@ -118,6 +118,11 @@ export interface AgentSession {
   /** Recipient name in delegation blocks (`<<<DELEGA @<id>`), e.g. "claude". */
   readonly id: string;
   runTurn(prompt: string, handlers: AgentTurnHandlers): AgentTurn;
+  /**
+   * Sets the reasoning effort of the next turns, in the same session; the
+   * user chooses it during the chat. Absent: the effort is fixed.
+   */
+  setEffort?(effort: string): void;
   close(): Promise<void>;
 }
 

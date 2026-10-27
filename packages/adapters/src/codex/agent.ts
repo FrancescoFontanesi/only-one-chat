@@ -396,6 +396,8 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
       throw error;
     }
     const resolvedModel = model ?? 'default model';
+    /** The effort of the next turns; the user can change it during the chat. */
+    let currentEffort = effort;
 
     /** Interrupts the turn and every sub-agent turn still running. */
     async function interruptAll(turn: RunningTurn): Promise<void> {
@@ -433,7 +435,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
           threadId,
           input: [{ type: 'text', text: prompt }],
           ...(model ? { model } : {}),
-          ...(effort ? { effort } : {}),
+          ...(currentEffort ? { effort: currentEffort } : {}),
         })
         .then((response) => {
           if (isRecord(response) && isRecord(response['turn'])) {
@@ -464,6 +466,11 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
       name: `Codex (${resolvedModel})`,
       id: 'codex',
       runTurn,
+      setEffort(next) {
+        // turn/start takes the effort per turn: the thread stays the same.
+        currentEffort = next;
+        identity = { ...identity, effort: next };
+      },
       close: () => session.close(),
     };
   };

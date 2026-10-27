@@ -99,6 +99,27 @@ describe('Codex agent session', () => {
     });
   });
 
+  it('sends the effort chosen during the chat with the next turn, in the same thread', async () => {
+    const received = join(dir, 'received.jsonl');
+    const session = await codex('chatgpt', {
+      launcherArgs: [FAKE_CODEX, '--account=chatgpt', `--log=${received}`],
+    });
+    await session.runTurn('primo', handlers().value).done;
+    session.setEffort?.('high');
+    const second = await session.runTurn('secondo', handlers().value).done;
+    expect(second.identity.effort).toBe('high');
+    const starts = readFileSync(received, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+      .filter((m) => m.method === 'turn/start')
+      .map((m) => m.params);
+    expect(starts.map((p) => [p?.['threadId'], p?.['effort']])).toEqual([
+      ['thread-1', 'low'],
+      ['thread-1', 'high'],
+    ]);
+  });
+
   it('starts a writable thread only when asked, with the unelevated sandbox on Windows', async () => {
     const received = join(dir, 'received.jsonl');
     const session = await codex('chatgpt', {
@@ -475,6 +496,25 @@ describe('Claude agent session', () => {
     expect(Object.keys(result.usage?.byModel ?? {})).toEqual(['claude-haiku-5-5']);
     expect(result.usage?.costUsd).toBeCloseTo(0.004476445);
     expect(result.quota?.windows[0]).toMatchObject({ name: '5h', usedPercent: 69 });
+  });
+
+  it('changes the effort of the next turns in the same session', async () => {
+    const session = await claudeWithPolicy(['--echo']);
+    await session.runTurn('primo', handlers().value).done;
+    session.setEffort?.('high');
+    const second = await session.runTurn('secondo', handlers().value).done;
+    expect(second.identity.effort).toBe('high');
+    const runs = readFileSync(log(), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { argv?: string[]; env?: Record<string, string> })
+      .filter((entry) => entry.argv?.includes('-p'));
+    const effortOf = (argv: string[] | undefined) => argv?.[argv.indexOf('--effort') + 1];
+    expect(runs.map((run) => effortOf(run.argv))).toEqual(['low', 'high']);
+    // The sub-agents' effort variable follows, since it also sets the main session's.
+    expect(runs[1]?.env?.['CLAUDE_CODE_EFFORT_LEVEL']).toBe('high');
+    // The same session: the second turn resumes the first.
+    expect(runs[1]?.argv).toContain('--resume');
   });
 
   it('reports a resumed turn as the difference from the session so far, not the running total', async () => {

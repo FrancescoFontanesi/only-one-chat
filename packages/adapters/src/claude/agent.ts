@@ -35,6 +35,12 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
     // its own: each turn is the difference from the previous one.
     let sessionUsage: Readonly<Record<string, TokenUsage>> = {};
     let sessionCost = 0;
+    /**
+     * The effort of the next turns; the user can change it during the chat.
+     * CLAUDE_CODE_EFFORT_LEVEL also sets the main session's effort, so the
+     * sub-agents' effort follows it (docs/subagents.md).
+     */
+    let effort = config.effort;
 
     function runTurn(prompt: string, handlers: AgentTurnHandlers): AgentTurn {
       const startedAt = Date.now();
@@ -49,9 +55,12 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
       }
       const turn = startClaudeTurn({
         ...config,
+        ...(effort ? { effort } : {}),
         prompt,
         appendSystemPrompt: subagents ? `${instructions}\n\n${subagents.rules}` : instructions,
-        ...(subagents ? { subagents: { model: subagents.model, effort: subagents.effort } } : {}),
+        ...(subagents
+          ? { subagents: { model: subagents.model, effort: effort ?? subagents.effort } }
+          : {}),
         ...(sessionId ? { resumeSessionId: sessionId } : {}),
         onEvent(event) {
           if (event.type === 'text' && event.parentToolUseId !== null) {
@@ -127,7 +136,7 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
           identity: {
             provider: 'Claude Code',
             model: result.model,
-            effort: config.effort ?? null,
+            effort: effort ?? null,
             sessionId: result.sessionId,
           },
         };
@@ -154,6 +163,10 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
       name: `Claude (${config.model ?? 'default model'})`,
       id: 'claude',
       runTurn,
+      setEffort(next) {
+        // Each turn is its own process: the next one starts with --effort next.
+        effort = next;
+      },
       close: async () => {
         await running?.stop();
       },

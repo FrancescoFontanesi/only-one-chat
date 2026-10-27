@@ -33,6 +33,24 @@
     "virtualWorkspaces": false
   },
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "onlyOneChat",
+          "title": "Only One Chat",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "onlyOneChat": [
+        {
+          "type": "webview",
+          "id": "onlyOneChat.usage",
+          "name": "Utilizzo"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "onlyOneChat.openPanel",

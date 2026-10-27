@@ -10,6 +10,8 @@ export interface WebviewHtmlOptions {
   readonly scriptUri: string;
   readonly styleUri: string;
   readonly title: string;
+  /** Which view the bundle renders: the chat (default) or the usage view. */
+  readonly view?: 'chat' | 'usage';
 }
 
 export function createNonce(): string {
@@ -53,7 +55,7 @@ export function renderWebviewHtml(options: WebviewHtmlOptions): string {
   <title>${escapeHtml(options.title)}</title>
 </head>
 <body>
-  <div id="root"></div>
+  <div id="root" data-view="${options.view ?? 'chat'}"></div>
   <script nonce="${escapeHtml(options.nonce)}" src="${escapeHtml(options.scriptUri)}"></script>
 </body>
 </html>`;

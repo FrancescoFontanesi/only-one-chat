@@ -67,6 +67,8 @@ export interface AgentSession {
   /** Recipient name in delegation blocks. */
   readonly id: string;
   runTurn(prompt: string, handlers: AgentTurnHandlers): AgentTurn;
+  /** Reasoning effort of the next turns, without a new session. */
+  setEffort?(effort: string): void;
   close(): Promise<void>;
 }
 

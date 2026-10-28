@@ -6,6 +6,7 @@
 
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { PendingReport } from '@only-one-chat/runtime';
 import type { ThreadUpdate, TurnRole } from '../webview/protocol.js';
 
 export interface ChatRecord {
@@ -16,6 +17,8 @@ export interface ChatRecord {
   updatedAt: number;
   /** The CLIs' own sessions, to resume: Claude session id, Codex thread id. */
   sessions: Partial<Record<TurnRole, string>>;
+  /** Implementer work the leader has not seen yet; absent in older records. */
+  unseen?: PendingReport[];
   updates: ThreadUpdate[];
 }
 
@@ -30,6 +33,22 @@ const MAX_CHATS = 50;
 /** At most this many thread updates per chat, the latest. */
 const MAX_UPDATES = 3000;
 const ID = /^[a-z0-9-]{1,64}$/;
+
+/** The pending reports of a record read from disk; an entry of the wrong shape is dropped. */
+function pendingReports(value: unknown): PendingReport[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is PendingReport => {
+    const r = entry as Partial<Record<keyof PendingReport, unknown>> | null;
+    return (
+      typeof r === 'object' &&
+      r !== null &&
+      (r.source === 'delegation' || r.source === 'direct') &&
+      typeof r.request === 'string' &&
+      typeof r.report === 'string' &&
+      typeof r.facts === 'string'
+    );
+  });
+}
 
 export function newChatId(now = Date.now()): string {
   return `chat-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -83,7 +102,9 @@ export class ChatHistory {
   load(id: string): ChatRecord | undefined {
     try {
       const record = JSON.parse(readFileSync(this.file(id), 'utf8')) as Partial<ChatRecord>;
-      return record.version === 1 && record.id === id ? (record as ChatRecord) : undefined;
+      return record.version === 1 && record.id === id
+        ? { ...(record as ChatRecord), unseen: pendingReports(record.unseen) }
+        : undefined;
     } catch {
       return undefined;
     }

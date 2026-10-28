@@ -65,6 +65,7 @@ Nothing is read from credential files or session files.
   ids of the agents' own sessions.
 - **When you open the panel again**, the most recent chat comes back, and the leader and the
   implementer continue their sessions (`--resume` for Claude, `thread/resume` for Codex).
+  Reports of the implementer the leader had not read yet reach it with your next message.
 - **Earlier chats** are in the CHAT selector of the header; "Nuova chat" starts an empty one.
 - **What was running or waiting** when the chat was closed is shown as interrupted.
 

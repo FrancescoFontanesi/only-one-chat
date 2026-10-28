@@ -83,6 +83,8 @@ Stato: Accettata in parte (iterazione 3).
   - **Ciò che l'hook non decide** resta negato (`--permission-prompts none`).
   - **Verificato su Claude 2.1.308, con un turno reale di Haiku:** l'hook viene chiamato,
     l'allow si applica, e il comando parte.
+  - **Verificato nell'editor:** lo smoke test esegue lo script di `dist/hooks` con il Node di
+    VS Code, tramite la riga di comando scritta nelle impostazioni, e riceve la decisione.
   - **Limite trovato.** Su una cartella con un nome abbreviato 8.3 (per esempio `FRANCE~1`)
     Claude esige un'approvazione manuale che nessun hook può dare. Per questo l'estensione
     espande sempre la cartella nel nome lungo.
@@ -108,7 +110,10 @@ Stato: Accettata in parte (iterazione 3).
   atomico (file temporaneo, poi rename). Contiene:
   - gli aggiornamenti del thread, per ridisegnarlo. I frammenti di un turno concluso si
     scartano, perché il testo finale li contiene;
-  - gli id delle sessioni native del leader e dell'implementatore.
+  - gli id delle sessioni native del leader e dell'implementatore;
+  - i rapporti dell'implementatore che il leader non ha ancora letto. Si salvano a fine turno:
+    se la chat si chiude durante un turno del leader, restano quelli di prima e il leader li
+    rilegge.
 - **Limiti:** al massimo 50 chat e 3000 aggiornamenti per chat.
 - **Alla riapertura del pannello** torna la chat più recente. Quelle precedenti si scelgono
   nell'intestazione, e "Nuova chat" ne apre una vuota. Quello che era in corso o in attesa si
@@ -122,8 +127,6 @@ Stato: Accettata in parte (iterazione 3).
 - **Il primo turno dopo una ripresa non riporta il suo consumo.** I CLI riportano i totali della
   sessione, compresi i turni dei processi precedenti, e senza il totale di partenza non si
   ricava quello del singolo turno. I turni successivi sì.
-- **Da fare:** i rapporti in coda per il leader non si salvano ancora. Alla riapertura il
-  leader non riceve quelli rimasti in sospeso.
 
 ### Esito: chi fa le modifiche piccole
 

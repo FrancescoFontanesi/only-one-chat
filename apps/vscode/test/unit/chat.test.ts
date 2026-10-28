@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { PendingReport } from '@only-one-chat/runtime';
 import { ChatSession, type ChatConfig } from '../../src/session/chat.js';
 import type { ThreadUpdate } from '../../src/webview/protocol.js';
 
@@ -35,10 +36,12 @@ function session(
   mode: 'auto' | 'manual',
   review: 'always' | 'deferred' = 'always',
   resume?: ChatConfig['resume'],
+  unseen?: PendingReport[],
 ) {
   const updates: ThreadUpdate[] = [];
   const busy: boolean[] = [];
   const sessionIds: [string, string][] = [];
+  const kept: (readonly PendingReport[])[] = [];
   const config: ChatConfig = {
     cwd,
     leader: { cli: 'codex', model: 'gpt-6.1-sol', effort: 'low', permission: 'auto' },
@@ -56,14 +59,16 @@ function session(
     mode,
     review,
     ...(resume ? { resume } : {}),
+    ...(unseen ? { unseen } : {}),
     logPath: join(root, 'logs', 'chat.jsonl'),
   };
   const chat = new ChatSession(config, {
     update: (update) => updates.push(update),
     busy: (value) => busy.push(value),
     sessionId: (role, id) => sessionIds.push([role, id]),
+    unseen: (reports) => kept.push([...reports]),
   });
-  return { chat, updates, busy, sessionIds };
+  return { chat, updates, busy, sessionIds, kept };
 }
 
 describe('chat session: a reopened chat (R5)', () => {
@@ -75,6 +80,26 @@ describe('chat session: a reopened chat (R5)', () => {
       await chat.dispose();
     }
     expect(sessionIds).toContainEqual(['leader', 'kept-42']);
+  });
+
+  it('hands the leader the reports it had not read when the chat was closed', async () => {
+    const report: PendingReport = {
+      source: 'direct',
+      request: 'aggiungi round',
+      report: 'fatto: round in calc.py',
+      facts: 'File cambiati: calc.py',
+    };
+    const { chat, updates, kept } = session('auto', 'always', undefined, [report]);
+    try {
+      await chat.send('com’è andata?');
+    } finally {
+      await chat.dispose();
+    }
+    const leader = updates.find((u) => u.type === 'turn' && u.status === 'done');
+    // The fake leader echoes its prompt.
+    expect(leader?.type === 'turn' && leader.text).toContain('fatto: round in calc.py');
+    // Read: nothing is left to keep, and closing the chat does not clear what was kept.
+    expect(kept).toEqual([[]]);
   });
 });
 
@@ -171,6 +196,17 @@ describe('chat session', () => {
     // The fake leader echoes its prompt: the report came before the user's message.
     expect(done[1]?.text).toMatch(/Nel frattempo l’implementatore ha lavorato/);
     expect(done[1]?.text?.endsWith('com’è andata?')).toBe(true);
+  });
+
+  it('reports the unseen work as it changes, to keep it with the chat', async () => {
+    const { chat, kept } = session('auto');
+    try {
+      await chat.send('@impl aggiungi round');
+    } finally {
+      await chat.dispose();
+    }
+    expect(kept).toHaveLength(1);
+    expect(kept[0]).toMatchObject([{ source: 'direct', request: 'aggiungi round' }]);
   });
 
   it('with deferred review, keeps the report for the next message instead of a review turn', async () => {

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -32,6 +32,22 @@ describe('chat history (R5)', () => {
     expect(history.load('chat-a')?.sessions).toEqual({ leader: 'thread-9' });
     // Nothing temporary is left behind.
     expect(readdirSync(join(dir, 'chats')).every((name) => name.endsWith('.json'))).toBe(true);
+  });
+
+  it('keeps the reports the leader has not read, dropping entries of the wrong shape', () => {
+    const history = new ChatHistory(dir);
+    const report = { source: 'direct', request: 'r', report: 'fatto', facts: 'nessun file' };
+    writeFileSync(
+      join(dir, 'chat-u.json'),
+      JSON.stringify({
+        ...record('chat-u', 1),
+        unseen: [report, { source: 'other', request: 'x' }, null],
+      }),
+    );
+    expect(history.load('chat-u')?.unseen).toEqual([report]);
+    // An older record without the field reads as no reports.
+    history.save(record('chat-old', 2));
+    expect(history.load('chat-old')?.unseen).toEqual([]);
   });
 
   it('keeps at most 50 chats, dropping the oldest', () => {

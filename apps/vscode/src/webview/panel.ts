@@ -180,6 +180,19 @@ export class OnlyOneChatPanel {
     this.scheduleSave();
   }
 
+  /** Saves a record the chat changed: soon if it is shown, at once if the user switched away. */
+  private keep(record: ChatRecord): void {
+    if (record === this.record) {
+      this.scheduleSave();
+      return;
+    }
+    try {
+      if (record.updates.length > 0) this.history.save(record);
+    } catch {
+      // The chat is no longer shown; the next change to it tries again.
+    }
+  }
+
   private scheduleSave(): void {
     clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => {
@@ -357,6 +370,8 @@ export class OnlyOneChatPanel {
     }
     const logDir = vscode.Uri.joinPath(this.context.globalStorageUri, 'logs').fsPath;
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    // The chat's own record: a turn that ends after a switch must not write into another chat.
+    const record = this.record;
     this.chat = new ChatSession(
       {
         cwd,
@@ -390,20 +405,26 @@ export class OnlyOneChatPanel {
         },
         mode: this.mode,
         // A reopened chat continues the CLIs' own sessions; Codex keeps its threads.
-        resume: { ...this.record.sessions },
+        resume: { ...record.sessions },
+        unseen: record.unseen ?? [],
         persistent: true,
         review: settings.get<string>('leaderReview') === 'deferred' ? 'deferred' : 'always',
         logPath: path.join(logDir, `chat-${stamp}.jsonl`),
       },
       {
         update: (update) => {
+          if (record !== this.record) return;
           this.remember(update);
           void this.post({ type: 'thread', update });
         },
         sessionId: (role, id) => {
-          if (this.record.sessions[role] === id) return;
-          this.record.sessions[role] = id;
-          this.scheduleSave();
+          if (record.sessions[role] === id) return;
+          record.sessions[role] = id;
+          this.keep(record);
+        },
+        unseen: (reports) => {
+          record.unseen = [...reports];
+          this.keep(record);
         },
         busy: () => {
           void this.postSession();

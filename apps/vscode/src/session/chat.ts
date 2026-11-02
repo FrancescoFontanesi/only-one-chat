@@ -78,6 +78,8 @@ export interface ChatConfig {
   readonly permissionHook?: PermissionBridgeOptions;
   /** The CLIs' own sessions of a reopened chat, to continue (R5). */
   readonly resume?: Partial<Record<TurnRole, string>>;
+  /** The user's own instructions per role, added to the role's (ADR 0013). */
+  readonly instructions?: Partial<Record<TurnRole, string>>;
   /** Implementer work of a reopened chat the leader has not seen yet (R5). */
   readonly unseen?: readonly PendingReport[];
   /** Codex threads kept in Codex's history, so the chat can be reopened (R5). */
@@ -144,6 +146,10 @@ export class ChatSession {
   private unseen: PendingReport[] = [];
   /** Sessions of a reopened chat not resumed yet. */
   private readonly resumable = new Map<TurnRole, string>();
+  /** The CLIs' own session of each role, as last reported. */
+  private readonly nativeSessions = new Map<TurnRole, string>();
+  /** Roles whose session is reopened with new rules before their next turn. */
+  private readonly reopen = new Set<TurnRole>();
   /** The roles as configured, with the effort the user chose during the chat. */
   private readonly roles: { leader: AgentChoice; implementer: AgentChoice };
 
@@ -159,11 +165,53 @@ export class ChatSession {
     }
   }
 
-  /** Reasoning effort of a role from its next turn on, in the same session. */
-  setEffort(role: TurnRole, effort: string): void {
-    this.roles[role] = { ...this.roles[role], effort };
+  /**
+   * The user's choice for a role during the chat (ADR 0012), from the role's
+   * next turn and always in the role's own CLI session: model and effort go to
+   * the same session; another permission level reopens that session with the
+   * new rules. Another CLI is not applied: the chat keeps its providers, since
+   * moving the work to another provider is a handoff (to be designed).
+   * Returns false when the choice was not applied.
+   */
+  setRole(role: TurnRole, choice: AgentChoice): boolean {
+    const before = this.roles[role];
+    if (choice.cli !== before.cli) return false;
+    this.roles[role] = choice;
     const session = role === 'leader' ? this.leaderSession : this.implementerSession;
-    session?.setEffort?.(effort);
+    if (choice.permission !== before.permission && session) {
+      this.reopen.add(role);
+      return true;
+    }
+    if (choice.model !== before.model) session?.setModel?.(choice.model);
+    if (choice.effort !== before.effort) session?.setEffort?.(choice.effort);
+    return true;
+  }
+
+  /** The roles of this chat, with the user's changes. */
+  get currentRoles(): { readonly leader: AgentChoice; readonly implementer: AgentChoice } {
+    return { ...this.roles };
+  }
+
+  /** Sessions reopened with new rules: before a message, never during a turn. */
+  private async applyRoleChanges(): Promise<void> {
+    for (const role of this.reopen) {
+      this.reopen.delete(role);
+      const session = role === 'leader' ? this.leaderSession : this.implementerSession;
+      if (role === 'leader') this.leaderSession = undefined;
+      else this.implementerSession = undefined;
+      await session?.close();
+      await this.bridges.get(role)?.close();
+      this.bridges.delete(role);
+      const native = this.nativeSessions.get(role);
+      if (native) this.resumable.set(role, native);
+    }
+  }
+
+  /** A role's CLI reported its own session: to resume it, now or in a reopened chat. */
+  private noteSession(role: TurnRole, id: string): void {
+    if (id === '') return;
+    this.nativeSessions.set(role, id);
+    this.events.sessionId?.(role, id);
   }
 
   get busy(): boolean {
@@ -230,7 +278,8 @@ export class ChatSession {
     let bridge = this.bridges.get(role);
     if (!bridge) {
       bridge = await startPermissionBridge(
-        (request) => this.askPermission(role, `Claude (${choice.model})`, request.summary),
+        (request) =>
+          this.askPermission(role, `Claude (${this.roles[role].model})`, request.summary),
         hook,
       );
       this.bridges.set(role, bridge);
@@ -248,6 +297,14 @@ export class ChatSession {
     };
   }
 
+  /** The role's instructions, followed by the user's own for it, if any (ADR 0013). */
+  private withUserInstructions(role: TurnRole, instructions: string): string {
+    const own = this.config.instructions?.[role]?.trim();
+    return own
+      ? `${instructions}\n\nIstruzioni dell’utente per questo ruolo:\n${own}`
+      : instructions;
+  }
+
   /** The session to resume for a role, once: a later reset starts new ones. */
   private resumeOf(role: TurnRole): { resume?: string } {
     const id = this.resumable.get(role);
@@ -261,7 +318,10 @@ export class ChatSession {
       this.roles.implementer,
       await this.bridgeFor('implementer'),
     )({
-      ...agentSessionOptions(LIGHT_IMPLEMENTER_INSTRUCTIONS, this.policy(this.roles.implementer)),
+      ...agentSessionOptions(
+        this.withUserInstructions('implementer', LIGHT_IMPLEMENTER_INSTRUCTIONS),
+        this.policy(this.roles.implementer),
+      ),
       ...this.resumeOf('implementer'),
     });
     return this.implementerSession;
@@ -285,6 +345,7 @@ export class ChatSession {
     const shown = { facts: false };
     try {
       this.log ??= await openEventLog(this.config.logPath, this.config.cwd);
+      await this.applyRoleChanges();
       if (DIRECT.test(text)) await this.toImplementer(text.replace(DIRECT, ''), baseline, shown);
       else await this.toLeader(text, baseline, shown);
     } catch (error) {
@@ -358,8 +419,7 @@ export class ChatSession {
       ...(usage ? { usage } : {}),
     });
     this.events.turnUsage?.(result.identity.provider, usage, result.quota ?? null);
-    if (result.identity.sessionId)
-      this.events.sessionId?.('implementer', result.identity.sessionId);
+    this.noteSession('implementer', result.identity.sessionId);
     const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand);
     shown.facts = true;
     this.events.update({ type: 'notice', level: 'info', text: facts });
@@ -384,7 +444,10 @@ export class ChatSession {
       this.roles.leader,
       await this.bridgeFor('leader'),
     )({
-      ...agentSessionOptions(leaderInstructions(this.roles.implementer.cli), leaderPolicy),
+      ...agentSessionOptions(
+        this.withUserInstructions('leader', leaderInstructions(this.roles.implementer.cli)),
+        leaderPolicy,
+      ),
       ...this.resumeOf('leader'),
     });
     const unseen = this.unseen;
@@ -561,7 +624,7 @@ export class ChatSession {
           ...(usage ? { usage } : {}),
         });
         this.events.turnUsage?.(event.identity.provider, usage, event.quota ?? null);
-        if (event.identity.sessionId) this.events.sessionId?.(role, event.identity.sessionId);
+        this.noteSession(role, event.identity.sessionId);
         break;
       }
       case 'activity':

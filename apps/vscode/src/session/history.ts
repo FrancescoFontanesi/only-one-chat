@@ -7,6 +7,7 @@
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PendingReport } from '@only-one-chat/runtime';
+import type { AgentChoice } from './chat.js';
 import type { ThreadUpdate, TurnRole } from '../webview/protocol.js';
 
 export interface ChatRecord {
@@ -17,6 +18,8 @@ export interface ChatRecord {
   updatedAt: number;
   /** The CLIs' own sessions, to resume: Claude session id, Codex thread id. */
   sessions: Partial<Record<TurnRole, string>>;
+  /** The roles the chat runs with: its providers stay its own (ADR 0012); absent in older records. */
+  roles?: Partial<Record<TurnRole, AgentChoice>>;
   /** Implementer work the leader has not seen yet; absent in older records. */
   unseen?: PendingReport[];
   updates: ThreadUpdate[];
@@ -48,6 +51,31 @@ function pendingReports(value: unknown): PendingReport[] {
       typeof r.facts === 'string'
     );
   });
+}
+
+/** The roles of a record read from disk; a role of the wrong shape is dropped. */
+function chatRoles(value: unknown): Partial<Record<TurnRole, AgentChoice>> {
+  const roles: Partial<Record<TurnRole, AgentChoice>> = {};
+  if (typeof value !== 'object' || value === null) return roles;
+  for (const role of ['leader', 'implementer'] as const) {
+    const r = (value as Record<string, unknown>)[role] as Record<string, unknown> | null;
+    if (
+      typeof r === 'object' &&
+      r !== null &&
+      (r['cli'] === 'codex' || r['cli'] === 'claude') &&
+      typeof r['model'] === 'string' &&
+      typeof r['effort'] === 'string' &&
+      (r['permission'] === 'read-only' || r['permission'] === 'ask' || r['permission'] === 'auto')
+    ) {
+      roles[role] = {
+        cli: r['cli'],
+        model: r['model'],
+        effort: r['effort'],
+        permission: r['permission'],
+      };
+    }
+  }
+  return roles;
 }
 
 export function newChatId(now = Date.now()): string {
@@ -103,7 +131,11 @@ export class ChatHistory {
     try {
       const record = JSON.parse(readFileSync(this.file(id), 'utf8')) as Partial<ChatRecord>;
       return record.version === 1 && record.id === id
-        ? { ...(record as ChatRecord), unseen: pendingReports(record.unseen) }
+        ? {
+            ...(record as ChatRecord),
+            unseen: pendingReports(record.unseen),
+            roles: chatRoles(record.roles),
+          }
         : undefined;
     } catch {
       return undefined;

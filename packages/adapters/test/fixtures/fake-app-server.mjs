@@ -444,6 +444,41 @@ const handlers = {
     };
   },
 
+  // Two pages, as a long catalog would come; fields as recorded from 0.164.0.
+  'model/list': (params) =>
+    params.cursor === 'page-2'
+      ? {
+          data: [
+            {
+              id: 'gpt-6-luna',
+              displayName: 'GPT-6-Luna',
+              hidden: false,
+              supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'].map((e) => ({
+                reasoningEffort: e,
+              })),
+              defaultReasoningEffort: 'medium',
+              isDefault: false,
+            },
+            { id: 'internal-model', displayName: 'Hidden', hidden: true },
+          ],
+          nextCursor: null,
+        }
+      : {
+          data: [
+            {
+              id: 'gpt-6.1-sol',
+              displayName: 'GPT-6.1-Sol',
+              hidden: false,
+              supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'].map(
+                (e) => ({ reasoningEffort: e }),
+              ),
+              defaultReasoningEffort: 'low',
+              isDefault: true,
+            },
+          ],
+          nextCursor: 'page-2',
+        },
+
   'account/rateLimits/read': (_params, id) => {
     if (accountKind === 'apiKey') {
       return send({

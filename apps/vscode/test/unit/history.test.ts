@@ -50,6 +50,22 @@ describe('chat history (R5)', () => {
     expect(history.load('chat-old')?.unseen).toEqual([]);
   });
 
+  it('keeps the roles a chat runs with, dropping a role of the wrong shape', () => {
+    const history = new ChatHistory(dir);
+    const leader = { cli: 'codex', model: 'gpt-6.1-sol', effort: 'low', permission: 'auto' };
+    writeFileSync(
+      join(dir, 'chat-r.json'),
+      JSON.stringify({
+        ...record('chat-r', 1),
+        roles: {
+          leader,
+          implementer: { cli: 'gemini', model: 'x', effort: '', permission: 'auto' },
+        },
+      }),
+    );
+    expect(history.load('chat-r')?.roles).toEqual({ leader });
+  });
+
   it('keeps at most 50 chats, dropping the oldest', () => {
     const history = new ChatHistory(dir);
     for (let i = 0; i < 52; i++) history.save(record(`chat-${String(i)}`, i));

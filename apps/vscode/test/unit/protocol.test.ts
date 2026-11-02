@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  effortFor,
   MAX_TEXT_LENGTH,
   parseHostMessage,
   parseWebviewMessage,
@@ -65,6 +66,100 @@ describe('parseWebviewMessage: the chat', () => {
     { type: 'setMode', mode: 'yolo' },
   ])('rejects %j', (value) => {
     expect(parseWebviewMessage(value)).toBeUndefined();
+  });
+});
+
+describe('parseWebviewMessage: composer and roles (ADR 0012)', () => {
+  it('accepts the recipient and route of a message, and a role', () => {
+    expect(parseWebviewMessage({ type: 'send', text: 'x', to: 'implementer' })).toEqual({
+      type: 'send',
+      text: 'x',
+      to: 'implementer',
+    });
+    expect(parseWebviewMessage({ type: 'send', text: 'x', route: 'delega' })).toEqual({
+      type: 'send',
+      text: 'x',
+      route: 'delega',
+    });
+    const role = {
+      type: 'setRole',
+      role: 'implementer',
+      cli: 'claude',
+      model: 'claude-haiku-4-5-20251001',
+      effort: '',
+      permission: 'ask',
+    };
+    expect(parseWebviewMessage({ ...role, extra: 1 })).toEqual(role);
+    expect(parseWebviewMessage({ type: 'refreshModels' })).toEqual({ type: 'refreshModels' });
+  });
+
+  it.each([
+    { type: 'send', text: 'x', to: 'gateway' },
+    { type: 'send', text: 'x', route: 'rm' },
+    { type: 'setRole', role: 'boss', cli: 'codex', model: 'm', effort: 'low', permission: 'auto' },
+    {
+      type: 'setRole',
+      role: 'leader',
+      cli: 'gemini',
+      model: 'm',
+      effort: 'low',
+      permission: 'auto',
+    },
+    {
+      type: 'setRole',
+      role: 'leader',
+      cli: 'codex',
+      model: '--yolo',
+      effort: 'low',
+      permission: 'auto',
+    },
+    {
+      type: 'setRole',
+      role: 'leader',
+      cli: 'codex',
+      model: 'm',
+      effort: 'LOW',
+      permission: 'auto',
+    },
+    { type: 'setRole', role: 'leader', cli: 'codex', model: 'm', effort: 'low', permission: 'all' },
+  ])('rejects %j', (value) => {
+    expect(parseWebviewMessage(value)).toBeUndefined();
+  });
+
+  it('accepts a setting for the user or the folder, and its removal', () => {
+    expect(
+      parseWebviewMessage({
+        type: 'setSetting',
+        key: 'notifications.usageThreshold',
+        value: 70,
+        target: 'user',
+      }),
+    ).toEqual({
+      type: 'setSetting',
+      key: 'notifications.usageThreshold',
+      value: 70,
+      target: 'user',
+    });
+    expect(
+      parseWebviewMessage({ type: 'setSetting', key: 'allowedCommands', target: 'workspace' }),
+    ).toEqual({ type: 'setSetting', key: 'allowedCommands', target: 'workspace' });
+    for (const bad of [
+      { type: 'setSetting', key: '../x', value: 1, target: 'user' },
+      { type: 'setSetting', key: 'fake', value: true, target: 'machine' },
+      { type: 'setSetting', key: 'fake', value: { a: 1 }, target: 'user' },
+      { type: 'setSetting', key: 'allowedCommands', value: [1], target: 'user' },
+    ]) {
+      expect(parseWebviewMessage(bad)).toBeUndefined();
+    }
+  });
+
+  it('keeps an effort the model supports, else its default or medium', () => {
+    const model = { id: 'm', name: 'M', efforts: ['low', 'medium', 'ultra'], defaultEffort: 'low' };
+    expect(effortFor(model, 'ultra')).toBe('ultra');
+    expect(effortFor(model, 'max')).toBe('low');
+    expect(effortFor({ ...model, defaultEffort: null }, 'max')).toBe('medium');
+    expect(effortFor({ ...model, efforts: [] }, 'low')).toBe('');
+    expect(effortFor(undefined, 'high')).toBe('high');
   });
 });
 

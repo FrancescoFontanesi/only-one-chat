@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
-  EFFORTS,
   parseHostMessage,
   type ApprovalMode,
-  type Effort,
   type PermitDecision,
   type RoleInfo,
   type RoleName,
+  type Route,
   type SessionInfo,
   type WebviewToHostMessage,
 } from '../src/webview/protocol.js';
@@ -20,123 +19,112 @@ const post = (message: WebviewToHostMessage) => {
 const STATUS_GLYPH = { running: '▶', done: '■', failed: '×' } as const;
 const NOTICE_GLYPH = { info: '■', warn: '▲', error: '×' } as const;
 
-const PERMISSION_LABEL = {
-  'read-only': 'SOLA LETTURA',
-  ask: 'CHIEDE',
-  auto: 'AUTO NELLA CARTELLA',
-} as const;
+function chatDate(ms: number): string {
+  return new Date(ms).toLocaleString([], {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
 
-/** A role with its model and the reasoning level, which the user chooses (ADR 0010). */
-function Role({ name, title, info }: { name: RoleName; title: string; info: RoleInfo }) {
+/** The chats kept for this folder: opens one of them. */
+function History({ session, close }: { session: SessionInfo; close: () => void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [close]);
   return (
-    <div class="bar-row data">
-      <span class="label role">{title}</span>
-      <span>
-        {info.cli === 'codex' ? 'Codex' : 'Claude'} {info.model}
-      </span>
-      <span class="tag" title="Livello di autorizzazione (impostazioni)">
-        {PERMISSION_LABEL[info.permission]}
-      </span>
-      <label class="label" for={`effort-${name}`}>
-        REASONING
-      </label>
-      <select
-        id={`effort-${name}`}
-        class="select"
-        value={info.effort}
-        onChange={(event) => {
-          const effort = (event.target as HTMLSelectElement).value;
-          if ((EFFORTS as readonly string[]).includes(effort)) {
-            post({ type: 'setEffort', role: name, effort: effort as Effort });
-          }
-        }}
-      >
-        {EFFORTS.map((effort) => (
-          <option key={effort} value={effort}>
-            {effort}
-          </option>
-        ))}
-      </select>
+    <div class="history" role="listbox" aria-label="Chat precedenti">
+      {session.chats.length === 0 && <p class="data muted">Nessuna chat salvata.</p>}
+      {session.chats.map((chat) => (
+        <button
+          key={chat.id}
+          type="button"
+          role="option"
+          aria-selected={chat.id === session.chatId}
+          class={chat.id === session.chatId ? 'history-item on' : 'history-item'}
+          disabled={session.busy}
+          onClick={() => {
+            if (chat.id !== session.chatId) post({ type: 'openChat', id: chat.id });
+            close();
+          }}
+        >
+          <span class="history-title">{chat.title || 'senza titolo'}</span>
+          <span class="muted">{chatDate(chat.updatedAt)}</span>
+        </button>
+      ))}
     </div>
   );
 }
 
+/** As in the Codex and Claude extensions: the chat's title, its history, a new chat. */
 function Header({ session }: { session: SessionInfo | undefined }) {
+  const [open, setOpen] = useState(false);
   if (!session) return <header class="bar">Collegamento all’estensione…</header>;
-  const setMode = (mode: ApprovalMode) => {
-    post({ type: 'setMode', mode });
-  };
   return (
-    <header class="bar">
+    <header class="bar top">
       <div class="bar-row">
-        <span class="brand">ONLY ONE CHAT</span>
+        <span class="chat-title" title={session.title || 'Nuova chat'}>
+          {session.title || 'Nuova chat'}
+        </span>
         {session.fake && <span class="tag tag-strong">FAKE</span>}
         <span class={session.busy ? 'state busy' : 'state'}>
-          {session.busy ? '▶ IN CORSO' : '■ PRONTO'}
+          {session.busy ? '▶ IN CORSO' : ready(session) ? '■ PRONTO' : '× NON PRONTO'}
         </span>
-      </div>
-      <Role name="leader" title="LEADER" info={session.leader} />
-      <Role name="implementer" title="IMPLEMENTA" info={session.implementer} />
-      <div class="bar-row data">
-        <label class="label role" for="chat-select">
-          CHAT
-        </label>
-        <select
-          id="chat-select"
-          class="select"
-          value={session.chatId ?? ''}
+        <button
+          type="button"
+          class={open ? 'seg on' : 'seg'}
+          aria-expanded={open}
+          title="Chat precedenti"
+          onClick={() => {
+            setOpen(!open);
+          }}
+        >
+          STORICO
+        </button>
+        <button
+          type="button"
+          class="seg"
           disabled={session.busy}
-          onChange={(event) => {
-            const id = (event.target as HTMLSelectElement).value;
-            if (id && id !== session.chatId) post({ type: 'openChat', id });
-          }}
-        >
-          {!session.chats.some((chat) => chat.id === session.chatId) && (
-            <option value={session.chatId ?? ''}>nuova chat</option>
-          )}
-          {session.chats.map((chat) => (
-            <option key={chat.id} value={chat.id}>
-              {new Date(chat.updatedAt).toLocaleString([], {
-                day: 'numeric',
-                month: 'short',
-                hour: '2-digit',
-                minute: '2-digit',
-              })}{' '}
-              · {chat.title || 'senza titolo'}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div class="bar-row data">
-        <span class="label">CARTELLA</span>
-        <span class="path">{session.workspace ?? 'nessuna cartella aperta'}</span>
-        {!session.trusted && <span class="tag">NON ATTENDIBILE</span>}
-      </div>
-      <div class="bar-row">
-        <span class="label">APPROVAZIONI</span>
-        <button
-          type="button"
-          class={session.mode === 'manual' ? 'seg on' : 'seg'}
+          title="Nuova chat"
           onClick={() => {
-            setMode('manual');
+            setOpen(false);
+            post({ type: 'newChat' });
           }}
         >
-          MANUALI
+          + NUOVA
         </button>
         <button
           type="button"
-          class={session.mode === 'auto' ? 'seg on' : 'seg'}
+          class="seg"
+          title="Impostazioni di Only One Chat"
           onClick={() => {
-            setMode('auto');
+            post({ type: 'openSettings' });
           }}
         >
-          AUTOMATICHE
+          IMPOSTAZIONI
         </button>
       </div>
+      <div class="bar-row data muted" title={session.workspace ?? undefined}>
+        {session.workspace ? `CARTELLA ${folderName(session.workspace)}` : 'NESSUNA CARTELLA'}
+      </div>
+      {open && (
+        <History
+          session={session}
+          close={() => {
+            setOpen(false);
+          }}
+        />
+      )}
     </header>
   );
 }
-
 function Approval({ item }: { item: Extract<ThreadItem, { kind: 'approval' }> }) {
   const [text, setText] = useState(item.text);
   const edited = text !== item.text;
@@ -300,7 +288,7 @@ function Item({ item }: { item: ThreadItem }) {
     case 'user':
       return (
         <section class="card user">
-          <span class="prompt">&gt;</span>
+          <span class="label">TU</span>
           <div class="text">{item.text}</div>
         </section>
       );
@@ -320,64 +308,179 @@ function Item({ item }: { item: ThreadItem }) {
   }
 }
 
-function Composer({ busy }: { busy: boolean }) {
+const ROUTES: readonly { value: Route | ''; label: string }[] = [
+  { value: '', label: 'decide il leader' },
+  { value: 'delega', label: 'delega' },
+  { value: 'fai', label: 'fai tu' },
+  { value: 'chiedi', label: 'chiedi prima' },
+];
+
+/** The agents can start: a folder is open and trusted. */
+function ready(session: SessionInfo): boolean {
+  return session.workspace !== null && session.trusted;
+}
+
+function folderName(folder: string): string {
+  return folder.split(/[\\/]/).filter(Boolean).at(-1) ?? folder;
+}
+
+/** A role as one line: provider, model and reasoning. */
+function roleLine(info: RoleInfo): string {
+  return `${info.cli === 'codex' ? 'Codex' : 'Claude'} · ${info.modelName}${info.effort ? ` · ${info.effort}` : ''}`;
+}
+
+/**
+ * The box to write in, and under its divider the settings of the message: who
+ * receives it, the route asked of the leader, how messages between agents pass.
+ */
+function Composer({ session }: { session: SessionInfo | undefined }) {
   const [text, setText] = useState('');
+  const [to, setTo] = useState<RoleName>('leader');
+  const [route, setRoute] = useState<Route | ''>('');
+  const busy = session?.busy ?? false;
+  const canSend = session !== undefined && ready(session) && !busy && text.trim() !== '';
+  const enterSends = session?.enterSends ?? true;
   const send = () => {
-    if (text.trim() === '' || busy) return;
-    post({ type: 'send', text });
+    if (!canSend) return;
+    post({
+      type: 'send',
+      text,
+      ...(to === 'implementer' ? { to } : {}),
+      ...(to === 'leader' && route ? { route } : {}),
+    });
     setText('');
   };
+  const setMode = (mode: ApprovalMode) => {
+    post({ type: 'setMode', mode });
+  };
+  const recipient = session ? (to === 'leader' ? session.leader : session.implementer) : undefined;
+  const placeholder =
+    to === 'leader'
+      ? 'Scrivi al leader, oppure incolla un brief (<<<OOC-BRIEF).'
+      : 'Scrivi all’implementatore: il leader legge il suo rapporto con il tuo prossimo messaggio.';
   return (
     <footer class="composer">
-      <textarea
-        class="editor"
-        placeholder="Scrivi al leader, oppure incolla un brief. @impl per scrivere all’implementatore; /fai, /delega, /chiedi per scegliere la via. Ctrl+Invio per inviare."
-        value={text}
-        rows={4}
-        onInput={(event) => {
-          setText((event.target as HTMLTextAreaElement).value);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-            event.preventDefault();
-            send();
-          }
-        }}
-      />
-      <div class="actions">
-        <button
-          type="button"
-          class="btn primary"
-          disabled={busy || text.trim() === ''}
-          onClick={send}
-        >
-          INVIA
-        </button>
-        <button
-          type="button"
-          class="btn"
-          disabled={!busy}
-          onClick={() => {
-            post({ type: 'stop' });
+      {session && !session.workspace && (
+        <div class="notice warn">
+          <span class="glyph">▲</span>
+          <span class="data">Apri la cartella in cui gli agenti devono lavorare.</span>
+          <button
+            type="button"
+            class="seg"
+            onClick={() => {
+              post({ type: 'openFolder' });
+            }}
+          >
+            APRI CARTELLA
+          </button>
+        </div>
+      )}
+      {session?.workspace && !session.trusted && (
+        <div class="notice warn">
+          <span class="glyph">▲</span>
+          <span class="data">
+            Cartella non attendibile (Workspace Trust): gli agenti non partono.
+          </span>
+        </div>
+      )}
+      <div class="compose-box">
+        <textarea
+          class="editor bare"
+          placeholder={`${placeholder} ${
+            enterSends
+              ? 'Invio per inviare, Maiusc+Invio per andare a capo.'
+              : 'Ctrl+Invio per inviare.'
+          }`}
+          value={text}
+          rows={3}
+          onInput={(event) => {
+            setText((event.target as HTMLTextAreaElement).value);
           }}
-        >
-          FERMA
-        </button>
-        <button
-          type="button"
-          class="btn"
-          disabled={busy}
-          onClick={() => {
-            post({ type: 'newChat' });
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' || event.isComposing) return;
+            const sends = enterSends ? !event.shiftKey : event.ctrlKey || event.metaKey;
+            if (sends) {
+              event.preventDefault();
+              send();
+            }
           }}
-        >
-          NUOVA CHAT
-        </button>
+        />
+        <div class="toolbar">
+          <span class="seg-group" role="group" aria-label="Destinatario">
+            <button
+              type="button"
+              class={to === 'leader' ? 'seg on' : 'seg'}
+              title={session ? roleLine(session.leader) : undefined}
+              onClick={() => {
+                setTo('leader');
+              }}
+            >
+              LEADER
+            </button>
+            <button
+              type="button"
+              class={to === 'implementer' ? 'seg on' : 'seg'}
+              title={session ? roleLine(session.implementer) : undefined}
+              onClick={() => {
+                setTo('implementer');
+              }}
+            >
+              IMPLEMENTATORE
+            </button>
+          </span>
+          {to === 'leader' && (
+            <label class="field-inline">
+              <span class="label">VIA</span>
+              <select
+                class="select"
+                value={route}
+                onChange={(event) => {
+                  setRoute((event.target as HTMLSelectElement).value as Route | '');
+                }}
+              >
+                {ROUTES.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label class="field-inline" title="Come passano i messaggi fra leader e implementatore">
+            <span class="label">DELEGHE</span>
+            <select
+              class="select"
+              value={session?.mode ?? 'manual'}
+              onChange={(event) => {
+                setMode((event.target as HTMLSelectElement).value as ApprovalMode);
+              }}
+            >
+              <option value="manual">approvo io</option>
+              <option value="auto">automatiche</option>
+            </select>
+          </label>
+          <span class="spacer" />
+          {recipient && <span class="data muted recipient">{roleLine(recipient)}</span>}
+          {busy ? (
+            <button
+              type="button"
+              class="btn"
+              onClick={() => {
+                post({ type: 'stop' });
+              }}
+            >
+              FERMA
+            </button>
+          ) : (
+            <button type="button" class="btn primary" disabled={!canSend} onClick={send}>
+              INVIA
+            </button>
+          )}
+        </div>
       </div>
     </footer>
   );
 }
-
 export function App() {
   const [session, setSession] = useState<SessionInfo>();
   const [items, setItems] = useState<ThreadItem[]>([]);
@@ -418,9 +521,8 @@ export function App() {
       <main class="thread">
         {items.length === 0 && (
           <p class="data muted empty">
-            Scrivi una richiesta: il leader risponde, fa da sé le modifiche piccole o le delega
-            all’implementatore. Un brief copiato da ChatGPT (&lt;&lt;&lt;OOC-BRIEF) va inoltrato
-            così com’è.
+            Scrivi una richiesta: il leader risponde, oppure delega le modifiche all’implementatore.
+            Un brief copiato da ChatGPT (&lt;&lt;&lt;OOC-BRIEF) va inoltrato così com’è.
           </p>
         )}
         {items.map((item) => (
@@ -428,7 +530,7 @@ export function App() {
         ))}
         <div ref={end} />
       </main>
-      <Composer busy={session?.busy ?? false} />
+      <Composer session={session} />
     </div>
   );
 }

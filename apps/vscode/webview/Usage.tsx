@@ -1,23 +1,48 @@
 import { useEffect, useState } from 'preact/hooks';
-import { parseHostMessage, type ProviderUsage } from '../src/webview/protocol.js';
-import { formatTokens } from './state.js';
+import { parseHostMessage, type ProviderUsage, type UsageWindow } from '../src/webview/protocol.js';
 import { vscodeApi } from './vscodeApi.js';
 
 const NAMES = { codex: 'CODEX', claude: 'CLAUDE' } as const;
-const WINDOWS: Record<string, string> = { '5h': '5 ORE', weekly: 'SETTIMANA' };
 
 function time(ms: number): string {
-  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return new Date(ms).toLocaleString([], {
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
-function resets(seconds: number | null): string {
-  if (seconds === null) return '';
-  const date = new Date(seconds * 1000);
-  const sameDay = date.toDateString() === new Date().toDateString();
-  return ` · reset ${sameDay ? time(date.getTime()) : date.toLocaleDateString([], { weekday: 'short', day: 'numeric' })}`;
+/** Why a window is missing, in a few words; the full note is in the tooltip. */
+function missing(provider: ProviderUsage): string {
+  if (provider.provider === 'claude') return 'dopo un turno';
+  return provider.updatedAt === null && /non riuscita|non trovat|not found/i.test(provider.note)
+    ? 'non letto'
+    : 'in lettura';
 }
 
-/** The subscriptions in use: usage windows and what this chat has used. */
+function Cell({ window, provider }: { window: UsageWindow | undefined; provider: ProviderUsage }) {
+  if (!window) {
+    return (
+      <td class="data muted" title={provider.note}>
+        {missing(provider)}
+      </td>
+    );
+  }
+  const percent = window.usedPercent;
+  return (
+    <td
+      class="data"
+      title={window.resetsAt === null ? undefined : `reset ${time(window.resetsAt * 1000)}`}
+    >
+      <div class="meter-bar">
+        <div class={`meter-fill p${String(Math.min(10, Math.round(percent / 10)))}`} />
+      </div>
+      {percent.toFixed(percent % 1 === 0 ? 0 : 1)}%
+    </td>
+  );
+}
+
+/** One table: each subscription with its 5-hour and weekly windows. */
 export function UsageApp() {
   const [providers, setProviders] = useState<readonly ProviderUsage[]>([]);
 
@@ -34,48 +59,30 @@ export function UsageApp() {
   }, []);
 
   return (
-    <div class="usage">
-      {providers.length === 0 && <p class="data muted">Nessuna subscription configurata.</p>}
-      {providers.map((p) => (
-        <section key={p.provider} class="card usage-card">
-          <div class="card-head">
-            <span class="label">{NAMES[p.provider]}</span>
-            <span class="data muted">
-              {p.updatedAt === null ? 'nessuna lettura' : `letto alle ${time(p.updatedAt)}`}
-            </span>
-          </div>
-          {p.windows.map((w) => (
-            <div key={w.name} class="meter">
-              <div class="meter-row data">
-                <span>{WINDOWS[w.name] ?? w.name}</span>
-                <span>
-                  {w.usedPercent.toFixed(w.usedPercent % 1 === 0 ? 0 : 1)}%{resets(w.resetsAt)}
-                </span>
-              </div>
-              <div class="meter-bar">
-                <div
-                  class={`meter-fill p${String(Math.min(10, Math.round(w.usedPercent / 10)))}`}
-                />
-              </div>
-            </div>
+    <div class="side">
+      <table class="quota">
+        <thead>
+          <tr>
+            <th class="label">PROVIDER</th>
+            <th class="label">5H</th>
+            <th class="label">1W</th>
+          </tr>
+        </thead>
+        <tbody>
+          {providers.map((p) => (
+            <tr key={p.provider}>
+              <th
+                class="label"
+                title={`${p.updatedAt === null ? 'nessuna lettura' : `letto ${time(p.updatedAt)}`} · ${p.note}`}
+              >
+                {NAMES[p.provider]}
+              </th>
+              <Cell window={p.windows.find((w) => w.name === '5h')} provider={p} />
+              <Cell window={p.windows.find((w) => w.name === 'weekly')} provider={p} />
+            </tr>
           ))}
-          <div class="data muted">
-            questa chat: contesto {formatTokens(p.chat.context)} · output{' '}
-            {formatTokens(p.chat.output)}
-            {p.chat.costUsd > 0 && ` · $${p.chat.costUsd.toFixed(3)} nominali`}
-          </div>
-          <div class="data muted">{p.note}</div>
-        </section>
-      ))}
-      <button
-        type="button"
-        class="btn"
-        onClick={() => {
-          vscodeApi.postMessage({ type: 'refreshUsage' });
-        }}
-      >
-        AGGIORNA CODEX
-      </button>
+        </tbody>
+      </table>
     </div>
   );
 }

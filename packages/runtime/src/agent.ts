@@ -128,6 +128,11 @@ export interface AgentSession {
    * user chooses it during the chat. Absent: the effort is fixed.
    */
   setEffort?(effort: string): void;
+  /**
+   * Sets the model of the next turns, in the same session and with the same
+   * CLI; the user chooses it during the chat. Absent: the model is fixed.
+   */
+  setModel?(model: string): void;
   close(): Promise<void>;
 }
 

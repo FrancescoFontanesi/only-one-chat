@@ -62,6 +62,14 @@ export {
 } from './codex/agent.js';
 export { createClaudeAgentFactory, type ClaudeAgentConfig } from './claude/agent.js';
 export {
+  claudeModels,
+  codexModels,
+  listClaudeModels,
+  listCodexModels,
+  type ListModelsOptions,
+  type ModelInfo,
+} from './models.js';
+export {
   startPermissionBridge,
   summarizeToolCall,
   type PermissionBridge,

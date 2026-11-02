@@ -1,11 +1,14 @@
 import { realpathSync } from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { resolveClaudeExecutable, resolveCodexExecutable } from '@only-one-chat/adapters';
 import { getRuntimeInfo } from '@only-one-chat/runtime';
-import { ChatSession, type AgentChoice, type ChatConfig } from '../session/chat.js';
-import { providerOf, type UsageStore } from '../session/usage.js';
+import { cliLaunch, isFake } from '../clis.js';
+import type { RoleSettings, Roles } from '../roles.js';
+import { ChatSession } from '../session/chat.js';
 import { ChatHistory, forReplay, newChatId, type ChatRecord } from '../session/history.js';
+import type { MonitorStore } from '../session/monitor.js';
+import { notifyChat } from '../notifications.js';
+import { providerOf, type UsageStore } from '../session/usage.js';
 import { createNonce, renderWebviewHtml } from './html.js';
 import {
   parseWebviewMessage,
@@ -15,6 +18,7 @@ import {
   type ThreadUpdate,
   type WebviewToHostMessage,
 } from './protocol.js';
+import type { ChatRoles } from './rolesView.js';
 
 const TITLE = 'Only One Chat';
 
@@ -33,15 +37,12 @@ function workspaceFolder(): string | null {
   }
 }
 
-function agentChoice(settings: vscode.WorkspaceConfiguration, role: string): AgentChoice {
-  const cli = settings.get<string>(`${role}.cli`);
-  const permission = settings.get<string>(`${role}.permission`);
-  return {
-    cli: cli === 'claude' ? 'claude' : 'codex',
-    model: settings.get<string>(`${role}.model`) ?? '',
-    effort: settings.get<string>(`${role}.effort`) ?? 'low',
-    permission: permission === 'read-only' || permission === 'ask' ? permission : 'auto',
-  };
+/** Shared by the panel and the views it feeds. */
+export interface PanelServices {
+  readonly usage: UsageStore;
+  readonly monitor: MonitorStore;
+  readonly roles: RoleSettings;
+  readonly refreshCodexUsage: () => Promise<void>;
 }
 
 /** Single editor panel hosting the chat with the leader. */
@@ -50,15 +51,29 @@ export class OnlyOneChatPanel {
 
   private static current: OnlyOneChatPanel | undefined;
   private static readonly readyEmitter = new vscode.EventEmitter<void>();
+  private static readonly rolesEmitter = new vscode.EventEmitter<void>();
 
   /** Fires each time a panel's webview has loaded and received its status. */
   static readonly onDidBecomeReady = OnlyOneChatPanel.readyEmitter.event;
 
-  static show(
-    context: vscode.ExtensionContext,
-    usage: UsageStore,
-    refreshCodexUsage: () => Promise<void>,
-  ): void {
+  /** The roles of the chat shown, for the roles view. */
+  static readonly chatRoles: ChatRoles = {
+    current: () => OnlyOneChatPanel.current?.chatRoles() ?? null,
+    onDidChange: OnlyOneChatPanel.rolesEmitter.event,
+  };
+
+  /** A new, empty chat in the panel shown (command palette). */
+  static async newChat(): Promise<void> {
+    const current = OnlyOneChatPanel.current;
+    if (current && !current.chat?.busy) await current.switchTo(current.emptyRecord());
+  }
+
+  /** Stops what the chat is running (command palette). */
+  static async stop(): Promise<void> {
+    await OnlyOneChatPanel.current?.chat?.stop();
+  }
+
+  static show(context: vscode.ExtensionContext, services: PanelServices): void {
     if (OnlyOneChatPanel.current) {
       OnlyOneChatPanel.current.panel.reveal();
       return;
@@ -80,11 +95,11 @@ export class OnlyOneChatPanel {
     OnlyOneChatPanel.current = new OnlyOneChatPanel(
       panel,
       context,
-      usage,
-      refreshCodexUsage,
+      services,
       webviewRoot,
       mediaRoot,
     );
+    OnlyOneChatPanel.rolesEmitter.fire();
   }
 
   private readonly disposables: vscode.Disposable[] = [];
@@ -100,8 +115,7 @@ export class OnlyOneChatPanel {
   private constructor(
     private readonly panel: vscode.WebviewPanel,
     private readonly context: vscode.ExtensionContext,
-    private readonly usage: UsageStore,
-    private readonly refreshCodexUsage: () => Promise<void>,
+    private readonly services: PanelServices,
     webviewRoot: vscode.Uri,
     mediaRoot: vscode.Uri,
   ) {
@@ -112,6 +126,7 @@ export class OnlyOneChatPanel {
     // The most recent chat of this folder comes back; otherwise a new one.
     const latest = this.history.list()[0];
     this.record = (latest && this.history.load(latest.id)) ?? this.emptyRecord();
+    this.showRoles();
     const webview = panel.webview;
     webview.html = renderWebviewHtml({
       cspSource: webview.cspSource,
@@ -132,29 +147,76 @@ export class OnlyOneChatPanel {
       vscode.workspace.onDidGrantWorkspaceTrust(() => {
         void this.postSession();
       }),
+      services.roles.onDidChange(() => {
+        this.applyRoles();
+      }),
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration('onlyOneChat.composer')) void this.postSession();
+      }),
     );
   }
 
-  /** Fake CLIs instead of the real ones: development host only, no quota. */
-  private get fake(): boolean {
-    return (
-      this.context.extensionMode === vscode.ExtensionMode.Development &&
-      vscode.workspace.getConfiguration('onlyOneChat').get<boolean>('fake') === true
-    );
+  /**
+   * The roles of a chat: those of the roles view, but a chat keeps the
+   * providers it ran with (ADR 0012): moving its work to another provider is a
+   * handoff, not a setting.
+   */
+  private rolesFor(record: ChatRecord): Roles {
+    const next = this.services.roles.get();
+    const keep = (role: 'leader' | 'implementer') => {
+      const own = record.roles?.[role];
+      return own && own.cli !== next[role].cli ? own : next[role];
+    };
+    return { leader: keep('leader'), implementer: keep('implementer') };
+  }
+
+  /** The roles of the chat shown, once it has run: null for a chat not started yet. */
+  private chatRoles(): Roles | null {
+    if (this.chat) return this.chat.currentRoles;
+    return this.record.roles?.leader && this.record.roles.implementer
+      ? this.rolesFor(this.record)
+      : null;
+  }
+
+  /** The roles changed in the roles view: the chat takes what stays on its providers. */
+  private applyRoles(): void {
+    const chat = this.chat;
+    if (chat) {
+      const next = this.services.roles.get();
+      for (const role of ['leader', 'implementer'] as const) chat.setRole(role, next[role]);
+      this.record.roles = { ...chat.currentRoles };
+      this.keep(this.record);
+    }
+    this.showRoles();
+    void this.postSession();
+  }
+
+  /** Tells the activity and roles views which roles the chat shown has. */
+  private showRoles(): void {
+    const roles = this.chatRoles() ?? this.rolesFor(this.record);
+    this.services.monitor.setRoles({
+      leader: this.services.roles.info(roles.leader),
+      implementer: this.services.roles.info(roles.implementer),
+    });
+    OnlyOneChatPanel.rolesEmitter.fire();
   }
 
   private sessionInfo(): SessionInfo {
-    const settings = vscode.workspace.getConfiguration('onlyOneChat');
+    const roles = this.chatRoles() ?? this.rolesFor(this.record);
     return {
       workspace: workspaceFolder(),
       trusted: vscode.workspace.isTrusted,
-      leader: agentChoice(settings, 'leader'),
-      implementer: agentChoice(settings, 'implementer'),
+      leader: this.services.roles.info(roles.leader),
+      implementer: this.services.roles.info(roles.implementer),
       mode: this.mode,
-      fake: this.fake,
+      fake: isFake(this.context),
       busy: this.chat?.busy ?? false,
+      title: this.record.title,
       chats: this.history.list(),
       chatId: this.record.id,
+      enterSends:
+        vscode.workspace.getConfiguration('onlyOneChat').get<boolean>('composer.enterSends') ??
+        true,
     };
   }
 
@@ -174,7 +236,10 @@ export class OnlyOneChatPanel {
   /** Keeps an update of the shown chat; written to disk shortly after (R5). */
   private remember(update: ThreadUpdate): void {
     const record = this.record;
-    if (update.type === 'user' && record.title === '') record.title = update.text.slice(0, 60);
+    if (update.type === 'user' && record.title === '') {
+      record.title = update.text.replace(/^(@impl|\/(fai|delega|chiedi))\b\s*/i, '').slice(0, 60);
+      void this.postSession();
+    }
     record.updates.push(update);
     record.updatedAt = Date.now();
     this.scheduleSave();
@@ -228,8 +293,9 @@ export class OnlyOneChatPanel {
     this.saveNow();
     await this.chat?.dispose();
     this.chat = undefined;
-    this.usage.resetChat();
+    this.services.monitor.reset();
     this.record = record;
+    this.showRoles();
     await this.replay();
     void this.postSession();
   }
@@ -262,8 +328,19 @@ export class OnlyOneChatPanel {
         void this.post({ type: 'pong', id: message.id, receivedAt: new Date().toISOString() });
         break;
       case 'send': {
+        if (!(await this.saveBeforeSend())) break;
         const chat = await this.ensureChat();
-        if (chat) await chat.send(message.text);
+        if (!chat) break;
+        // The composer's recipient and route, written as the commands the chat reads.
+        const typed = /^(@impl|\/(fai|delega|chiedi))\b/i.test(message.text);
+        const prefix = typed
+          ? ''
+          : message.to === 'implementer'
+            ? '@impl '
+            : message.route
+              ? `/${message.route} `
+              : '';
+        await chat.send(`${prefix}${message.text}`);
         break;
       }
       case 'decide':
@@ -280,15 +357,6 @@ export class OnlyOneChatPanel {
         this.chat?.setMode(message.mode);
         void this.postSession();
         break;
-      case 'setEffort':
-        // The user's choice: kept in the settings for the next chats, and applied
-        // to this chat's sessions from their next turn.
-        await vscode.workspace
-          .getConfiguration('onlyOneChat')
-          .update(`${message.role}.effort`, message.effort, vscode.ConfigurationTarget.Global);
-        this.chat?.setEffort(message.role, message.effort);
-        void this.postSession();
-        break;
       case 'newChat':
         await this.switchTo(this.emptyRecord());
         break;
@@ -298,7 +366,15 @@ export class OnlyOneChatPanel {
         break;
       }
       case 'refreshUsage':
-        await this.refreshCodexUsage();
+        await this.services.refreshCodexUsage();
+        break;
+      case 'openFolder':
+        await vscode.commands.executeCommand('workbench.action.files.openFolder');
+        break;
+      case 'openSettings':
+        await vscode.commands.executeCommand('onlyOneChat.openSettings');
+        break;
+      default:
         break;
     }
   }
@@ -318,7 +394,8 @@ export class OnlyOneChatPanel {
       );
       return undefined;
     }
-    if (!this.fake && this.confirmedFolder !== cwd) {
+    const fake = isFake(this.context);
+    if (!fake && this.confirmedFolder !== cwd) {
       const answer = await vscode.window.showWarningMessage(
         `Gli agenti lavoreranno in ${cwd} e potranno modificarne i file ed eseguire i comandi consentiti. Continuare?`,
         { modal: true },
@@ -328,50 +405,22 @@ export class OnlyOneChatPanel {
       this.confirmedFolder = cwd;
     }
     const settings = vscode.workspace.getConfiguration('onlyOneChat');
-    const leader = agentChoice(settings, 'leader');
-    const implementer = agentChoice(settings, 'implementer');
+    // The chat's own record: a turn that ends after a switch must not write into another chat.
+    const record = this.record;
+    const { leader, implementer } = this.rolesFor(record);
     const uses = (cli: 'codex' | 'claude') => leader.cli === cli || implementer.cli === cli;
-    let codexExecutable = '';
-    let claudeExecutable = '';
-    let fakeArgs: Pick<ChatConfig, 'codexLauncherArgs' | 'claudeLauncherArgs'> = {};
+    let codex = { executable: '', launcherArgs: [] as readonly string[] };
+    let claude = { executable: '', launcherArgs: [] as readonly string[] };
     try {
-      if (this.fake) {
-        // The adapters' fake CLIs, from the repository: development only.
-        const fixtures = path.join(
-          this.context.extensionPath,
-          '..',
-          '..',
-          'packages',
-          'adapters',
-          'test',
-          'fixtures',
-        );
-        codexExecutable = 'node';
-        claudeExecutable = 'node';
-        fakeArgs = {
-          codexLauncherArgs: [path.join(fixtures, 'fake-app-server.mjs'), '--account=chatgpt'],
-          claudeLauncherArgs: [path.join(fixtures, 'fake-claude.mjs'), '--echo'],
-        };
-      } else {
-        if (uses('codex')) {
-          codexExecutable = await resolveCodexExecutable({
-            configuredPath: settings.get<string>('codexPath') ?? '',
-          });
-        }
-        if (uses('claude')) {
-          claudeExecutable = await resolveClaudeExecutable({
-            configuredPath: settings.get<string>('claudePath') ?? '',
-          });
-        }
-      }
+      if (uses('codex')) codex = await cliLaunch(this.context, 'codex');
+      if (uses('claude')) claude = await cliLaunch(this.context, 'claude');
     } catch (error) {
       this.notice('error', error instanceof Error ? error.message : String(error));
       return undefined;
     }
     const logDir = vscode.Uri.joinPath(this.context.globalStorageUri, 'logs').fsPath;
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    // The chat's own record: a turn that ends after a switch must not write into another chat.
-    const record = this.record;
+    record.roles = { leader, implementer };
     this.chat = new ChatSession(
       {
         cwd,
@@ -387,9 +436,10 @@ export class OnlyOneChatPanel {
             effort: settings.get<string>('subagents.effort') ?? 'low',
           },
         },
-        codexExecutable,
-        claudeExecutable,
-        ...fakeArgs,
+        codexExecutable: codex.executable,
+        claudeExecutable: claude.executable,
+        ...(codex.launcherArgs.length > 0 ? { codexLauncherArgs: codex.launcherArgs } : {}),
+        ...(claude.launcherArgs.length > 0 ? { claudeLauncherArgs: claude.launcherArgs } : {}),
         allowedCommands: settings.get<string[]>('allowedCommands') ?? [],
         verifyCommand: settings.get<string[]>('verifyCommand') ?? [],
         // The editor's own Node runs the PermissionRequest hook script (R9).
@@ -409,12 +459,25 @@ export class OnlyOneChatPanel {
         unseen: record.unseen ?? [],
         persistent: true,
         review: settings.get<string>('leaderReview') === 'deferred' ? 'deferred' : 'always',
+        instructions: {
+          leader: settings.get<string>('leader.instructions') ?? '',
+          implementer: settings.get<string>('implementer.instructions') ?? '',
+        },
         logPath: path.join(logDir, `chat-${stamp}.jsonl`),
       },
       {
         update: (update) => {
           if (record !== this.record) return;
           this.remember(update);
+          this.services.monitor.apply(update);
+          if (update.type === 'permission' || update.type === 'approval') {
+            this.notifyIfAway(
+              'waiting',
+              update.type === 'permission'
+                ? `${update.role === 'leader' ? 'Il leader' : 'L’implementatore'} chiede il permesso: ${update.summary}`
+                : 'Un messaggio fra gli agenti aspetta la tua approvazione.',
+            );
+          }
           void this.post({ type: 'thread', update });
         },
         sessionId: (role, id) => {
@@ -426,17 +489,18 @@ export class OnlyOneChatPanel {
           record.unseen = [...reports];
           this.keep(record);
         },
-        busy: () => {
+        busy: (busy) => {
           void this.postSession();
+          if (!busy && record === this.record)
+            this.notifyIfAway('turnEnd', 'Il messaggio è concluso.');
         },
-        turnUsage: (identityProvider, turnUsage, quota) => {
+        turnUsage: (identityProvider, _turnUsage, quota) => {
           const provider = providerOf(identityProvider);
-          if (!provider) return;
-          if (turnUsage) this.usage.addTurn(provider, turnUsage);
-          if (quota) this.usage.setQuota(provider, quota);
+          if (provider && quota) this.services.usage.setQuota(provider, quota);
         },
       },
     );
+    this.showRoles();
     return this.chat;
   }
 
@@ -444,11 +508,54 @@ export class OnlyOneChatPanel {
     return this.panel.webview.postMessage(message);
   }
 
+  /** A notification, if its setting is on, while the chat is not in front of the user. */
+  private notifyIfAway(kind: 'waiting' | 'turnEnd', text: string): void {
+    if (this.panel.active && vscode.window.state.focused) return;
+    notifyChat(kind, text, () => {
+      this.panel.reveal();
+    });
+  }
+
+  /**
+   * The agents read and change the files on disk: the folder's unsaved files
+   * are saved first, or not, as onlyOneChat.saveBeforeSend says. False: the
+   * user cancelled the message.
+   */
+  private async saveBeforeSend(): Promise<boolean> {
+    const cwd = workspaceFolder();
+    if (!cwd) return true;
+    const policy = vscode.workspace.getConfiguration('onlyOneChat').get<string>('saveBeforeSend');
+    if (policy === 'never') return true;
+    const inside = (file: string) => {
+      const relative = path.relative(cwd, file);
+      return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+    };
+    const dirty = vscode.workspace.textDocuments.filter(
+      (document) =>
+        document.isDirty && document.uri.scheme === 'file' && inside(document.uri.fsPath),
+    );
+    if (dirty.length === 0) return true;
+    if (policy !== 'always') {
+      const answer = await vscode.window.showWarningMessage(
+        `${String(dirty.length)} file della cartella non sono salvati: gli agenti vedono i file su disco.`,
+        { modal: true },
+        'Salva e invia',
+        'Invia senza salvare',
+      );
+      if (answer === undefined) return false;
+      if (answer === 'Invia senza salvare') return true;
+    }
+    await Promise.all(dirty.map((document) => document.save()));
+    return true;
+  }
+
   private dispose(): void {
     this.saveNow();
     OnlyOneChatPanel.current = undefined;
     void this.chat?.dispose();
     this.chat = undefined;
+    this.services.monitor.reset();
+    OnlyOneChatPanel.rolesEmitter.fire();
     for (const disposable of this.disposables.splice(0)) disposable.dispose();
   }
 }

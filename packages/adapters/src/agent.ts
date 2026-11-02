@@ -72,6 +72,8 @@ export interface AgentSession {
   runTurn(prompt: string, handlers: AgentTurnHandlers): AgentTurn;
   /** Reasoning effort of the next turns, without a new session. */
   setEffort?(effort: string): void;
+  /** Model of the next turns, in the same session. */
+  setModel?(model: string): void;
   close(): Promise<void>;
 }
 

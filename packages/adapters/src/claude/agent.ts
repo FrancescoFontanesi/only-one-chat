@@ -47,6 +47,8 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
      * sub-agents' effort follows it (docs/subagents.md).
      */
     let effort = config.effort;
+    /** The model of the next turns: each turn is its own process with --model. */
+    let model = config.model;
 
     function runTurn(prompt: string, handlers: AgentTurnHandlers): AgentTurn {
       const startedAt = Date.now();
@@ -61,6 +63,7 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
       }
       const turn = startClaudeTurn({
         ...config,
+        ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
         prompt,
         appendSystemPrompt: subagents ? `${instructions}\n\n${subagents.rules}` : instructions,
@@ -170,12 +173,17 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
     }
 
     return Promise.resolve({
-      name: `Claude (${config.model ?? 'default model'})`,
+      get name() {
+        return `Claude (${model ?? 'default model'})`;
+      },
       id: 'claude',
       runTurn,
       setEffort(next) {
         // Each turn is its own process: the next one starts with --effort next.
         effort = next;
+      },
+      setModel(next) {
+        model = next;
       },
       close: async () => {
         await running?.stop();

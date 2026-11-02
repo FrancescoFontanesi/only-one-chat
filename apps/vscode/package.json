@@ -46,6 +46,16 @@
       "onlyOneChat": [
         {
           "type": "webview",
+          "id": "onlyOneChat.roles",
+          "name": "Ruoli"
+        },
+        {
+          "type": "webview",
+          "id": "onlyOneChat.monitor",
+          "name": "Attività"
+        },
+        {
+          "type": "webview",
           "id": "onlyOneChat.usage",
           "name": "Utilizzo"
         }
@@ -54,8 +64,39 @@
     "commands": [
       {
         "command": "onlyOneChat.openPanel",
-        "title": "Open Panel",
-        "category": "Only One Chat"
+        "title": "Open Chat",
+        "category": "Only One Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "onlyOneChat.newChat",
+        "title": "New Chat",
+        "category": "Only One Chat",
+        "icon": "$(add)"
+      },
+      {
+        "command": "onlyOneChat.stop",
+        "title": "Stop",
+        "category": "Only One Chat",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "onlyOneChat.openSettings",
+        "title": "Settings",
+        "category": "Only One Chat",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "onlyOneChat.refreshUsage",
+        "title": "Refresh Usage",
+        "category": "Only One Chat",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "onlyOneChat.refreshModels",
+        "title": "Refresh Models",
+        "category": "Only One Chat",
+        "icon": "$(refresh)"
       }
     ],
     "configuration": {
@@ -68,17 +109,17 @@
             "claude"
           ],
           "default": "codex",
-          "description": "CLI of the leader, the model you chat with."
+          "description": "CLI of the leader, the model you chat with. A chat keeps its providers: another CLI applies from the next chat."
         },
         "onlyOneChat.leader.model": {
           "type": "string",
           "default": "gpt-6.1-sol",
-          "description": "Model of the leader, as its CLI names it."
+          "description": "Model of the leader, as its CLI names it; chosen in the Ruoli view from the models the CLI offers."
         },
         "onlyOneChat.leader.effort": {
           "type": "string",
           "default": "low",
-          "description": "Reasoning effort of the leader."
+          "description": "Reasoning effort of the leader, among those its model supports."
         },
         "onlyOneChat.leader.permission": {
           "type": "string",
@@ -93,7 +134,7 @@
             "Acts inside the folder; asks you to go beyond it."
           ],
           "default": "auto",
-          "description": "What the leader may do without asking. Applies to the next chat."
+          "description": "What the leader may do without asking. Changed in the Ruoli view, it applies from the role's next turn, in the same session."
         },
         "onlyOneChat.implementer.permission": {
           "type": "string",
@@ -108,7 +149,7 @@
             "Acts inside the folder; asks you to go beyond it."
           ],
           "default": "auto",
-          "description": "What the implementer may do without asking. Applies to the next chat."
+          "description": "What the implementer may do without asking. Changed in the Ruoli view, it applies from the role's next turn, in the same session."
         },
         "onlyOneChat.implementer.cli": {
           "type": "string",
@@ -117,17 +158,17 @@
             "claude"
           ],
           "default": "claude",
-          "description": "CLI of the implementer, which takes the larger changes."
+          "description": "CLI of the implementer, which makes the changes. A chat keeps its providers: another CLI applies from the next chat."
         },
         "onlyOneChat.implementer.model": {
           "type": "string",
           "default": "sonnet",
-          "description": "Model of the implementer, as its CLI names it."
+          "description": "Model of the implementer, as its CLI names it; chosen in the Ruoli view from the models the CLI offers."
         },
         "onlyOneChat.implementer.effort": {
           "type": "string",
           "default": "low",
-          "description": "Reasoning effort of the implementer."
+          "description": "Reasoning effort of the implementer, among those its model supports."
         },
         "onlyOneChat.subagents.codexModel": {
           "type": "string",
@@ -199,8 +240,83 @@
           "type": "boolean",
           "default": false,
           "description": "Development host only: fake CLIs, no model turns, no quota."
+        },
+        "onlyOneChat.leader.instructions": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "editPresentation": "multilineText",
+          "description": "Your own instructions for the leader, added to its role instructions. Applies from the next chat. Project rules belong in AGENTS.md or CLAUDE.md, which the CLIs already read."
+        },
+        "onlyOneChat.implementer.instructions": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "editPresentation": "multilineText",
+          "description": "Your own instructions for the implementer, added to its role instructions. Applies from the next chat."
+        },
+        "onlyOneChat.composer.enterSends": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enter sends and Shift+Enter starts a new line; off: Ctrl+Enter sends and Enter starts a new line."
+        },
+        "onlyOneChat.saveBeforeSend": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "always",
+            "never"
+          ],
+          "enumDescriptions": [
+            "Asks to save the unsaved files of the folder before a message.",
+            "Saves them before each message.",
+            "Never: the agents see the files as they are on disk."
+          ],
+          "default": "ask",
+          "description": "Unsaved files of the folder before a message: the agents read and change the files on disk."
+        },
+        "onlyOneChat.notifications.waiting": {
+          "type": "boolean",
+          "default": true,
+          "description": "A notification when an agent waits for you and the chat is not in view."
+        },
+        "onlyOneChat.notifications.turnEnd": {
+          "type": "boolean",
+          "default": false,
+          "description": "A notification when a message is done and the chat is not in view."
+        },
+        "onlyOneChat.notifications.usageThreshold": {
+          "type": "number",
+          "default": 80,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "A warning when a usage window of a subscription goes past this percentage; 0: never."
         }
       }
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "onlyOneChat.openPanel",
+          "when": "view == onlyOneChat.roles",
+          "group": "navigation@1"
+        },
+        {
+          "command": "onlyOneChat.openSettings",
+          "when": "view == onlyOneChat.roles",
+          "group": "navigation@2"
+        },
+        {
+          "command": "onlyOneChat.refreshModels",
+          "when": "view == onlyOneChat.roles",
+          "group": "navigation@3"
+        },
+        {
+          "command": "onlyOneChat.refreshUsage",
+          "when": "view == onlyOneChat.usage",
+          "group": "navigation"
+        }
+      ]
     }
   },
   "scripts": {

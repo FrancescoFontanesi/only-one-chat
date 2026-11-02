@@ -183,6 +183,24 @@ tocca e come le mitiga.
   comunque all'utente: non si può auto-approvare, salvo una richiesta identica a una già
   consentita per la sessione.
 
+### T13. Catalogo dei modelli e ruoli dalla vista (ADR 0012)
+
+- **Minaccia:**
+  - la lettura dei modelli che consuma quota, o che legge dati dell'account;
+  - una scelta dalla vista Ruoli che passa al CLI un argomento arbitrario.
+- **Mitigazioni per la lettura:**
+  - Codex: solo `model/list`, sulla sessione già filtrata (stessi metodi negati, chiavi API
+    tolte dall'ambiente).
+  - Claude: solo la richiesta di controllo `initialize`, senza messaggio utente, quindi senza
+    turno; chiavi API tolte dall'ambiente; cartella temporanea, non il progetto. Della risposta
+    si tengono solo id, nome e livelli di effort dei modelli: i dati dell'account non si leggono.
+- **Mitigazioni per la scelta:** la vista manda CLI, modello, reasoning e permessi, validati
+  con liste chiuse e un pattern per il modello che non può iniziare con `-`. L'host rifiuta un
+  modello che il catalogo letto non contiene e un reasoning che il modello non supporta.
+- **La pagina impostazioni (ADR 0013)** scrive solo le chiavi elencate in `src/settings.ts`,
+  ciascuna verificata sul suo tipo. Percorsi dei CLI, comandi consentiti, comando di verifica e
+  istruzioni per ruolo sono `machine`: una cartella non può impostarli, nemmeno dalla pagina.
+
 ## Sicurezza della supply chain (bootstrap)
 
 - Versioni esatte e lockfile (`pnpm install --frozen-lockfile`).

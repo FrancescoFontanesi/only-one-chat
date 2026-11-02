@@ -3,7 +3,8 @@
 // shares no code with the adapter under test. Like the real CLI it emits
 // nothing until the first user message arrives on stdin.
 //
-// `auth status --json` prints a status (flags below); otherwise it runs a turn.
+// `auth status --json` prints a status (flags below); otherwise it runs a turn. A
+// `control_request` initialize is answered with the models before any turn.
 // Flags: --log=<file> (argv, cwd, env and stdin lines, JSONL)
 //        --logged-out | --auth-method=<m> | --api-provider=<p> | --auth-malformed
 //        --api-key-source=<s> (in the init event) | --echo (answer with the prompt)
@@ -64,9 +65,40 @@ let started = false;
 const input = createInterface({ input: process.stdin });
 input.on('line', (line) => {
   log({ stdin: line });
+  const request = JSON.parse(line);
+  // The control protocol's initialize, answered with no turn (models as in 2.1.308).
+  if (request.type === 'control_request' && request.request?.subtype === 'initialize') {
+    send({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: request.request_id,
+        response: {
+          models: [
+            { value: 'default', displayName: 'Default (recommended)' },
+            {
+              value: 'sonnet',
+              displayName: 'Sonnet 5.5',
+              supportsEffort: true,
+              supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+            },
+            {
+              value: 'haiku',
+              displayName: 'Haiku 5.5',
+              supportsEffort: true,
+              supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+            },
+            { value: 'claude-haiku-4-5-20251001', displayName: 'Haiku 4.5' },
+          ],
+          account: { email: 'user@example.com' },
+        },
+      },
+    });
+    return;
+  }
   if (started) return;
   started = true;
-  const prompt = JSON.parse(line).message.content;
+  const prompt = request.message.content;
   for (const original of recorded) {
     const message = structuredClone(original);
     if (message.type === 'system' && message.subtype === 'init') {

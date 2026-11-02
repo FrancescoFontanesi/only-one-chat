@@ -1,6 +1,6 @@
 // The chat session against the adapters' fake CLIs: no model turn, no quota.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -37,6 +37,7 @@ function session(
   review: 'always' | 'deferred' = 'always',
   resume?: ChatConfig['resume'],
   unseen?: PendingReport[],
+  instructions?: ChatConfig['instructions'],
 ) {
   const updates: ThreadUpdate[] = [];
   const busy: boolean[] = [];
@@ -53,13 +54,18 @@ function session(
     codexExecutable: process.execPath,
     claudeExecutable: process.execPath,
     codexLauncherArgs: [join(FIXTURES, 'fake-app-server.mjs'), '--account=chatgpt'],
-    claudeLauncherArgs: [join(FIXTURES, 'fake-claude.mjs'), '--echo'],
+    claudeLauncherArgs: [
+      join(FIXTURES, 'fake-claude.mjs'),
+      '--echo',
+      `--log=${join(root, 'claude.jsonl')}`,
+    ],
     allowedCommands: ['python'],
     verifyCommand: [],
     mode,
     review,
     ...(resume ? { resume } : {}),
     ...(unseen ? { unseen } : {}),
+    ...(instructions ? { instructions } : {}),
     logPath: join(root, 'logs', 'chat.jsonl'),
   };
   const chat = new ChatSession(config, {
@@ -70,6 +76,24 @@ function session(
   });
   return { chat, updates, busy, sessionIds, kept };
 }
+
+describe('chat session: the user’s instructions per role (ADR 0013)', () => {
+  it('adds them to the role’s own instructions', async () => {
+    const { chat } = session('auto', 'always', undefined, undefined, {
+      implementer: 'Rispondi sempre in inglese.',
+    });
+    try {
+      await chat.send('@impl primo');
+    } finally {
+      await chat.dispose();
+    }
+    const run = claudeRuns()[0] ?? [];
+    const prompt = run[run.indexOf('--append-system-prompt') + 1] ?? '';
+    expect(prompt).toContain(
+      'Istruzioni dell’utente per questo ruolo:\nRispondi sempre in inglese.',
+    );
+  });
+});
 
 describe('chat session: a reopened chat (R5)', () => {
   it('continues the leader’s own thread and reports the session ids to keep', async () => {
@@ -100,6 +124,70 @@ describe('chat session: a reopened chat (R5)', () => {
     expect(leader?.type === 'turn' && leader.text).toContain('fatto: round in calc.py');
     // Read: nothing is left to keep, and closing the chat does not clear what was kept.
     expect(kept).toEqual([[]]);
+  });
+});
+
+/** The fake Claude's runs, in order: their arguments. */
+function claudeRuns(): string[][] {
+  return readFileSync(join(root, 'claude.jsonl'), 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { argv?: string[] })
+    .flatMap((entry) => (entry.argv?.includes('-p') ? [entry.argv] : []));
+}
+
+const doneTurns = (updates: readonly ThreadUpdate[]) =>
+  updates.flatMap((u) => (u.type === 'turn' && u.status === 'done' ? [u] : []));
+
+describe('chat session: roles changed during the chat (ADR 0012)', () => {
+  it('gives a role another model from its next turn, in the same session', async () => {
+    const { chat, updates } = session('auto');
+    try {
+      await chat.send('@impl primo');
+      chat.setRole('implementer', { ...chat.currentRoles.implementer, model: 'haiku' });
+      await chat.send('@impl secondo');
+    } finally {
+      await chat.dispose();
+    }
+    expect(doneTurns(updates).map((u) => u.agent)).toEqual(['Claude (sonnet)', 'Claude (haiku)']);
+    const runs = claudeRuns();
+    expect(runs[1]?.[runs[1].indexOf('--model') + 1]).toBe('haiku');
+    expect(runs[1]).toContain('--resume');
+  });
+
+  it('reopens the same session with the new rules for another permission level', async () => {
+    const { chat } = session('auto');
+    try {
+      await chat.send('@impl primo');
+      chat.setRole('implementer', { ...chat.currentRoles.implementer, permission: 'read-only' });
+      await chat.send('@impl secondo');
+    } finally {
+      await chat.dispose();
+    }
+    const runs = claudeRuns();
+    // Read-only: no writing tools any more, in the same session.
+    expect(runs[0]).toContain('--allowedTools');
+    expect(runs[1]).not.toContain('--allowedTools');
+    expect(runs[1]).toContain('--resume');
+  });
+
+  it('keeps the chat’s provider: another CLI is not a change for this chat', async () => {
+    const { chat, updates } = session('auto');
+    try {
+      await chat.send('@impl primo');
+      const applied = chat.setRole('implementer', {
+        cli: 'codex',
+        model: 'gpt-6-luna',
+        effort: 'low',
+        permission: 'auto',
+      });
+      expect(applied).toBe(false);
+      await chat.send('@impl secondo');
+    } finally {
+      await chat.dispose();
+    }
+    expect(doneTurns(updates).map((u) => u.agent)).toEqual(['Claude (sonnet)', 'Claude (sonnet)']);
+    expect(chat.currentRoles.implementer.cli).toBe('claude');
   });
 });
 

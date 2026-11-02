@@ -157,6 +157,27 @@ describe('Codex agent session', () => {
     ]);
   });
 
+  it('changes the model of the next turns in the same thread', async () => {
+    const received = join(dir, 'received.jsonl');
+    const session = await codex('chatgpt', {
+      launcherArgs: [FAKE_CODEX, '--account=chatgpt', `--log=${received}`],
+    });
+    await session.runTurn('primo', handlers().value).done;
+    session.setModel?.('gpt-6.1-sol');
+    expect(session.name).toBe('Codex (gpt-6.1-sol)');
+    await session.runTurn('secondo', handlers().value).done;
+    const starts = readFileSync(received, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+      .filter((m) => m.method === 'turn/start')
+      .map((m) => m.params);
+    expect(starts.map((p) => [p?.['threadId'], p?.['model']])).toEqual([
+      ['thread-1', 'gpt-6-luna'],
+      ['thread-1', 'gpt-6.1-sol'],
+    ]);
+  });
+
   it('starts a writable thread only when asked, with the unelevated sandbox on Windows', async () => {
     const received = join(dir, 'received.jsonl');
     const session = await codex('chatgpt', {
@@ -603,6 +624,22 @@ describe('Claude agent session', () => {
     // The sub-agents' effort variable follows, since it also sets the main session's.
     expect(runs[1]?.env?.['CLAUDE_CODE_EFFORT_LEVEL']).toBe('high');
     // The same session: the second turn resumes the first.
+    expect(runs[1]?.argv).toContain('--resume');
+  });
+
+  it('changes the model of the next turns in the same session', async () => {
+    const session = await claudeWithPolicy(['--echo']);
+    await session.runTurn('primo', handlers().value).done;
+    session.setModel?.('sonnet');
+    expect(session.name).toBe('Claude (sonnet)');
+    await session.runTurn('secondo', handlers().value).done;
+    const runs = readFileSync(log(), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { argv?: string[] })
+      .filter((entry) => entry.argv?.includes('-p'));
+    const modelOf = (argv: string[] | undefined) => argv?.[argv.indexOf('--model') + 1];
+    expect(runs.map((run) => modelOf(run.argv))).toEqual(['haiku', 'sonnet']);
     expect(runs[1]?.argv).toContain('--resume');
   });
 

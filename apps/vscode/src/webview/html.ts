@@ -10,9 +10,11 @@ export interface WebviewHtmlOptions {
   readonly scriptUri: string;
   readonly styleUri: string;
   readonly title: string;
-  /** Which view the bundle renders: the chat (default) or the usage view. */
-  readonly view?: 'chat' | 'usage';
+  /** Which view the bundle renders: the chat (default) or a side view. */
+  readonly view?: WebviewKind;
 }
+
+export type WebviewKind = 'chat' | 'roles' | 'monitor' | 'usage' | 'settings';
 
 export function createNonce(): string {
   return randomBytes(16).toString('base64');

@@ -293,10 +293,6 @@ summary:focus-visible {
   overflow-wrap: anywhere;
 }
 
-/* Roles in the header */
-.role {
-  min-width: 10ch;
-}
 .select {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -304,23 +300,122 @@ summary:focus-visible {
   background: var(--ground);
   border: 1px solid var(--ink);
   padding: 0 var(--space-1);
+  max-width: 100%;
+}
+select:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
 
-/* Usage view */
-.usage {
+/* Header: the chat's title, its history, a new chat */
+.top {
+  position: relative;
+}
+.chat-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.04em;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.top .state {
+  margin-left: 0;
+}
+.history {
+  position: absolute;
+  top: 100%;
+  right: var(--space-3);
+  z-index: 10;
+  width: min(420px, calc(100vw - 2 * var(--space-3)));
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--ground);
+  border: 2px solid var(--ink);
+  display: flex;
+  flex-direction: column;
+}
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  text-align: left;
+  padding: var(--space-2);
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.history-item.on,
+.history-item:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--ground);
+}
+.history-item.on .muted,
+.history-item:hover:not(:disabled) .muted {
+  color: var(--ground);
+}
+.history-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Side views: roles, activity, usage */
+.side {
   padding: var(--space-2);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
-.meter-row {
+.field {
   display: flex;
-  justify-content: space-between;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: 2px;
+}
+.agent.working {
+  border: 2px solid var(--ink);
+}
+.agent.working .glyph {
+  animation: blink 1s steps(2, start) infinite;
+}
+.agent.waiting {
+  border: 2px dashed var(--ink);
+}
+.events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.events .info {
+  color: var(--ink-muted);
+}
+.quota {
+  width: 100%;
+  border-collapse: collapse;
+}
+.quota th,
+.quota td {
+  text-align: left;
+  padding: var(--space-1);
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.quota td {
+  width: 38%;
 }
 .meter-bar {
   height: 6px;
   border: 1px solid var(--ink);
+  margin-bottom: 2px;
 }
 .meter-fill {
   height: 100%;
@@ -382,4 +477,95 @@ summary:focus-visible {
   display: flex;
   gap: var(--space-2);
   flex-wrap: wrap;
+}
+/* The box to write in; under its divider, the settings of the message */
+.compose-box {
+  border: 1px solid var(--line-strong);
+}
+.compose-box:focus-within {
+  border-color: var(--ink);
+}
+.editor.bare {
+  border: 0;
+  resize: none;
+  display: block;
+}
+.editor.bare:focus-visible {
+  outline: none;
+}
+.toolbar {
+  border-top: 1px solid var(--line);
+  padding: var(--space-1) var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.seg-group {
+  display: inline-flex;
+}
+.seg-group .seg {
+  padding: 2px var(--space-2);
+}
+.field-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.spacer {
+  flex: 1;
+}
+.recipient {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40ch;
+}
+
+/* Settings page */
+.settings {
+  max-width: 820px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+.settings-section {
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.settings-section h2 {
+  margin: 0;
+}
+.setting {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.setting p {
+  margin: 0;
+}
+.setting-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.editor.narrow {
+  width: 10ch;
+}
+input[type='checkbox'] {
+  accent-color: var(--ink);
+  width: 16px;
+  height: 16px;
+  align-self: flex-start;
+}
+input:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.notice .seg {
+  margin-left: auto;
 }

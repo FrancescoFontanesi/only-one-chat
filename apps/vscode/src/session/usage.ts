@@ -1,11 +1,11 @@
-// What the usage view shows: the subscriptions in use, with the usage windows
-// their CLIs report and what the current chat has used. Sources that use no
+// What the usage view shows: the subscriptions, with the usage windows their
+// CLIs report. Sources that use no
 // quota only (docs/ui-primitives.md): Codex's account/rateLimits/read, and the
 // rate limit Claude reports at each turn; never credential or session files.
 // Node only, no `vscode`.
 
 import { codexQuota, connectCodex, type QuotaSnapshot } from '@only-one-chat/adapters';
-import type { ProviderUsage, TurnUsageSummary } from '../webview/protocol.js';
+import type { ProviderUsage } from '../webview/protocol.js';
 
 type Provider = 'codex' | 'claude';
 
@@ -19,14 +19,13 @@ interface Entry {
   windows: QuotaSnapshot['windows'];
   updatedAt: number | null;
   note: string;
-  chat: { context: number; output: number; costUsd: number };
 }
 
 export class UsageStore {
   private readonly entries = new Map<Provider, Entry>();
   private readonly listeners = new Set<() => void>();
 
-  /** The subscriptions shown: the CLIs of the configured roles. */
+  /** The subscriptions shown. */
   setProviders(providers: readonly Provider[]): void {
     for (const provider of providers) {
       if (!this.entries.has(provider)) {
@@ -34,7 +33,6 @@ export class UsageStore {
           windows: [],
           updatedAt: null,
           note: NOTES[provider],
-          chat: { context: 0, output: 0, costUsd: 0 },
         });
       }
     }
@@ -61,29 +59,12 @@ export class UsageStore {
     this.changed();
   }
 
-  addTurn(provider: Provider, usage: TurnUsageSummary): void {
-    const entry = this.entries.get(provider);
-    if (!entry) return;
-    entry.chat.context += usage.context;
-    entry.chat.output += usage.output;
-    entry.chat.costUsd += usage.costUsd ?? 0;
-    this.changed();
-  }
-
-  resetChat(): void {
-    for (const entry of this.entries.values()) {
-      entry.chat = { context: 0, output: 0, costUsd: 0 };
-    }
-    this.changed();
-  }
-
   snapshot(): ProviderUsage[] {
     return [...this.entries].map(([provider, entry]) => ({
       provider,
       windows: entry.windows,
       updatedAt: entry.updatedAt,
       note: entry.note,
-      chat: { ...entry.chat },
     }));
   }
 
@@ -122,4 +103,31 @@ export async function readCodexQuota(
   } finally {
     await session.close();
   }
+}
+
+/**
+ * The usage windows past the threshold not warned about yet, once per window
+ * and reset: `seen` keeps what was already warned.
+ */
+export function usageAlerts(
+  providers: readonly ProviderUsage[],
+  threshold: number,
+  seen: Set<string>,
+): string[] {
+  if (threshold <= 0) return [];
+  const alerts: string[] = [];
+  for (const provider of providers) {
+    for (const window of provider.windows) {
+      if (window.usedPercent < threshold) continue;
+      const key = `${provider.provider}:${window.name}:${String(window.resetsAt)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const name = provider.provider === 'codex' ? 'Codex' : 'Claude';
+      const span = window.name === '5h' ? '5 ore' : 'settimana';
+      alerts.push(
+        `${name}: hai usato il ${String(Math.round(window.usedPercent))}% della finestra di ${span}.`,
+      );
+    }
+  }
+  return alerts;
 }

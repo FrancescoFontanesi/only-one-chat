@@ -5,7 +5,7 @@ Stato: Accettata in parte (iterazione 3).
 - Decisi dall'esperimento qui sotto: chi fa le modifiche piccole, la sessione
   dell'implementatore che continua, `@impl` e i rapporti in coda.
 - Da ragionare: come gestire il passaggio fra un filone e l'altro.
-- Viste, autorizzazioni e persistenza sono la proposta per il pannello. La grafica viene dopo.
+- Autorizzazioni e persistenza sono implementate. Le viste sono sostituite dall'ADR 0012.
 
 ## Contesto
 

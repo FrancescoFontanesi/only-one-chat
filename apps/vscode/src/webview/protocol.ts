@@ -1,5 +1,6 @@
-// Messages exchanged between the extension host and the webview.
-// Imported by both sides: it must not import `vscode` or DOM-only APIs.
+// Messages exchanged between the extension host and the webviews: the chat
+// panel and the side views (roles, activity, usage). Imported by both sides:
+// it must not import `vscode` or DOM-only APIs.
 
 export interface ExtensionStatus {
   readonly extensionVersion: string;
@@ -10,21 +11,100 @@ export interface ExtensionStatus {
 
 export type ApprovalMode = 'auto' | 'manual';
 
-/** Reasoning levels the user can choose for a role, the same for Codex and Claude. */
+/** Reasoning levels offered when a model's own are not known. */
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
-export type Effort = (typeof EFFORTS)[number];
 
 export type RoleName = 'leader' | 'implementer';
+export type Cli = 'codex' | 'claude';
 
-/** A role as the header shows it; the effort is the user's choice (ADR 0010). */
+/** What a role may do without asking: nothing, ask first, or act inside the folder. */
+export type PermissionLevel = 'read-only' | 'ask' | 'auto';
+
+/** A role: its CLI, model, reasoning and permission level (ADR 0012). */
 export interface RoleInfo {
-  readonly cli: 'codex' | 'claude';
+  readonly cli: Cli;
   readonly model: string;
+  /** The model's name as its CLI shows it; the id when the catalog is not read yet. */
+  readonly modelName: string;
+  /** Empty for a model with no reasoning levels. */
   readonly effort: string;
   readonly permission: PermissionLevel;
 }
 
-/** The chat session as the panel shows it in its header. */
+export interface ModelOption {
+  readonly id: string;
+  readonly name: string;
+  readonly efforts: readonly string[];
+  readonly defaultEffort: string | null;
+}
+
+/**
+ * The reasoning level a model keeps when it is chosen: the current one if the
+ * model supports it, else its default, else `medium`, else its first; empty
+ * for a model with no levels.
+ */
+export function effortFor(model: ModelOption | undefined, current: string): string {
+  if (!model) return current;
+  const { efforts } = model;
+  if (efforts.length === 0) return '';
+  if (efforts.includes(current)) return current;
+  if (model.defaultEffort && efforts.includes(model.defaultEffort)) return model.defaultEffort;
+  return efforts.includes('medium') ? 'medium' : (efforts[0] ?? '');
+}
+
+/** The models one CLI offers, read from the CLI itself. */
+export interface ProviderCatalog {
+  readonly cli: Cli;
+  readonly status: 'loading' | 'ready' | 'unavailable';
+  readonly models: readonly ModelOption[];
+  /** Why the models are missing. */
+  readonly note?: string;
+}
+
+/** The roles view: the roles of the next chats, and those of the chat shown. */
+export interface RolesState {
+  readonly roles: { readonly leader: RoleInfo; readonly implementer: RoleInfo };
+  /** The chat shown, if its agents have started: its providers stay its own. */
+  readonly chat: { readonly leader: RoleInfo; readonly implementer: RoleInfo } | null;
+  readonly catalog: readonly ProviderCatalog[];
+  /** The models come from the fake CLIs (development host). */
+  readonly fake: boolean;
+}
+
+/** Where the settings page writes: the user's settings or the folder's. */
+export type SettingsTarget = 'user' | 'workspace';
+
+export type SettingValue = boolean | number | string | readonly string[];
+
+/** One setting of the settings page (ADR 0013). */
+export interface SettingItem {
+  /** Under `onlyOneChat.`. */
+  readonly key: string;
+  readonly label: string;
+  readonly description: string;
+  readonly kind: 'boolean' | 'enum' | 'number' | 'string' | 'text' | 'list';
+  readonly options?: readonly { readonly value: string; readonly label: string }[];
+  readonly min?: number;
+  readonly max?: number;
+  readonly value: SettingValue;
+  /** Where the value in effect comes from. */
+  readonly scope: 'default' | 'user' | 'workspace';
+  /** Never from a folder's settings: paths, commands, instructions. */
+  readonly userOnly: boolean;
+}
+
+export interface SettingsSection {
+  readonly title: string;
+  readonly items: readonly SettingItem[];
+}
+
+export interface SettingsState {
+  readonly roles: RolesState;
+  readonly sections: readonly SettingsSection[];
+  readonly hasWorkspace: boolean;
+}
+
+/** The chat as the panel shows it in its header and composer. */
 export interface SessionInfo {
   /** Folder the agents work in; null without an open folder. */
   readonly workspace: string | null;
@@ -35,6 +115,8 @@ export interface SessionInfo {
   /** Fake CLIs: no model turn, no quota (development only). */
   readonly fake: boolean;
   readonly busy: boolean;
+  /** Title of the chat shown; empty until its first message. */
+  readonly title: string;
   /** The chats kept for this folder, most recent first, and the one shown. */
   readonly chats: readonly {
     readonly id: string;
@@ -42,6 +124,8 @@ export interface SessionInfo {
     readonly updatedAt: number;
   }[];
   readonly chatId: string | null;
+  /** Enter sends (Shift+Enter: new line); false: Ctrl+Enter sends. */
+  readonly enterSends: boolean;
 }
 
 export type TurnRole = 'leader' | 'implementer';
@@ -98,6 +182,30 @@ export type ThreadUpdate =
   | { readonly type: 'permission_closed'; readonly id: string; readonly decision: string }
   | { readonly type: 'notice'; readonly level: 'info' | 'warn' | 'error'; readonly text: string };
 
+/** One agent in the activity view. */
+export interface MonitorAgent {
+  readonly role: TurnRole;
+  readonly info: RoleInfo;
+  /** `waiting`: for the user, on a permission or a message between agents. */
+  readonly status: 'idle' | 'working' | 'waiting';
+  /** The last thing it did in the current turn. */
+  readonly activity: string | null;
+  /** Its sub-agents still running. */
+  readonly subagents: readonly string[];
+}
+
+export interface MonitorEvent {
+  readonly at: number;
+  readonly level: 'info' | 'warn' | 'error';
+  readonly text: string;
+}
+
+/** The activity view: who works now, and what happened, latest first. */
+export interface MonitorState {
+  readonly agents: readonly MonitorAgent[];
+  readonly events: readonly MonitorEvent[];
+}
+
 /** One usage window of a subscription, as its CLI reported it. */
 export interface UsageWindow {
   /** "5h" or "weekly". */
@@ -107,16 +215,14 @@ export interface UsageWindow {
   readonly resetsAt: number | null;
 }
 
-/** A subscription in use, for the usage view. */
+/** A subscription, for the usage view. */
 export interface ProviderUsage {
-  readonly provider: 'codex' | 'claude';
+  readonly provider: Cli;
   readonly windows: readonly UsageWindow[];
   /** When the windows were read (ms since epoch); null before the first reading. */
   readonly updatedAt: number | null;
   /** How the windows are read, or why they are missing. */
   readonly note: string;
-  /** What this chat has used so far, summed over its turns. */
-  readonly chat: { readonly context: number; readonly output: number; readonly costUsd: number };
 }
 
 export type HostToWebviewMessage =
@@ -125,20 +231,29 @@ export type HostToWebviewMessage =
   | { readonly type: 'session'; readonly session: SessionInfo }
   | { readonly type: 'thread'; readonly update: ThreadUpdate }
   | { readonly type: 'reset' }
-  | { readonly type: 'usage'; readonly providers: readonly ProviderUsage[] };
+  | { readonly type: 'usage'; readonly providers: readonly ProviderUsage[] }
+  | { readonly type: 'roles'; readonly roles: RolesState }
+  | { readonly type: 'monitor'; readonly monitor: MonitorState }
+  | { readonly type: 'settings'; readonly settings: SettingsState };
 
 export type ApprovalAction = 'approve' | 'edit' | 'cancel';
 
 /** The answer to an agent's permission request; "for the session" as the CLI scopes it. */
 export type PermitDecision = 'accept' | 'acceptForSession' | 'decline';
 
-/** What a role may do without asking: nothing, ask first, or act inside the folder. */
-export type PermissionLevel = 'read-only' | 'ask' | 'auto';
+/** The route the user asks of the leader, as the `/fai`, `/delega`, `/chiedi` commands do. */
+export type Route = 'fai' | 'delega' | 'chiedi';
 
 export type WebviewToHostMessage =
   | { readonly type: 'ready' }
   | { readonly type: 'ping'; readonly id: number }
-  | { readonly type: 'send'; readonly text: string }
+  | {
+      readonly type: 'send';
+      readonly text: string;
+      /** Default: the leader. */
+      readonly to?: RoleName;
+      readonly route?: Route;
+    }
   | {
       readonly type: 'decide';
       readonly id: string;
@@ -148,14 +263,37 @@ export type WebviewToHostMessage =
   | { readonly type: 'stop' }
   | { readonly type: 'permit'; readonly id: string; readonly decision: PermitDecision }
   | { readonly type: 'setMode'; readonly mode: ApprovalMode }
-  | { readonly type: 'setEffort'; readonly role: RoleName; readonly effort: Effort }
+  | {
+      readonly type: 'setRole';
+      readonly role: RoleName;
+      readonly cli: Cli;
+      readonly model: string;
+      readonly effort: string;
+      readonly permission: PermissionLevel;
+    }
   | { readonly type: 'newChat' }
   | { readonly type: 'openChat'; readonly id: string }
-  | { readonly type: 'refreshUsage' };
+  | { readonly type: 'refreshUsage' }
+  | { readonly type: 'refreshModels' }
+  | { readonly type: 'openFolder' }
+  | { readonly type: 'openSettings' }
+  | {
+      readonly type: 'setSetting';
+      readonly key: string;
+      /** Undefined: the value is removed from the target. */
+      readonly value?: SettingValue;
+      readonly target: SettingsTarget;
+    }
+  | { readonly type: 'openNativeSettings' };
 
 /** Longest text the webview may send: a large brief fits, a pasted log does not. */
 export const MAX_TEXT_LENGTH = 50_000;
 const ID_PATTERN = /^[a-z0-9-]{1,64}$/;
+/** Model ids and aliases as the CLIs name them, e.g. `gpt-6.1-sol`, `claude-haiku-4-5-20251001`. */
+const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/;
+const EFFORT_PATTERN = /^[a-z]{0,16}$/;
+/** A key under `onlyOneChat.`, e.g. `notifications.waiting`; the host knows which exist. */
+const SETTING_KEY = /^[a-zA-Z]+(\.[a-zA-Z]+)?$/;
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null
@@ -167,7 +305,12 @@ function text(value: unknown): string | undefined {
   return typeof value === 'string' && value.length <= MAX_TEXT_LENGTH ? value : undefined;
 }
 
-/** Validates a message received from the webview; anything unexpected is dropped. */
+const isRole = (value: unknown): value is RoleName => value === 'leader' || value === 'implementer';
+
+const isPermission = (value: unknown): value is PermissionLevel =>
+  value === 'read-only' || value === 'ask' || value === 'auto';
+
+/** Validates a message received from a webview; anything unexpected is dropped. */
 export function parseWebviewMessage(value: unknown): WebviewToHostMessage | undefined {
   const msg = asRecord(value);
   switch (msg?.['type']) {
@@ -179,7 +322,19 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
     }
     case 'send': {
       const body = text(msg['text']);
-      return body !== undefined && body.trim() !== '' ? { type: 'send', text: body } : undefined;
+      if (body === undefined || body.trim() === '') return undefined;
+      const to = msg['to'];
+      const route = msg['route'];
+      if (to !== undefined && !isRole(to)) return undefined;
+      if (route !== undefined && route !== 'fai' && route !== 'delega' && route !== 'chiedi') {
+        return undefined;
+      }
+      return {
+        type: 'send',
+        text: body,
+        ...(to ? { to } : {}),
+        ...(route ? { route } : {}),
+      };
     }
     case 'decide': {
       const id = msg['id'];
@@ -206,13 +361,16 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
       const mode = msg['mode'];
       return mode === 'auto' || mode === 'manual' ? { type: 'setMode', mode } : undefined;
     }
-    case 'setEffort': {
-      const role = msg['role'];
-      const effort = (EFFORTS as readonly unknown[]).includes(msg['effort'])
-        ? (msg['effort'] as Effort)
-        : undefined;
-      return (role === 'leader' || role === 'implementer') && effort
-        ? { type: 'setEffort', role, effort }
+    case 'setRole': {
+      const { role, cli, model, effort, permission } = msg;
+      return isRole(role) &&
+        (cli === 'codex' || cli === 'claude') &&
+        typeof model === 'string' &&
+        MODEL_PATTERN.test(model) &&
+        typeof effort === 'string' &&
+        EFFORT_PATTERN.test(effort) &&
+        isPermission(permission)
+        ? { type: 'setRole', role, cli, model, effort, permission }
         : undefined;
     }
     case 'newChat':
@@ -223,6 +381,28 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
     }
     case 'refreshUsage':
       return { type: 'refreshUsage' };
+    case 'refreshModels':
+      return { type: 'refreshModels' };
+    case 'openFolder':
+      return { type: 'openFolder' };
+    case 'openSettings':
+      return { type: 'openSettings' };
+    case 'openNativeSettings':
+      return { type: 'openNativeSettings' };
+    case 'setSetting': {
+      const { key, value, target } = msg;
+      if (typeof key !== 'string' || !SETTING_KEY.test(key)) return undefined;
+      if (target !== 'user' && target !== 'workspace') return undefined;
+      if (value === undefined) return { type: 'setSetting', key, target };
+      const fits =
+        typeof value === 'boolean' ||
+        (typeof value === 'number' && Number.isFinite(value)) ||
+        (typeof value === 'string' && value.length <= MAX_TEXT_LENGTH) ||
+        (Array.isArray(value) &&
+          value.length <= 100 &&
+          value.every((v) => typeof v === 'string' && v.length <= 1000));
+      return fits ? { type: 'setSetting', key, value: value as SettingValue, target } : undefined;
+    }
     default:
       return undefined;
   }
@@ -262,6 +442,20 @@ export function parseHostMessage(value: unknown): HostToWebviewMessage | undefin
       return Array.isArray(msg['providers'])
         ? { type: 'usage', providers: msg['providers'] as ProviderUsage[] }
         : undefined;
+    case 'roles': {
+      const roles = asRecord(msg['roles']);
+      return roles ? { type: 'roles', roles: roles as unknown as RolesState } : undefined;
+    }
+    case 'settings': {
+      const settings = asRecord(msg['settings']);
+      return settings
+        ? { type: 'settings', settings: settings as unknown as SettingsState }
+        : undefined;
+    }
+    case 'monitor': {
+      const monitor = asRecord(msg['monitor']);
+      return monitor ? { type: 'monitor', monitor: monitor as unknown as MonitorState } : undefined;
+    }
     default:
       return undefined;
   }

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { providerOf, readCodexQuota, UsageStore } from '../../src/session/usage.js';
+import { providerOf, readCodexQuota, usageAlerts, UsageStore } from '../../src/session/usage.js';
 
 const FAKE_CODEX = join(
   import.meta.dirname,
@@ -16,27 +16,24 @@ const FAKE_CODEX = join(
 );
 
 describe('usage store', () => {
-  it('shows the configured subscriptions, their windows and what the chat used', () => {
+  it('shows the subscriptions and the windows their CLIs reported', () => {
     const store = new UsageStore();
     let changes = 0;
     store.onChange(() => changes++);
     store.setProviders(['codex', 'claude']);
     store.setQuota('claude', { windows: [{ name: '5h', usedPercent: 12.5, resetsAt: 1 }] }, 1000);
-    store.addTurn('claude', { context: 30_000, output: 900, costUsd: 0.02, durationMs: 5 });
-    store.addTurn('claude', { context: 10_000, output: 100, costUsd: null, durationMs: 5 });
     const [codex, claude] = store.snapshot();
     expect(codex).toMatchObject({ provider: 'codex', windows: [], updatedAt: null });
     expect(claude).toMatchObject({
       provider: 'claude',
       windows: [{ name: '5h', usedPercent: 12.5 }],
       updatedAt: 1000,
-      chat: { context: 40_000, output: 1000, costUsd: 0.02 },
     });
-    store.resetChat();
-    expect(store.snapshot()[1]?.chat).toEqual({ context: 0, output: 0, costUsd: 0 });
+    store.setNote('codex', 'Codex non trovato');
+    expect(store.snapshot()[0]?.note).toBe('Codex non trovato');
     store.setProviders(['claude']);
     expect(store.snapshot().map((p) => p.provider)).toEqual(['claude']);
-    expect(changes).toBe(6);
+    expect(changes).toBe(4);
   });
 
   it('names the provider from the identity the adapter reports', () => {
@@ -48,5 +45,33 @@ describe('usage store', () => {
   it('reads Codex windows through the app-server, without a model turn', async () => {
     const quota = await readCodexQuota(process.execPath, [FAKE_CODEX, '--account=chatgpt']);
     expect(quota?.windows.map((w) => w.name)).toEqual(['5h', 'weekly']);
+  });
+});
+
+describe('usage warnings (ADR 0013)', () => {
+  it('warns once per window and reset past the threshold, never at 0', () => {
+    const seen = new Set<string>();
+    const providers = [
+      {
+        provider: 'codex' as const,
+        windows: [
+          { name: '5h', usedPercent: 85, resetsAt: 100 },
+          { name: 'weekly', usedPercent: 40, resetsAt: 900 },
+        ],
+        updatedAt: 1,
+        note: '',
+      },
+    ];
+    expect(usageAlerts(providers, 80, seen)).toEqual([
+      'Codex: hai usato il 85% della finestra di 5 ore.',
+    ]);
+    expect(usageAlerts(providers, 80, seen)).toEqual([]);
+    // A new window after the reset warns again.
+    const next = providers.map((p) => ({
+      ...p,
+      windows: [{ name: '5h', usedPercent: 90, resetsAt: 200 }],
+    }));
+    expect(usageAlerts(next, 80, seen)).toHaveLength(1);
+    expect(usageAlerts(next, 0, new Set())).toEqual([]);
   });
 });

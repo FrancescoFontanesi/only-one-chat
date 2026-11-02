@@ -22,19 +22,38 @@ its answer:
 - **faccio io**: only when you start with `/fai`, or when no implementer is available. In our
   tests a leader making a one-line change itself cost more than delegating it.
 
-`/delega` and `/chiedi` choose the other routes. `@impl` writes to the implementer directly:
-it is the cheapest way when you already know what to ask. The leader reads that report with
-your next message.
+## The chat
+
+- **At the top:** the title of the conversation, STORICO (the chats of this folder) and + NUOVA.
+- **At the bottom:** the box you write in. Under its divider are the settings of the message:
+  - **who receives it:** LEADER, or IMPLEMENTATORE. Writing to the implementer directly is the
+    cheapest way when you already know what to ask; the leader reads that report with your next
+    message.
+  - **VIA**, the route you ask of the leader: it decides, delega, fai tu, chiedi prima. Typing
+    `@impl`, `/delega`, `/fai` or `/chiedi` at the start of the message works too.
+  - **DELEGHE:** whether you approve each message between the agents or they pass on their own.
+- **Enter** sends, **Shift+Enter** starts a new line.
 
 A brief written in the ChatGPT web app (it starts with `<<<OOC-BRIEF`) can be pasted into the
 chat. The leader does not rewrite it: it forwards it with targeted notes or corrections only.
 
 ## Choosing models and reasoning
 
-Models come from the settings (`onlyOneChat.*`). The reasoning of each role you choose in the
-chat header, separately for the leader and the implementer. It applies from that role's next
-turn, in the same session, and becomes the setting for the next chats. Nothing changes it
-automatically. Some starting points:
+The **Only One Chat** icon in the activity bar opens three views: **Ruoli**, **Attività** and
+**Utilizzo**.
+
+- **In Ruoli you choose for each role:**
+  - the model, among those the CLIs offer, grouped by provider. They are read from Codex and
+    Claude Code themselves, with no model turn and no quota;
+  - the reasoning, among the levels that model supports;
+  - the permissions.
+- **When a change applies:**
+  - model, reasoning and permissions apply from that role's next turn, in the same session;
+  - another provider applies from the next chat: a chat keeps the providers it started with,
+    because moving its work to another provider needs a handoff, which is not designed yet.
+- **Nothing changes the roles automatically.**
+
+Some starting points:
 
 | Way of working                                     | Leader                                                              | Implementer                                 |
 | -------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------- |
@@ -49,15 +68,28 @@ automatically. Some starting points:
 
 ## Usage of the subscriptions
 
-The **Only One Chat** icon in the activity bar opens a small view, **Utilizzo**. For each
-subscription in use it shows the 5-hour and weekly windows, and what the current chat has used.
+**Attività** shows each role with its model, whether it is working or waiting for you, what it
+is doing and its sub-agents, and below the events of the chat, latest first.
+
+**Utilizzo** is one table: each subscription with its 5-hour and weekly windows.
 
 - **Codex** is read from Codex itself, without using quota: every 2 minutes while the view is
-  visible, after each turn, and when you press "Aggiorna".
+  visible, after each turn, and with the view's refresh button.
 - **Claude** reports its windows only when a turn starts, so the view shows the last value seen,
   with its time.
 
 Nothing is read from credential files or session files.
+
+## Settings
+
+IMPOSTAZIONI in the chat header (or "Only One Chat: Settings", or the gear of the Ruoli view)
+opens a page with all the settings, grouped: roles, delegations, your own instructions per role,
+sub-agents, permissions and unsaved files, the composer, notifications, the CLIs.
+
+- They are VS Code's own settings: the page says whether a value comes from the default, your
+  user settings or the folder's, and SALVA PER chooses where it writes.
+- CLI paths, allowed commands, the verify command and the instructions per role are user
+  settings only: a folder's settings cannot change them.
 
 ## Chats are kept
 
@@ -66,7 +98,7 @@ Nothing is read from credential files or session files.
 - **When you open the panel again**, the most recent chat comes back, and the leader and the
   implementer continue their sessions (`--resume` for Claude, `thread/resume` for Codex).
   Reports of the implementer the leader had not read yet reach it with your next message.
-- **Earlier chats** are in the CHAT selector of the header; "Nuova chat" starts an empty one.
+- **Earlier chats** are in STORICO; + NUOVA starts an empty one.
 - **What was running or waiting** when the chat was closed is shown as interrupted.
 
 ## Scope and safety

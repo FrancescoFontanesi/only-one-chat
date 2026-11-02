@@ -36,6 +36,7 @@ export {
 export { API_KEY_VARIABLES, withoutApiKeys } from './environment.js';
 export {
   codexQuota,
+  type ContextUsage,
   type QuotaSnapshot,
   type QuotaWindow,
   type TokenUsage,

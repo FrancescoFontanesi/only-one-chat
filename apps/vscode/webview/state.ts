@@ -1,7 +1,12 @@
 // The chat thread as the webview keeps it: thread updates from the host,
 // applied in order. Pure functions, so the reducer is easy to follow.
 
-import type { ThreadUpdate, TurnRole, TurnUsageSummary } from '../src/webview/protocol.js';
+import type {
+  ChangedFile,
+  ThreadUpdate,
+  TurnRole,
+  TurnUsageSummary,
+} from '../src/webview/protocol.js';
 
 export interface SubagentRow {
   readonly id: string;
@@ -10,7 +15,13 @@ export interface SubagentRow {
 }
 
 export type ThreadItem =
-  | { readonly kind: 'user'; readonly id: string; readonly text: string }
+  | {
+      readonly kind: 'user';
+      readonly id: string;
+      readonly text: string;
+      readonly checkpoint?: string;
+      readonly attachments?: readonly string[];
+    }
   | {
       readonly kind: 'turn';
       readonly id: string;
@@ -43,6 +54,15 @@ export type ThreadItem =
       readonly closed?: string;
     }
   | {
+      readonly kind: 'changes';
+      readonly id: string;
+      readonly checkpoint: string;
+      readonly files: readonly ChangedFile[];
+      readonly uncovered: readonly string[];
+      /** The user's decision per file path. */
+      readonly decisions: Readonly<Record<string, 'accepted' | 'rejected'>>;
+    }
+  | {
       readonly kind: 'notice';
       readonly id: string;
       readonly level: 'info' | 'warn' | 'error';
@@ -63,7 +83,16 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
 
   switch (update.type) {
     case 'user':
-      return [...items, { kind: 'user', id: update.id, text: update.text }];
+      return [
+        ...items,
+        {
+          kind: 'user',
+          id: update.id,
+          text: update.text,
+          ...(update.checkpoint ? { checkpoint: update.checkpoint } : {}),
+          ...(update.attachments ? { attachments: update.attachments } : {}),
+        },
+      ];
     case 'turn': {
       const known = items.some((item) => item.kind === 'turn' && item.id === update.id);
       if (!known) {
@@ -147,6 +176,24 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
       return items.map((item) =>
         item.kind === 'permission' && item.id === update.id
           ? { ...item, closed: update.decision }
+          : item,
+      );
+    case 'changes':
+      return [
+        ...items,
+        {
+          kind: 'changes',
+          id: update.id,
+          checkpoint: update.checkpoint,
+          files: update.files,
+          uncovered: update.uncovered,
+          decisions: {},
+        },
+      ];
+    case 'change_decided':
+      return items.map((item) =>
+        item.kind === 'changes' && item.id === update.id
+          ? { ...item, decisions: { ...item.decisions, [update.path]: update.decision } }
           : item,
       );
     case 'notice':

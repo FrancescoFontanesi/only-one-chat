@@ -91,6 +91,28 @@ sub-agents, permissions and unsaved files, the composer, notifications, the CLIs
 - CLI paths, allowed commands, the verify command and the instructions per role are user
   settings only: a folder's settings cannot change them.
 
+## Files and context
+
+- **`@` in the box** lists the folder's files and folders; pick one with the arrows and Enter.
+  **Ctrl+Alt+K** in the editor (or "Add File or Selection to Chat" in its context menu) adds the
+  open file, or the selected lines as `@file#L10-20`.
+- **The agents receive paths**, and read the files themselves: your leader's context does not
+  fill with files. Selected lines are copied into the message when they are few (up to 80).
+- **CONTESTO** under the box tells how full the session of the agent you write to is, after its
+  latest turn; the Attività view shows it for both roles.
+
+## Reviewing and undoing changes
+
+- **Before each of your messages** the extension records the folder's files in its own storage
+  (no git involved).
+- **After the message** a MODIFICHE card lists each changed file with the lines added and
+  removed. Click a file for VS Code's diff; ACCETTA keeps it, RIFIUTA puts it back as it was.
+- **"↺ ripristina qui"** on one of your messages brings the folder back to before it.
+- **The conversation is not rewound:** the agents are told, with your next message, which
+  files were put back.
+- **Not covered:** files over 2 MB, the excluded folders (`.git`, `node_modules`, …), and what a
+  command does outside the folder.
+
 ## Chats are kept
 
 - **Each chat of the folder is saved** in the extension's workspace storage, together with the

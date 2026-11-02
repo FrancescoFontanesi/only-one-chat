@@ -31,6 +31,7 @@ describe('Only One Chat extension', () => {
     for (const id of [
       OPEN_PANEL,
       'onlyOneChat.openSettings',
+      'onlyOneChat.addSelection',
       'onlyOneChat.newChat',
       'onlyOneChat.stop',
       'onlyOneChat.refreshUsage',
@@ -63,6 +64,15 @@ describe('Only One Chat extension', () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     assert.equal(settingsTabs().length, 1);
+  });
+
+  it('serves the recorded contents the diff of a change opens', async () => {
+    await activate();
+    const document = await vscode.workspace.openTextDocument(
+      vscode.Uri.from({ scheme: 'only-one-chat-checkpoint', path: '/chat-x/empty/calc.py' }),
+    );
+    assert.equal(document.getText(), '');
+    assert.equal(document.languageId, 'python');
   });
 
   it('reuses the existing panel instead of opening a second one', async () => {

@@ -155,6 +155,8 @@ describe('a turn', () => {
           { name: 'weekly', usedPercent: 12, resetsAt: 1793512800 },
         ],
       },
+      // The last assistant message: 2 input, 5402 cache writes, 649 cache reads, 4 output.
+      context: { used: 6057, window: 1_000_000 },
     });
     expect(events.map((event) => event.type)).toEqual(['init', 'rate_limit', 'text']);
     expect(events[0]).toMatchObject({ sessionId: '<session-id-1>', apiKeySource: 'none' });

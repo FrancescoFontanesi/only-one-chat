@@ -8,6 +8,7 @@ import { ModelCatalog } from './session/catalog.js';
 import { MonitorStore } from './session/monitor.js';
 import { UsageStore } from './session/usage.js';
 import { usageWarnings } from './notifications.js';
+import { CheckpointContentProvider, CHECKPOINT_SCHEME } from './webview/checkpointContent.js';
 import { MonitorViewProvider } from './webview/monitorView.js';
 import { OnlyOneChatPanel } from './webview/panel.js';
 import { RolesViewProvider } from './webview/rolesView.js';
@@ -44,6 +45,12 @@ export function activate(context: vscode.ExtensionContext): OnlyOneChatExports {
   const usageView = new UsageViewProvider(context, usage);
   const monitorView = new MonitorViewProvider(context, monitor);
   const rolesView = new RolesViewProvider(context, roles, catalog, OnlyOneChatPanel.chatRoles);
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(
+      CHECKPOINT_SCHEME,
+      new CheckpointContentProvider(context),
+    ),
+  );
   context.subscriptions.push(
     roles,
     usageView,

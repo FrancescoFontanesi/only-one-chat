@@ -7,8 +7,8 @@
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PendingReport } from '@only-one-chat/runtime';
-import type { AgentChoice } from './chat.js';
-import type { ThreadUpdate, TurnRole } from '../webview/protocol.js';
+import type { AgentChoice, FileNotes } from './chat.js';
+import type { ContextInfo, ThreadUpdate, TurnRole } from '../webview/protocol.js';
 
 export interface ChatRecord {
   readonly version: 1;
@@ -20,6 +20,10 @@ export interface ChatRecord {
   sessions: Partial<Record<TurnRole, string>>;
   /** The roles the chat runs with: its providers stay its own (ADR 0012); absent in older records. */
   roles?: Partial<Record<TurnRole, AgentChoice>>;
+  /** Notes on files the user put back, not received yet by each role (ADR 0014). */
+  fileNotes?: FileNotes;
+  /** How full each role's session was after its latest turn. */
+  context?: Partial<Record<TurnRole, ContextInfo>>;
   /** Implementer work the leader has not seen yet; absent in older records. */
   unseen?: PendingReport[];
   updates: ThreadUpdate[];
@@ -51,6 +55,36 @@ function pendingReports(value: unknown): PendingReport[] {
       typeof r.facts === 'string'
     );
   });
+}
+
+/** The file notes of a record read from disk; anything but strings is dropped. */
+function fileNotesOf(value: unknown): FileNotes {
+  const notes = (role: TurnRole): string[] => {
+    const list =
+      typeof value === 'object' && value !== null
+        ? (value as Record<string, unknown>)[role]
+        : undefined;
+    return Array.isArray(list) ? list.filter((n): n is string => typeof n === 'string') : [];
+  };
+  return { leader: notes('leader'), implementer: notes('implementer') };
+}
+
+/** The contexts of a record read from disk; an entry of the wrong shape is dropped. */
+function contextOf(value: unknown): Partial<Record<TurnRole, ContextInfo>> {
+  const context: Partial<Record<TurnRole, ContextInfo>> = {};
+  if (typeof value !== 'object' || value === null) return context;
+  for (const role of ['leader', 'implementer'] as const) {
+    const c = (value as Record<string, unknown>)[role] as Record<string, unknown> | null;
+    if (
+      typeof c === 'object' &&
+      c !== null &&
+      typeof c['used'] === 'number' &&
+      (typeof c['window'] === 'number' || c['window'] === null)
+    ) {
+      context[role] = { used: c['used'], window: c['window'] };
+    }
+  }
+  return context;
 }
 
 /** The roles of a record read from disk; a role of the wrong shape is dropped. */
@@ -120,7 +154,11 @@ export function forReplay(updates: readonly ThreadUpdate[]): ThreadUpdate[] {
 }
 
 export class ChatHistory {
-  constructor(private readonly dir: string) {}
+  /** `onRemove`: told of each chat dropped past the limit, to drop what belongs to it. */
+  constructor(
+    private readonly dir: string,
+    private readonly onRemove?: (id: string) => void,
+  ) {}
 
   private file(id: string): string {
     if (!ID.test(id)) throw new Error(`invalid chat id ${JSON.stringify(id)}`);
@@ -135,6 +173,8 @@ export class ChatHistory {
             ...(record as ChatRecord),
             unseen: pendingReports(record.unseen),
             roles: chatRoles(record.roles),
+            context: contextOf(record.context),
+            fileNotes: fileNotesOf(record.fileNotes),
           }
         : undefined;
     } catch {
@@ -164,6 +204,9 @@ export class ChatHistory {
     const temporary = `${path}.${String(process.pid)}.tmp`;
     writeFileSync(temporary, JSON.stringify({ ...record, updates: compact(record.updates) }));
     renameSync(temporary, path);
-    for (const old of this.list().slice(MAX_CHATS)) rmSync(this.file(old.id), { force: true });
+    for (const old of this.list().slice(MAX_CHATS)) {
+      rmSync(this.file(old.id), { force: true });
+      this.onRemove?.(old.id);
+    }
   }
 }

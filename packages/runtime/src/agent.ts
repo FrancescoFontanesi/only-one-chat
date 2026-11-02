@@ -94,6 +94,15 @@ export interface TurnUsage {
 }
 
 /** Subscription usage the CLI reported during the turn: windows "5h" and "weekly". */
+/**
+ * How full the session's context is: the tokens of its latest request to the
+ * model (the conversation so far), and the model's window when reported.
+ */
+export interface ContextUsage {
+  readonly used: number;
+  readonly window: number | null;
+}
+
 export interface QuotaSnapshot {
   readonly windows: readonly {
     readonly name: string;
@@ -109,6 +118,8 @@ export interface AgentTurnResult {
   /** Measured by the adapter; absent when the CLI reports nothing. */
   readonly usage?: TurnUsage;
   readonly quota?: QuotaSnapshot | null;
+  /** The main session's context after the turn, when the CLI reports it. */
+  readonly context?: ContextUsage | null;
 }
 
 export interface AgentTurn {

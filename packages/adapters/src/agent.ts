@@ -1,4 +1,4 @@
-import type { QuotaSnapshot, TurnUsage } from './usage.js';
+import type { ContextUsage, QuotaSnapshot, TurnUsage } from './usage.js';
 
 // The agent shape the runtime expects (packages/runtime/src/agent.ts), restated
 // here so adapters do not depend on the runtime: TypeScript checks the two
@@ -61,6 +61,8 @@ export interface AgentTurn {
     readonly identity: AgentIdentity;
     readonly usage?: TurnUsage;
     readonly quota?: QuotaSnapshot | null;
+    /** The main session's context after the turn, when the CLI reports it. */
+    readonly context?: ContextUsage | null;
   }>;
   stop(): Promise<void>;
 }

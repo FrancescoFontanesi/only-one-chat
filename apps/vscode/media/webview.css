@@ -569,3 +569,101 @@ input:focus-visible {
 .notice .seg {
   margin-left: auto;
 }
+
+/* Changes of a message */
+.user .card-head {
+  justify-content: space-between;
+}
+.user {
+  flex-direction: column;
+}
+.change-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.change {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px 0;
+  border-bottom: 1px solid var(--line);
+}
+.change .seg {
+  padding: 0 var(--space-2);
+}
+.change.rejected .link {
+  text-decoration: line-through;
+  color: var(--ink-muted);
+}
+.link {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--ink);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+}
+.link:hover:not(:disabled) {
+  text-decoration-color: var(--ink);
+}
+.link:disabled {
+  text-decoration: none;
+}
+
+/* Context of the recipient's session */
+.context {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+.meter-bar.mini {
+  display: inline-block;
+  width: 48px;
+  margin: 0;
+}
+.meter-bar.mini .meter-fill {
+  display: block;
+}
+
+/* `@` mentions */
+.compose-box {
+  position: relative;
+}
+.mentions {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  margin: 0 0 var(--space-1);
+  padding: 0;
+  list-style: none;
+  background: var(--ground);
+  border: 2px solid var(--ink);
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.mention {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 2px var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.mention.on,
+.mention:hover {
+  background: var(--ink);
+  color: var(--ground);
+}

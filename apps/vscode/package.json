@@ -97,6 +97,11 @@
         "title": "Refresh Models",
         "category": "Only One Chat",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "onlyOneChat.addSelection",
+        "title": "Add File or Selection to Chat",
+        "category": "Only One Chat"
       }
     ],
     "configuration": {
@@ -316,8 +321,22 @@
           "when": "view == onlyOneChat.usage",
           "group": "navigation"
         }
+      ],
+      "editor/context": [
+        {
+          "command": "onlyOneChat.addSelection",
+          "group": "onlyOneChat@1"
+        }
       ]
-    }
+    },
+    "keybindings": [
+      {
+        "command": "onlyOneChat.addSelection",
+        "key": "ctrl+alt+k",
+        "mac": "cmd+alt+k",
+        "when": "editorTextFocus"
+      }
+    ]
   },
   "scripts": {
     "build": "node esbuild.mjs",

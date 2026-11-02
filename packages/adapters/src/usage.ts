@@ -33,6 +33,15 @@ export interface QuotaWindow {
   readonly resetsAt: number | null;
 }
 
+/**
+ * How full the session's context is: the tokens of its latest request to the
+ * model (the conversation so far), and the model's window when reported.
+ */
+export interface ContextUsage {
+  readonly used: number;
+  readonly window: number | null;
+}
+
 /** The latest subscription usage the CLI reported during the turn. */
 export interface QuotaSnapshot {
   readonly windows: readonly QuotaWindow[];

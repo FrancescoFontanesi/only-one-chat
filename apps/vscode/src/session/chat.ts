@@ -29,6 +29,7 @@ import {
   type EventLog,
   type InterceptDecision,
   type PendingReport,
+  type ContextUsage,
   type QuotaSnapshot,
   type SubagentPolicy,
   type ThreadEvent,
@@ -43,6 +44,7 @@ import type {
   TurnRole,
   TurnUsageSummary,
 } from '../webview/protocol.js';
+import type { Checkpoint, CheckpointStore } from './checkpoints.js';
 import { changes, snapshot, verifiedFacts } from './facts.js';
 
 export interface AgentChoice {
@@ -78,10 +80,14 @@ export interface ChatConfig {
   readonly permissionHook?: PermissionBridgeOptions;
   /** The CLIs' own sessions of a reopened chat, to continue (R5). */
   readonly resume?: Partial<Record<TurnRole, string>>;
+  /** Records the folder before each message, for the review and the restore (ADR 0014). */
+  readonly checkpoints?: CheckpointStore;
   /** The user's own instructions per role, added to the role's (ADR 0013). */
   readonly instructions?: Partial<Record<TurnRole, string>>;
   /** Implementer work of a reopened chat the leader has not seen yet (R5). */
   readonly unseen?: readonly PendingReport[];
+  /** Notes on files the user put back, not received yet by each role (ADR 0014). */
+  readonly fileNotes?: Partial<FileNotes>;
   /** Codex threads kept in Codex's history, so the chat can be reopened (R5). */
   readonly persistent?: boolean;
   readonly mode: ApprovalMode;
@@ -97,6 +103,9 @@ export interface ChatConfig {
 /** A message for the implementer alone: `@impl` and the text. */
 const DIRECT = /^@impl\b\s*/i;
 
+/** Notes on files the user put back (ADR 0014), per role, until each receives them. */
+export type FileNotes = Readonly<Record<TurnRole, readonly string[]>>;
+
 export interface ChatEvents {
   update(update: ThreadUpdate): void;
   busy(busy: boolean): void;
@@ -104,6 +113,10 @@ export interface ChatEvents {
   sessionId?(role: TurnRole, id: string): void;
   /** The implementer work the leader has not seen changed: to keep it with the chat. */
   unseen?(reports: readonly PendingReport[]): void;
+  /** The notes on files put back that each role has not received yet changed. */
+  fileNotes?(notes: FileNotes): void;
+  /** A role's session context after a turn: how full it is. */
+  context?(role: TurnRole, context: ContextUsage): void;
   /** A turn ended: its CLI, what it used, and the usage windows it reported, if any. */
   turnUsage?(
     provider: string,
@@ -136,6 +149,7 @@ export class ChatSession {
   private stopRunning: (() => Promise<void>) | undefined;
   private running = false;
   private nextId = 1;
+  private readonly tag = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   private readonly currentTurn = new Map<TurnRole, string>();
   private readonly pending = new Map<string, (decision: InterceptDecision) => void>();
   /** The permission bridges of the Claude roles, for the chat. */
@@ -148,6 +162,8 @@ export class ChatSession {
   private readonly resumable = new Map<TurnRole, string>();
   /** The CLIs' own session of each role, as last reported. */
   private readonly nativeSessions = new Map<TurnRole, string>();
+  /** Files the user put back, not told yet to each role. */
+  private readonly fileNotes: Record<TurnRole, string[]>;
   /** Roles whose session is reopened with new rules before their next turn. */
   private readonly reopen = new Set<TurnRole>();
   /** The roles as configured, with the effort the user chose during the chat. */
@@ -160,6 +176,10 @@ export class ChatSession {
     this.mode = config.mode;
     this.roles = { leader: config.leader, implementer: config.implementer };
     this.unseen = [...(config.unseen ?? [])];
+    this.fileNotes = {
+      leader: [...(config.fileNotes?.leader ?? [])],
+      implementer: [...(config.fileNotes?.implementer ?? [])],
+    };
     for (const [role, id] of Object.entries(config.resume ?? {}) as [TurnRole, string][]) {
       this.resumable.set(role, id);
     }
@@ -222,8 +242,9 @@ export class ChatSession {
     this.mode = mode;
   }
 
+  /** Ids unique across the sessions of a chat: a reopened chat redraws the earlier ones. */
   private id(prefix: string): string {
-    return `${prefix}-${String(this.nextId++)}`;
+    return `${prefix}-${this.tag}-${String(this.nextId++)}`;
   }
 
   /**
@@ -327,8 +348,82 @@ export class ChatSession {
     return this.implementerSession;
   }
 
+  /**
+   * The user put files back as they were (ADR 0014): each role is told with
+   * its next message, since its context still holds the changes.
+   */
+  noteFiles(note: string): void {
+    this.fileNotes.leader.push(note);
+    this.fileNotes.implementer.push(note);
+    this.events.fileNotes?.(this.pendingNotes());
+  }
+
+  /** The notes each role has not received yet: kept with the chat (R5). */
+  private pendingNotes(): FileNotes {
+    return { leader: [...this.fileNotes.leader], implementer: [...this.fileNotes.implementer] };
+  }
+
+  private takeNotes(role: TurnRole): string | undefined {
+    const notes = this.fileNotes[role].splice(0);
+    if (notes.length === 0) return undefined;
+    this.events.fileNotes?.(this.pendingNotes());
+    return [
+      'Nota del runtime: dopo il lavoro precedente l’utente ha rimesso dei file com’erano. Conta il',
+      'contenuto attuale su disco: rileggilo prima di basarti su quello che ricordi.',
+      ...notes.map((note) => `- ${note}`),
+    ].join('\n');
+  }
+
+  /** The folder recorded before a message (ADR 0014); null without a store or when it cannot be. */
+  private checkpoint(): Checkpoint | null {
+    const store = this.config.checkpoints;
+    if (!store) return null;
+    try {
+      const checkpoint = store.take(this.id('ckpt'));
+      if (!checkpoint) {
+        this.events.update({
+          type: 'notice',
+          level: 'warn',
+          text: 'Nessun checkpoint: la cartella ha troppi file o non si può leggere. Le modifiche di questo messaggio non si potranno annullare da qui.',
+        });
+      }
+      return checkpoint;
+    } catch (error) {
+      this.events.update({
+        type: 'notice',
+        level: 'warn',
+        text: `Checkpoint non riuscito: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      return null;
+    }
+  }
+
+  /** The changes card of a message; false when it could not be made. */
+  private review(checkpoint: Checkpoint): boolean {
+    try {
+      const review = this.config.checkpoints?.review(checkpoint);
+      if (!review) return false;
+      if (review.files.length > 0 || review.uncovered.length > 0) {
+        this.events.update({
+          type: 'changes',
+          id: this.id('m'),
+          checkpoint: checkpoint.id,
+          files: review.files,
+          uncovered: review.uncovered,
+        });
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Sends the user's message: to the leader, or with `@impl` to the implementer; one at a time. */
-  async send(text: string): Promise<void> {
+  async send(
+    text: string,
+    attached?: { readonly text: string; readonly paths: readonly string[] },
+  ): Promise<void> {
+    const attachments = attached?.text ?? '';
     if (this.running) {
       this.events.update({
         type: 'notice',
@@ -337,7 +432,14 @@ export class ChatSession {
       });
       return;
     }
-    this.events.update({ type: 'user', id: this.id('u'), text });
+    const checkpoint = this.checkpoint();
+    this.events.update({
+      type: 'user',
+      id: this.id('u'),
+      text,
+      ...(checkpoint ? { checkpoint: checkpoint.id } : {}),
+      ...(attached && attached.paths.length > 0 ? { attachments: attached.paths } : {}),
+    });
     this.running = true;
     this.events.busy(true);
     const baseline = snapshot(this.config.cwd);
@@ -346,8 +448,11 @@ export class ChatSession {
     try {
       this.log ??= await openEventLog(this.config.logPath, this.config.cwd);
       await this.applyRoleChanges();
-      if (DIRECT.test(text)) await this.toImplementer(text.replace(DIRECT, ''), baseline, shown);
-      else await this.toLeader(text, baseline, shown);
+      // The files the user named reach the agent after the text; the thread shows the text.
+      const prompt = attachments === '' ? text : `${text}\n\n${attachments}`;
+      if (DIRECT.test(prompt)) {
+        await this.toImplementer(prompt.replace(DIRECT, ''), baseline, shown);
+      } else await this.toLeader(prompt, baseline, shown);
     } catch (error) {
       this.events.update({
         type: 'notice',
@@ -358,7 +463,8 @@ export class ChatSession {
       this.running = false;
       this.stopRunning = undefined;
       this.closeRunningTurns('failed');
-      if (!shown.facts) {
+      const reviewed = checkpoint ? this.review(checkpoint) : false;
+      if (!shown.facts && !reviewed) {
         // Changes made with no delegation: shown, not judged.
         const changed = changes(baseline, snapshot(this.config.cwd));
         if (changed !== 'unknown' && changed.length > 0) {
@@ -390,7 +496,8 @@ export class ChatSession {
       agent: session.name,
       status: 'running',
     });
-    const turn = session.runTurn(text, {
+    const notes = this.takeNotes('implementer');
+    const turn = session.runTurn(notes ? `${notes}\n\n${text}` : text, {
       onText: (chunk) => {
         this.events.update({ type: 'chunk', turnId: id, text: chunk });
       },
@@ -419,6 +526,7 @@ export class ChatSession {
       ...(usage ? { usage } : {}),
     });
     this.events.turnUsage?.(result.identity.provider, usage, result.quota ?? null);
+    if (result.context) this.events.context?.('implementer', result.context);
     this.noteSession('implementer', result.identity.sessionId);
     const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand);
     shown.facts = true;
@@ -452,10 +560,16 @@ export class ChatSession {
     });
     const unseen = this.unseen;
     this.unseen = [];
+    const preface = [
+      this.takeNotes('leader') ?? '',
+      unseen.length > 0 ? pendingReportsPreface(unseen) : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
     const manual = this.mode === 'manual';
     const loop = runLoop({
       request: text,
-      ...(unseen.length > 0 ? { preface: pendingReportsPreface(unseen) } : {}),
+      ...(preface !== '' ? { preface } : {}),
       log: this.log ?? (await openEventLog(config.logPath, config.cwd)),
       onEvent: (event) => {
         this.onEvent(event);
@@ -624,6 +738,7 @@ export class ChatSession {
           ...(usage ? { usage } : {}),
         });
         this.events.turnUsage?.(event.identity.provider, usage, event.quota ?? null);
+        if (event.context) this.events.context?.(role, event.context);
         this.noteSession(role, event.identity.sessionId);
         break;
       }

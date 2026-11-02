@@ -157,6 +157,12 @@ describe('Codex agent session', () => {
     ]);
   });
 
+  it('reports the thread’s context: its latest request and the model’s window', async () => {
+    const session = await codex();
+    const result = await session.runTurn('ciao', handlers().value).done;
+    expect(result.context).toEqual({ used: 1050, window: 258400 });
+  });
+
   it('changes the model of the next turns in the same thread', async () => {
     const received = join(dir, 'received.jsonl');
     const session = await codex('chatgpt', {
@@ -625,6 +631,13 @@ describe('Claude agent session', () => {
     expect(runs[1]?.env?.['CLAUDE_CODE_EFFORT_LEVEL']).toBe('high');
     // The same session: the second turn resumes the first.
     expect(runs[1]?.argv).toContain('--resume');
+  });
+
+  it('reports the context of the main conversation, not of its sub-agents', async () => {
+    const session = await claudeWithPolicy([]);
+    const result = await session.runTurn('ciao', handlers().value).done;
+    // turn-ok.jsonl: the last assistant message's input, cache writes, cache reads and output.
+    expect(result.context).toEqual({ used: 2 + 5402 + 649 + 4, window: 1_000_000 });
   });
 
   it('changes the model of the next turns in the same session', async () => {

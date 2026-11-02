@@ -4,6 +4,7 @@
 // reopened from the history starts an empty log. Node only, no `vscode`.
 
 import type {
+  ContextInfo,
   MonitorAgent,
   MonitorEvent,
   MonitorState,
@@ -55,12 +56,19 @@ export class MonitorStore {
   /** Requests waiting for the user: id → the role that waits. */
   private readonly waiting = new Map<string, TurnRole>();
   private events: MonitorEvent[] = [];
+  private context: Partial<Record<TurnRole, ContextInfo>> = {};
   private readonly listeners = new Set<() => void>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
   setRoles(roles: Record<TurnRole, RoleInfo>): void {
     this.roles = roles;
+    this.changed();
+  }
+
+  /** How full each role's session is: from the chat shown. */
+  setContext(context: Partial<Record<TurnRole, ContextInfo>>): void {
+    this.context = context;
     this.changed();
   }
 
@@ -153,6 +161,15 @@ export class MonitorStore {
       case 'notice':
         this.log(update.level, oneLine(update.text.split('\n')[0] ?? ''));
         break;
+      case 'changes':
+        this.log('info', `Modifiche da rivedere: ${String(update.files.length)} file`);
+        break;
+      case 'change_decided':
+        this.log(
+          'info',
+          `${update.path} ${update.decision === 'accepted' ? 'accettato' : 'rimesso com’era'}`,
+        );
+        break;
       case 'chunk':
         break;
     }
@@ -170,6 +187,7 @@ export class MonitorStore {
             status: waitingRoles.has(role) ? 'waiting' : agent.turns.size > 0 ? 'working' : 'idle',
             activity: agent.activity,
             subagents: [...agent.subagents.values()],
+            ...(this.context[role] ? { context: this.context[role] } : {}),
           };
         })
       : [];

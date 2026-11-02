@@ -126,6 +126,14 @@ export interface SessionInfo {
   readonly chatId: string | null;
   /** Enter sends (Shift+Enter: new line); false: Ctrl+Enter sends. */
   readonly enterSends: boolean;
+  /** How full each role's session is, after its latest turn. */
+  readonly context: Partial<Record<TurnRole, ContextInfo>>;
+}
+
+/** A session's context: the tokens of its latest request, and the model's window if known. */
+export interface ContextInfo {
+  readonly used: number;
+  readonly window: number | null;
 }
 
 export type TurnRole = 'leader' | 'implementer';
@@ -140,7 +148,15 @@ export interface TurnUsageSummary {
 
 /** One entry of the chat thread, or a change to one. */
 export type ThreadUpdate =
-  | { readonly type: 'user'; readonly id: string; readonly text: string }
+  | {
+      readonly type: 'user';
+      readonly id: string;
+      readonly text: string;
+      /** The folder as it was before this message (ADR 0014). */
+      readonly checkpoint?: string;
+      /** Files and folders named with `@`, as the agents received them (ADR 0015). */
+      readonly attachments?: readonly string[];
+    }
   | {
       readonly type: 'turn';
       readonly id: string;
@@ -180,7 +196,36 @@ export type ThreadUpdate =
       readonly summary: string;
     }
   | { readonly type: 'permission_closed'; readonly id: string; readonly decision: string }
-  | { readonly type: 'notice'; readonly level: 'info' | 'warn' | 'error'; readonly text: string };
+  | { readonly type: 'notice'; readonly level: 'info' | 'warn' | 'error'; readonly text: string }
+  | {
+      /** What a message changed in the folder, to review file by file (ADR 0014). */
+      readonly type: 'changes';
+      readonly id: string;
+      readonly checkpoint: string;
+      readonly files: readonly ChangedFile[];
+      /** Changed but not recorded, so not revertible: too large. */
+      readonly uncovered: readonly string[];
+    }
+  | {
+      readonly type: 'change_decided';
+      readonly id: string;
+      readonly path: string;
+      readonly decision: 'accepted' | 'rejected';
+    };
+
+/** A file a message changed, with its contents before and after by hash. */
+export interface ChangedFile {
+  /** Relative to the folder, with forward slashes. */
+  readonly path: string;
+  readonly kind: 'added' | 'modified' | 'deleted';
+  /** Lines; 0 for a binary file. */
+  readonly added: number;
+  readonly removed: number;
+  readonly binary: boolean;
+  /** Content hashes; null where the file did not exist. */
+  readonly before: string | null;
+  readonly after: string | null;
+}
 
 /** One agent in the activity view. */
 export interface MonitorAgent {
@@ -192,6 +237,8 @@ export interface MonitorAgent {
   readonly activity: string | null;
   /** Its sub-agents still running. */
   readonly subagents: readonly string[];
+  /** How full its session is, after its latest turn. */
+  readonly context?: ContextInfo;
 }
 
 export interface MonitorEvent {
@@ -234,7 +281,11 @@ export type HostToWebviewMessage =
   | { readonly type: 'usage'; readonly providers: readonly ProviderUsage[] }
   | { readonly type: 'roles'; readonly roles: RolesState }
   | { readonly type: 'monitor'; readonly monitor: MonitorState }
-  | { readonly type: 'settings'; readonly settings: SettingsState };
+  | { readonly type: 'settings'; readonly settings: SettingsState }
+  /** The folder's files and folders for `@` (relative; a folder ends with `/`). */
+  | { readonly type: 'files'; readonly paths: readonly string[] }
+  /** Text for the composer: a mention of the open file or of the selection. */
+  | { readonly type: 'insert'; readonly text: string };
 
 export type ApprovalAction = 'approve' | 'edit' | 'cancel';
 
@@ -284,7 +335,16 @@ export type WebviewToHostMessage =
       readonly value?: SettingValue;
       readonly target: SettingsTarget;
     }
-  | { readonly type: 'openNativeSettings' };
+  | { readonly type: 'openNativeSettings' }
+  | {
+      /** A file of a changes card: show its diff, keep it, or put it back as it was. */
+      readonly type: 'reviewFile';
+      readonly id: string;
+      readonly path: string;
+      readonly action: 'diff' | 'accept' | 'reject';
+    }
+  | { readonly type: 'restoreCheckpoint'; readonly checkpoint: string }
+  | { readonly type: 'listFiles' };
 
 /** Longest text the webview may send: a large brief fits, a pasted log does not. */
 export const MAX_TEXT_LENGTH = 50_000;
@@ -387,6 +447,26 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
       return { type: 'openFolder' };
     case 'openSettings':
       return { type: 'openSettings' };
+    case 'reviewFile': {
+      const { id, path, action } = msg;
+      // The host acts only on a file it finds in the card: the path is a key, not trusted.
+      return typeof id === 'string' &&
+        ID_PATTERN.test(id) &&
+        typeof path === 'string' &&
+        path.length > 0 &&
+        path.length <= 1000 &&
+        (action === 'diff' || action === 'accept' || action === 'reject')
+        ? { type: 'reviewFile', id, path, action }
+        : undefined;
+    }
+    case 'listFiles':
+      return { type: 'listFiles' };
+    case 'restoreCheckpoint': {
+      const checkpoint = msg['checkpoint'];
+      return typeof checkpoint === 'string' && ID_PATTERN.test(checkpoint)
+        ? { type: 'restoreCheckpoint', checkpoint }
+        : undefined;
+    }
     case 'openNativeSettings':
       return { type: 'openNativeSettings' };
     case 'setSetting': {
@@ -446,6 +526,12 @@ export function parseHostMessage(value: unknown): HostToWebviewMessage | undefin
       const roles = asRecord(msg['roles']);
       return roles ? { type: 'roles', roles: roles as unknown as RolesState } : undefined;
     }
+    case 'files':
+      return Array.isArray(msg['paths'])
+        ? { type: 'files', paths: msg['paths'] as string[] }
+        : undefined;
+    case 'insert':
+      return typeof msg['text'] === 'string' ? { type: 'insert', text: msg['text'] } : undefined;
     case 'settings': {
       const settings = asRecord(msg['settings']);
       return settings

@@ -1,11 +1,15 @@
-import { realpathSync } from 'node:fs';
+import { realpathSync, rmSync } from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { getRuntimeInfo } from '@only-one-chat/runtime';
 import { cliLaunch, isFake } from '../clis.js';
 import type { RoleSettings, Roles } from '../roles.js';
 import { ChatSession } from '../session/chat.js';
+import { CheckpointStore } from '../session/checkpoints.js';
+import { SKIPPED } from '../session/facts.js';
+import { expandMentions } from '../session/mentions.js';
 import { ChatHistory, forReplay, newChatId, type ChatRecord } from '../session/history.js';
+import { checkpointUri, checkpointsRoot } from './checkpointContent.js';
 import type { MonitorStore } from '../session/monitor.js';
 import { notifyChat } from '../notifications.js';
 import { providerOf, type UsageStore } from '../session/usage.js';
@@ -35,6 +39,22 @@ function workspaceFolder(): string | null {
   } catch {
     return folder;
   }
+}
+
+/** Folders never offered for `@`: the same as the checkpoints skip. */
+const EXCLUDED = `{${[...SKIPPED].map((name) => `**/${name}/**`).join(',')}}`;
+
+/** The folder's files and their folders, for `@` in the composer; at most 5000 files. */
+async function folderPaths(): Promise<string[]> {
+  const files = await vscode.workspace.findFiles('**/*', EXCLUDED, 5000);
+  const paths = new Set<string>();
+  for (const uri of files) {
+    const file = vscode.workspace.asRelativePath(uri, false).split(path.sep).join('/');
+    paths.add(file);
+    const parts = file.split('/');
+    for (let i = 1; i < parts.length; i++) paths.add(`${parts.slice(0, i).join('/')}/`);
+  }
+  return [...paths].sort();
 }
 
 /** Shared by the panel and the views it feeds. */
@@ -69,6 +89,34 @@ export class OnlyOneChatPanel {
   }
 
   /** Stops what the chat is running (command palette). */
+  /**
+   * Puts a mention of the editor's file, or of its selection, in the composer
+   * (command onlyOneChat.addSelection); the chat opens if it is closed.
+   */
+  static insertFromEditor(context: vscode.ExtensionContext, services: PanelServices): void {
+    const editor = vscode.window.activeTextEditor;
+    const cwd = workspaceFolder();
+    if (!editor || editor.document.uri.scheme !== 'file' || !cwd) return;
+    const file = path.relative(cwd, editor.document.uri.fsPath);
+    if (file === '' || file.startsWith('..') || path.isAbsolute(file)) {
+      void vscode.window.showWarningMessage(
+        'Il file non è nella cartella in cui lavorano gli agenti.',
+      );
+      return;
+    }
+    const selection = editor.selection;
+    const lines = selection.isEmpty
+      ? ''
+      : `#L${String(selection.start.line + 1)}-${String(
+          // A selection ending at the start of a line does not take that line.
+          selection.end.character === 0 && selection.end.line > selection.start.line
+            ? selection.end.line
+            : selection.end.line + 1,
+        )}`;
+    OnlyOneChatPanel.show(context, services);
+    OnlyOneChatPanel.current?.insert(`@${file.split(path.sep).join('/')}${lines} `);
+  }
+
   static async stop(): Promise<void> {
     await OnlyOneChatPanel.current?.chat?.stop();
   }
@@ -111,6 +159,10 @@ export class OnlyOneChatPanel {
   private mode: ApprovalMode;
   /** The user agreed that the agents may change this folder. */
   private confirmedFolder: string | undefined;
+  /** The webview has loaded: messages to it are no longer lost. */
+  private ready = false;
+  /** Text for the composer that arrived before the webview loaded. */
+  private pendingInsert: string | undefined;
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
@@ -122,7 +174,10 @@ export class OnlyOneChatPanel {
     const mode = vscode.workspace.getConfiguration('onlyOneChat').get<string>('approvalMode');
     this.mode = mode === 'auto' ? 'auto' : 'manual';
     const storage = context.storageUri ?? context.globalStorageUri;
-    this.history = new ChatHistory(vscode.Uri.joinPath(storage, 'chats').fsPath);
+    // A chat dropped from the history takes its checkpoints with it.
+    this.history = new ChatHistory(vscode.Uri.joinPath(storage, 'chats').fsPath, (id) => {
+      rmSync(checkpointsRoot(context, id), { recursive: true, force: true });
+    });
     // The most recent chat of this folder comes back; otherwise a new one.
     const latest = this.history.list()[0];
     this.record = (latest && this.history.load(latest.id)) ?? this.emptyRecord();
@@ -194,6 +249,7 @@ export class OnlyOneChatPanel {
   /** Tells the activity and roles views which roles the chat shown has. */
   private showRoles(): void {
     const roles = this.chatRoles() ?? this.rolesFor(this.record);
+    this.services.monitor.setContext(this.record.context ?? {});
     this.services.monitor.setRoles({
       leader: this.services.roles.info(roles.leader),
       implementer: this.services.roles.info(roles.implementer),
@@ -217,6 +273,7 @@ export class OnlyOneChatPanel {
       enterSends:
         vscode.workspace.getConfiguration('onlyOneChat').get<boolean>('composer.enterSends') ??
         true,
+      context: this.record.context ?? {},
     };
   }
 
@@ -322,6 +379,9 @@ export class OnlyOneChatPanel {
         });
         await this.replay();
         await this.postSession();
+        this.ready = true;
+        if (this.pendingInsert) await this.post({ type: 'insert', text: this.pendingInsert });
+        this.pendingInsert = undefined;
         OnlyOneChatPanel.readyEmitter.fire();
         break;
       case 'ping':
@@ -340,7 +400,21 @@ export class OnlyOneChatPanel {
             : message.route
               ? `/${message.route} `
               : '';
-        await chat.send(`${prefix}${message.text}`);
+        // Files named with `@` reach the agents as paths (ADR 0015).
+        const cwd = workspaceFolder();
+        const expanded = cwd ? expandMentions(message.text, cwd) : undefined;
+        await chat.send(
+          `${prefix}${message.text}`,
+          expanded && expanded.mentions.length > 0
+            ? {
+                text: expanded.attachments,
+                paths: expanded.mentions.map(
+                  (m) =>
+                    `${m.path}${m.lines ? `#L${String(m.lines.from)}-${String(m.lines.to)}` : ''}`,
+                ),
+              }
+            : undefined,
+        );
         break;
       }
       case 'decide':
@@ -370,6 +444,15 @@ export class OnlyOneChatPanel {
         break;
       case 'openFolder':
         await vscode.commands.executeCommand('workbench.action.files.openFolder');
+        break;
+      case 'reviewFile':
+        await this.reviewFile(message.id, message.path, message.action);
+        break;
+      case 'listFiles':
+        await this.post({ type: 'files', paths: await folderPaths() });
+        break;
+      case 'restoreCheckpoint':
+        await this.restoreCheckpoint(message.checkpoint);
         break;
       case 'openSettings':
         await vscode.commands.executeCommand('onlyOneChat.openSettings');
@@ -457,6 +540,8 @@ export class OnlyOneChatPanel {
         // A reopened chat continues the CLIs' own sessions; Codex keeps its threads.
         resume: { ...record.sessions },
         unseen: record.unseen ?? [],
+        checkpoints: new CheckpointStore(checkpointsRoot(this.context, record.id), cwd),
+        fileNotes: record.fileNotes ?? {},
         persistent: true,
         review: settings.get<string>('leaderReview') === 'deferred' ? 'deferred' : 'always',
         instructions: {
@@ -483,6 +568,16 @@ export class OnlyOneChatPanel {
         sessionId: (role, id) => {
           if (record.sessions[role] === id) return;
           record.sessions[role] = id;
+          this.keep(record);
+        },
+        context: (role, context) => {
+          record.context = { ...record.context, [role]: context };
+          this.keep(record);
+          if (record === this.record) this.services.monitor.setContext(record.context);
+          if (record === this.record) void this.postSession();
+        },
+        fileNotes: (notes) => {
+          record.fileNotes = notes;
           this.keep(record);
         },
         unseen: (reports) => {
@@ -521,6 +616,140 @@ export class OnlyOneChatPanel {
    * are saved first, or not, as onlyOneChat.saveBeforeSend says. False: the
    * user cancelled the message.
    */
+  /** Text for the composer, now or once the webview has loaded. */
+  private insert(text: string): void {
+    if (this.ready) void this.post({ type: 'insert', text });
+    else this.pendingInsert = (this.pendingInsert ?? '') + text;
+  }
+
+  /** An update the panel itself adds to the chat shown: kept, and drawn. */
+  private emit(update: ThreadUpdate): void {
+    this.remember(update);
+    void this.post({ type: 'thread', update });
+  }
+
+  /** The checkpoints of the chat shown, in the folder open now. */
+  private checkpointStore(): CheckpointStore | undefined {
+    const cwd = workspaceFolder();
+    return cwd
+      ? new CheckpointStore(checkpointsRoot(this.context, this.record.id), cwd)
+      : undefined;
+  }
+
+  /** Tells the agents, with their next message, which files the user put back. */
+  private noteFiles(note: string): void {
+    if (this.chat) {
+      this.chat.noteFiles(note);
+      return;
+    }
+    // No agent has started: the note waits in the chat's record, saved with it.
+    const notes = this.record.fileNotes;
+    this.record.fileNotes = {
+      leader: [...(notes?.leader ?? []), note],
+      implementer: [...(notes?.implementer ?? []), note],
+    };
+    this.keep(this.record);
+  }
+
+  /**
+   * A file of a changes card (ADR 0014). The file is looked up in the card the
+   * chat recorded: the webview names it, but only a recorded path is touched.
+   */
+  private async reviewFile(
+    id: string,
+    file: string,
+    action: 'diff' | 'accept' | 'reject',
+  ): Promise<void> {
+    const card = this.record.updates.find(
+      (u): u is Extract<ThreadUpdate, { type: 'changes' }> => u.type === 'changes' && u.id === id,
+    );
+    const change = card?.files.find((f) => f.path === file);
+    const store = this.checkpointStore();
+    if (!change || !store) return;
+    if (action === 'diff') {
+      await vscode.commands.executeCommand(
+        'vscode.diff',
+        checkpointUri(this.record.id, change.before, change.path),
+        checkpointUri(this.record.id, change.after, change.path),
+        `${change.path} · prima ↔ dopo il messaggio`,
+        { preview: true },
+      );
+      return;
+    }
+    if (action === 'accept') {
+      this.emit({ type: 'change_decided', id, path: file, decision: 'accepted' });
+      return;
+    }
+    if (this.chat?.busy) {
+      this.notice('warn', 'Un messaggio è in corso: rifiuta il file quando è concluso.');
+      return;
+    }
+    try {
+      if (store.current(change.path) !== change.after) {
+        const answer = await vscode.window.showWarningMessage(
+          `${change.path} è cambiato ancora dopo il messaggio. Rimetterlo com’era prima del messaggio, perdendo anche quei cambiamenti?`,
+          { modal: true },
+          'Rimetti com’era',
+        );
+        if (!answer) return;
+      }
+      store.put(change.path, change.before);
+    } catch (error) {
+      this.notice(
+        'error',
+        `Il file non è stato rimesso: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
+    this.emit({ type: 'change_decided', id, path: file, decision: 'rejected' });
+    this.noteFiles(
+      `${change.path}: ${change.kind === 'added' ? 'tolto (era nuovo)' : 'rimesso com’era prima del messaggio'}`,
+    );
+  }
+
+  /** Brings the folder back to before a message; the conversation stays as it is. */
+  private async restoreCheckpoint(id: string): Promise<void> {
+    const store = this.checkpointStore();
+    const checkpoint = store?.load(id);
+    if (!store || !checkpoint) {
+      this.notice('error', 'Il checkpoint di questo messaggio non c’è più.');
+      return;
+    }
+    if (this.chat?.busy) {
+      this.notice('warn', 'Un messaggio è in corso: ripristina quando è concluso.');
+      return;
+    }
+    const answer = await vscode.window.showWarningMessage(
+      'Riportare i file della cartella a com’erano prima di questo messaggio? Ciò che è cambiato dopo, anche a mano, si perde. La conversazione resta com’è; i comandi eseguiti fuori dalla cartella non si annullano.',
+      { modal: true },
+      'Ripristina',
+    );
+    if (!answer) return;
+    let paths: string[];
+    try {
+      paths = store.restore(checkpoint);
+    } catch (error) {
+      this.notice(
+        'error',
+        `Ripristino non riuscito: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
+    this.emit({
+      type: 'notice',
+      level: 'info',
+      text:
+        paths.length === 0
+          ? 'Ripristino: la cartella era già com’era prima di quel messaggio.'
+          : ['Cartella riportata a prima del messaggio:', ...paths.map((p) => `- ${p}`)].join('\n'),
+    });
+    if (paths.length > 0) {
+      this.noteFiles(
+        `la cartella è tornata a prima di un messaggio precedente (${paths.join(', ')})`,
+      );
+    }
+  }
+
   private async saveBeforeSend(): Promise<boolean> {
     const cwd = workspaceFolder();
     if (!cwd) return true;

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { parseHostMessage, type MonitorAgent, type MonitorState } from '../src/webview/protocol.js';
+import { formatTokens } from './state.js';
 import { vscodeApi } from './vscodeApi.js';
 
 const STATUS = {
@@ -32,6 +33,14 @@ function Agent({ agent }: { agent: MonitorAgent }) {
         {info.cli === 'codex' ? 'Codex' : 'Claude'} · {info.modelName}
         {info.effort && ` · ${info.effort}`}
       </div>
+      {agent.context && (
+        <div class="data muted">
+          contesto {formatTokens(agent.context.used)}
+          {agent.context.window
+            ? ` / ${formatTokens(agent.context.window)} · ${String(Math.round((agent.context.used / agent.context.window) * 100))}%`
+            : ''}
+        </div>
+      )}
       {agent.activity && <div class="data muted">{agent.activity}</div>}
       {agent.subagents.map((label, index) => (
         <div key={index} class="data muted">

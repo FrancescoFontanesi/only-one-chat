@@ -66,11 +66,26 @@ describe('chat history (R5)', () => {
     expect(history.load('chat-r')?.roles).toEqual({ leader });
   });
 
-  it('keeps at most 50 chats, dropping the oldest', () => {
+  it('keeps the notes on files put back, per role, dropping what is not text', () => {
     const history = new ChatHistory(dir);
+    writeFileSync(
+      join(dir, 'chat-n.json'),
+      JSON.stringify({
+        ...record('chat-n', 1),
+        fileNotes: { leader: ['calc.py', 3], implementer: 'x' },
+      }),
+    );
+    expect(history.load('chat-n')?.fileNotes).toEqual({ leader: ['calc.py'], implementer: [] });
+  });
+
+  it('keeps at most 50 chats, dropping the oldest', () => {
+    const removed: string[] = [];
+    const history = new ChatHistory(dir, (id) => removed.push(id));
     for (let i = 0; i < 52; i++) history.save(record(`chat-${String(i)}`, i));
     const ids = history.list().map((c) => c.id);
     expect(ids).toHaveLength(50);
+    // What belongs to a dropped chat (its checkpoints) goes with it.
+    expect(removed).toEqual(['chat-0', 'chat-1']);
     expect(ids).not.toContain('chat-0');
     expect(existsSync(join(dir, 'chat-1.json'))).toBe(false);
   });

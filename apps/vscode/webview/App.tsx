@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   parseHostMessage,
   type ApprovalMode,
+  type ContextInfo,
   type PermitDecision,
   type RoleInfo,
   type RoleName,
@@ -9,6 +10,7 @@ import {
   type SessionInfo,
   type WebviewToHostMessage,
 } from '../src/webview/protocol.js';
+import { mentionAt, matchPaths, pickMention } from './mentions.js';
 import { applyUpdate, formatTokens, type ThreadItem } from './state.js';
 import { vscodeApi } from './vscodeApi.js';
 
@@ -283,15 +285,121 @@ function Turn({ item }: { item: Extract<ThreadItem, { kind: 'turn' }> }) {
   );
 }
 
-function Item({ item }: { item: ThreadItem }) {
+const KIND_GLYPH = { added: '+', modified: '~', deleted: '−' } as const;
+
+/** What a message changed (ADR 0014): each file with its diff, to keep or put back. */
+function Changes({
+  item,
+  busy,
+}: {
+  item: Extract<ThreadItem, { kind: 'changes' }>;
+  busy: boolean;
+}) {
+  const review = (path: string, action: 'diff' | 'accept' | 'reject') => {
+    post({ type: 'reviewFile', id: item.id, path, action });
+  };
+  const added = item.files.reduce((sum, f) => sum + f.added, 0);
+  const removed = item.files.reduce((sum, f) => sum + f.removed, 0);
+  return (
+    <section class="card changes">
+      <div class="card-head">
+        <span class="label">MODIFICHE</span>
+        <span class="data muted">
+          {item.files.length} file · +{added} −{removed}
+        </span>
+      </div>
+      <ul class="change-list">
+        {item.files.map((file) => {
+          const decision = item.decisions[file.path];
+          return (
+            <li key={file.path} class={decision ? `change ${decision}` : 'change'}>
+              <span class="glyph">{KIND_GLYPH[file.kind]}</span>
+              <button
+                type="button"
+                class="link data"
+                title="Apri il diff"
+                onClick={() => {
+                  review(file.path, 'diff');
+                }}
+              >
+                {file.path}
+              </button>
+              <span class="data muted">
+                {file.binary ? 'binario' : `+${String(file.added)} −${String(file.removed)}`}
+              </span>
+              <span class="spacer" />
+              {decision ? (
+                <span class="data muted">
+                  {decision === 'accepted' ? '■ accettato' : '× rifiutato'}
+                </span>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    class="seg"
+                    onClick={() => {
+                      review(file.path, 'accept');
+                    }}
+                  >
+                    ACCETTA
+                  </button>
+                  <button
+                    type="button"
+                    class="seg"
+                    disabled={busy}
+                    title="Rimette il file com’era prima del messaggio"
+                    onClick={() => {
+                      review(file.path, 'reject');
+                    }}
+                  >
+                    RIFIUTA
+                  </button>
+                </>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {item.uncovered.length > 0 && (
+        <p class="data muted">
+          ▲ Cambiati ma non annullabili (oltre 2 MB): {item.uncovered.join(', ')}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function Item({ item, busy }: { item: ThreadItem; busy: boolean }) {
   switch (item.kind) {
     case 'user':
       return (
         <section class="card user">
-          <span class="label">TU</span>
+          <div class="card-head">
+            <span class="label">TU</span>
+            {item.checkpoint && (
+              <button
+                type="button"
+                class="link data muted"
+                disabled={busy}
+                title="Riporta i file della cartella a com’erano prima di questo messaggio. La conversazione resta com’è."
+                onClick={() => {
+                  if (item.checkpoint) {
+                    post({ type: 'restoreCheckpoint', checkpoint: item.checkpoint });
+                  }
+                }}
+              >
+                ↺ ripristina qui
+              </button>
+            )}
+          </div>
           <div class="text">{item.text}</div>
+          {item.attachments && item.attachments.length > 0 && (
+            <div class="data muted">allegati: {item.attachments.join(', ')}</div>
+          )}
         </section>
       );
+    case 'changes':
+      return <Changes item={item} busy={busy} />;
     case 'turn':
       return <Turn item={item} />;
     case 'approval':
@@ -315,6 +423,38 @@ const ROUTES: readonly { value: Route | ''; label: string }[] = [
   { value: 'chiedi', label: 'chiedi prima' },
 ];
 
+/** How full the recipient's session is, after its latest turn. */
+function ContextMeter({ context, role }: { context: ContextInfo | undefined; role: RoleName }) {
+  const who = role === 'leader' ? 'del leader' : 'dell’implementatore';
+  if (!context) {
+    return (
+      <span class="data muted" title={`Il contesto ${who} si conosce dopo il suo primo turno.`}>
+        CONTESTO —
+      </span>
+    );
+  }
+  const percent = context.window ? Math.round((context.used / context.window) * 100) : null;
+  return (
+    <span
+      class="context"
+      title={`Contesto della sessione ${who} dopo il suo ultimo turno: ${String(context.used)} token${
+        context.window ? ` su ${String(context.window)}` : ''
+      }.`}
+    >
+      <span class="label">CONTESTO</span>
+      {percent !== null && (
+        <span class="meter-bar mini">
+          <span class={`meter-fill p${String(Math.min(10, Math.round(percent / 10)))}`} />
+        </span>
+      )}
+      <span class="data">
+        {formatTokens(context.used)}
+        {context.window ? ` / ${formatTokens(context.window)} · ${String(percent)}%` : ''}
+      </span>
+    </span>
+  );
+}
+
 /** The agents can start: a folder is open and trusted. */
 function ready(session: SessionInfo): boolean {
   return session.workspace !== null && session.trusted;
@@ -337,9 +477,55 @@ function Composer({ session }: { session: SessionInfo | undefined }) {
   const [text, setText] = useState('');
   const [to, setTo] = useState<RoleName>('leader');
   const [route, setRoute] = useState<Route | ''>('');
+  /** The folder's paths for `@`, asked of the host at each new `@`. */
+  const [files, setFiles] = useState<readonly string[] | null>(null);
+  const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
+  const [choice, setChoice] = useState(0);
+  const box = useRef<HTMLTextAreaElement>(null);
   const busy = session?.busy ?? false;
   const canSend = session !== undefined && ready(session) && !busy && text.trim() !== '';
   const enterSends = session?.enterSends ?? true;
+  const options = mention && files ? matchPaths(files, mention.query) : [];
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent<unknown>) => {
+      const message = parseHostMessage(event.data);
+      if (message?.type === 'files') setFiles(message.paths);
+      if (message?.type === 'insert') {
+        // At the caret, or at the end; the composer takes the focus.
+        const area = box.current;
+        setText((current) => {
+          const at = area ? area.selectionStart : current.length;
+          const glue = at > 0 && !/\s$/.test(current.slice(0, at)) ? ' ' : '';
+          return current.slice(0, at) + glue + message.text + current.slice(at);
+        });
+        area?.focus();
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => {
+      window.removeEventListener('message', onMessage);
+    };
+  }, []);
+
+  /** The `@` word at the caret, if any: opens the list of paths. */
+  const follow = (value: string, caret: number) => {
+    const found = mentionAt(value, caret);
+    setMention(found);
+    setChoice(0);
+    // Each new `@` asks again: the agents may have added files since.
+    if (found && !mention) post({ type: 'listFiles' });
+  };
+  const pick = (path: string) => {
+    if (!mention) return;
+    const next = pickMention(text, mention, path);
+    setText(next.text);
+    setMention(null);
+    requestAnimationFrame(() => {
+      box.current?.setSelectionRange(next.caret, next.caret);
+      box.current?.focus();
+    });
+  };
   const send = () => {
     if (!canSend) return;
     post({
@@ -356,8 +542,8 @@ function Composer({ session }: { session: SessionInfo | undefined }) {
   const recipient = session ? (to === 'leader' ? session.leader : session.implementer) : undefined;
   const placeholder =
     to === 'leader'
-      ? 'Scrivi al leader, oppure incolla un brief (<<<OOC-BRIEF).'
-      : 'Scrivi all’implementatore: il leader legge il suo rapporto con il tuo prossimo messaggio.';
+      ? 'Scrivi al leader, oppure incolla un brief (<<<OOC-BRIEF). @ per indicare un file.'
+      : 'Scrivi all’implementatore; il leader legge il rapporto con il tuo prossimo messaggio. @ per indicare un file.';
   return (
     <footer class="composer">
       {session && !session.workspace && (
@@ -384,7 +570,29 @@ function Composer({ session }: { session: SessionInfo | undefined }) {
         </div>
       )}
       <div class="compose-box">
+        {options.length > 0 && (
+          <ul class="mentions" role="listbox" aria-label="File e cartelle">
+            {options.map((path, index) => (
+              <li key={path}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={index === choice}
+                  class={index === choice ? 'mention on' : 'mention'}
+                  onMouseDown={(event) => {
+                    // Keeps the focus in the box.
+                    event.preventDefault();
+                    pick(path);
+                  }}
+                >
+                  {path}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <textarea
+          ref={box}
           class="editor bare"
           placeholder={`${placeholder} ${
             enterSends
@@ -394,9 +602,36 @@ function Composer({ session }: { session: SessionInfo | undefined }) {
           value={text}
           rows={3}
           onInput={(event) => {
-            setText((event.target as HTMLTextAreaElement).value);
+            const area = event.target as HTMLTextAreaElement;
+            setText(area.value);
+            follow(area.value, area.selectionStart);
+          }}
+          onClick={(event) => {
+            const area = event.target as HTMLTextAreaElement;
+            follow(area.value, area.selectionStart);
+          }}
+          onBlur={() => {
+            setMention(null);
           }}
           onKeyDown={(event) => {
+            if (options.length > 0) {
+              const move = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+              if (move !== 0) {
+                event.preventDefault();
+                setChoice((choice + move + options.length) % options.length);
+                return;
+              }
+              if (event.key === 'Enter' || event.key === 'Tab') {
+                event.preventDefault();
+                pick(options[choice] ?? options[0] ?? '');
+                return;
+              }
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                setMention(null);
+                return;
+              }
+            }
             if (event.key !== 'Enter' || event.isComposing) return;
             const sends = enterSends ? !event.shiftKey : event.ctrlKey || event.metaKey;
             if (sends) {
@@ -461,6 +696,7 @@ function Composer({ session }: { session: SessionInfo | undefined }) {
           </label>
           <span class="spacer" />
           {recipient && <span class="data muted recipient">{roleLine(recipient)}</span>}
+          {session && <ContextMeter context={session.context[to]} role={to} />}
           {busy ? (
             <button
               type="button"
@@ -526,7 +762,7 @@ export function App() {
           </p>
         )}
         {items.map((item) => (
-          <Item key={item.id} item={item} />
+          <Item key={item.id} item={item} busy={session?.busy ?? false} />
         ))}
         <div ref={end} />
       </main>

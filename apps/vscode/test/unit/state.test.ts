@@ -35,6 +35,25 @@ describe('the webview thread', () => {
     });
   });
 
+  it('keeps a changes card and the user’s decision on each file', () => {
+    const file = {
+      path: 'calc.py',
+      kind: 'modified' as const,
+      added: 3,
+      removed: 0,
+      binary: false,
+      before: 'a'.repeat(64),
+      after: 'b'.repeat(64),
+    };
+    const items = apply([
+      { type: 'user', id: 'u-1', text: 'aggiungi sub', checkpoint: 'ckpt-1' },
+      { type: 'changes', id: 'm-1', checkpoint: 'ckpt-1', files: [file], uncovered: [] },
+      { type: 'change_decided', id: 'm-1', path: 'calc.py', decision: 'rejected' },
+    ]);
+    expect(items[0]).toMatchObject({ kind: 'user', checkpoint: 'ckpt-1' });
+    expect(items[1]).toMatchObject({ kind: 'changes', decisions: { 'calc.py': 'rejected' } });
+  });
+
   it('keeps a turn done when the host closes the running ones as failed', () => {
     const items = apply([
       { type: 'turn', id: 't-1', role: 'implementer', agent: 'Claude', status: 'running' },

@@ -28,6 +28,7 @@ import {
   codexQuota,
   codexTokens,
   subtractTokens,
+  type ContextUsage,
   type QuotaSnapshot,
   type TokenUsage,
 } from '../usage.js';
@@ -206,6 +207,7 @@ type TurnOutcome =
       /** Absent for the first turn of a resumed thread: its own usage is unknown. */
       usage?: { byModel: Record<string, TokenUsage>; costUsd: null; durationMs: number };
       quota: QuotaSnapshot | null;
+      context: ContextUsage | null;
     }
   | Error;
 
@@ -251,6 +253,8 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
     let threadId = '';
     /** Set when the thread was resumed; see the first completed turn. */
     let baselineUnknown = false;
+    /** The main thread's context, from its latest token usage notification. */
+    let mainContext: ContextUsage | null = null;
     let identity: AgentIdentity = { provider: 'Codex', model: '', effort: null, sessionId: '' };
     const children = new Map<string, Child>();
     /** Latest cumulative tokens per thread (thread/tokenUsage/updated). */
@@ -327,6 +331,19 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         if (method === 'thread/tokenUsage/updated' && typeof params['threadId'] === 'string') {
           const usage = params['tokenUsage'];
           totals.set(params['threadId'], codexTokens(isRecord(usage) ? usage['total'] : undefined));
+          // The thread's latest request is its context; sub-agents have their own threads.
+          if (params['threadId'] === threadId && isRecord(usage) && isRecord(usage['last'])) {
+            const last = usage['last'];
+            const window = usage['modelContextWindow'];
+            mainContext = {
+              used:
+                typeof last['totalTokens'] === 'number'
+                  ? last['totalTokens']
+                  : (typeof last['inputTokens'] === 'number' ? last['inputTokens'] : 0) +
+                    (typeof last['outputTokens'] === 'number' ? last['outputTokens'] : 0),
+              window: typeof window === 'number' ? window : null,
+            };
+          }
         }
         const turn = current;
         if (!turn) return;
@@ -380,6 +397,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
                   }
                 : {}),
               quota: turn.quota,
+              context: mainContext,
             });
           } else {
             const error = isRecord(completed['error']) ? String(completed['error']['message']) : '';

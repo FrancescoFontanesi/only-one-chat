@@ -19,6 +19,7 @@ import type {
   AgentTurnResult,
   ApprovalRequest,
   ApprovalDecision,
+  ContextUsage,
   QuotaSnapshot,
   SubagentEvent,
   SubagentPolicy,
@@ -79,6 +80,7 @@ export type ThreadEvent =
       readonly identity: AgentIdentity;
       readonly usage?: TurnUsage;
       readonly quota?: QuotaSnapshot | null;
+      readonly context?: ContextUsage | null;
     }
   | {
       readonly type: 'approval_denied';
@@ -1063,6 +1065,7 @@ export function runLoop(options: LoopOptions): Loop {
         identity: result.identity,
         ...(result.usage ? { usage: result.usage } : {}),
         ...(result.quota !== undefined ? { quota: result.quota } : {}),
+        ...(result.context ? { context: result.context } : {}),
       });
       return result;
     } catch (error) {

@@ -7,6 +7,7 @@ import { SettingsPanel } from '../webview/settingsPanel.js';
 export const CommandId = {
   openPanel: 'onlyOneChat.openPanel',
   openSettings: 'onlyOneChat.openSettings',
+  addSelection: 'onlyOneChat.addSelection',
   newChat: 'onlyOneChat.newChat',
   stop: 'onlyOneChat.stop',
   refreshUsage: 'onlyOneChat.refreshUsage',
@@ -29,6 +30,9 @@ export function registerCommands(
       await OnlyOneChatPanel.newChat();
     }),
     vscode.commands.registerCommand(CommandId.stop, () => OnlyOneChatPanel.stop()),
+    vscode.commands.registerCommand(CommandId.addSelection, () => {
+      OnlyOneChatPanel.insertFromEditor(context, services);
+    }),
     vscode.commands.registerCommand(CommandId.refreshUsage, () => services.refreshCodexUsage()),
     vscode.commands.registerCommand(CommandId.refreshModels, () => services.catalog.load(true)),
   );

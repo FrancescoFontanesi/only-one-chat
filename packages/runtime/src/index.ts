@@ -30,6 +30,7 @@ export type {
   AgentTurnResult,
   ApprovalDecision,
   ApprovalRequest,
+  ContextUsage,
   QuotaSnapshot,
   SubagentEvent,
   SubagentPolicy,

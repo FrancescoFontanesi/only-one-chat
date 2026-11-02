@@ -17,7 +17,13 @@ import { execFile, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { getEnv, withoutApiKeys } from '../environment.js';
 import { OWN_PROCESS_GROUP, terminateTree } from '../process-tree.js';
-import { claudeQuota, claudeUsage, type QuotaSnapshot, type TokenUsage } from '../usage.js';
+import {
+  claudeQuota,
+  claudeUsage,
+  type ContextUsage,
+  type QuotaSnapshot,
+  type TokenUsage,
+} from '../usage.js';
 
 export type ClaudeErrorKind =
   | 'api_key'
@@ -141,6 +147,11 @@ export interface ClaudeTurnResult {
   readonly costUsd: number | null;
   /** The last `rate_limit_event` of the turn. */
   readonly quota: QuotaSnapshot | null;
+  /**
+   * The main conversation's context: the usage of its last assistant message
+   * (input, cache reads and writes, output), and the model's `contextWindow`.
+   */
+  readonly context: ContextUsage | null;
 }
 
 export interface ClaudeTurnOptions {
@@ -434,6 +445,16 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
       let sessionId = '';
       let model = '';
       let quota: QuotaSnapshot | null = null;
+      /** Tokens of the main conversation's latest request; null until one is seen. */
+      let lastContext: number | null = null;
+      /** The main model's context window, from the result's `modelUsage`. */
+      const windowOf = (result: Json): number | null => {
+        const models = result['modelUsage'];
+        const main = isRecord(models) ? models[model] : undefined;
+        return isRecord(main) && typeof main['contextWindow'] === 'number'
+          ? main['contextWindow']
+          : null;
+      };
       let settled = false;
       const settle = (outcome: () => void) => {
         if (settled) return;
@@ -490,6 +511,15 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
         } else if (type === 'assistant' && isRecord(message['message'])) {
           const parent = message['parent_tool_use_id'];
           const parentToolUseId = typeof parent === 'string' ? parent : null;
+          const usage = message['message']['usage'];
+          if (parentToolUseId === null && isRecord(usage)) {
+            const count = (key: string) => (typeof usage[key] === 'number' ? usage[key] : 0);
+            lastContext =
+              count('input_tokens') +
+              count('cache_creation_input_tokens') +
+              count('cache_read_input_tokens') +
+              count('output_tokens');
+          }
           const messageModel = message['message']['model'];
           const blockModel = typeof messageModel === 'string' ? messageModel : null;
           const content = message['message']['content'];
@@ -547,6 +577,7 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
             costUsd:
               typeof message['total_cost_usd'] === 'number' ? message['total_cost_usd'] : null,
             quota,
+            context: lastContext === null ? null : { used: lastContext, window: windowOf(message) },
           };
           // One turn only: end the input so Claude exits, force it if it lingers, and
           // resolve only once nothing of the turn is left running.

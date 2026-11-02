@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { PendingReport } from '@only-one-chat/runtime';
-import { ChatSession, type ChatConfig } from '../../src/session/chat.js';
+import { ChatSession, type ChatConfig, type FileNotes } from '../../src/session/chat.js';
+import { CheckpointStore } from '../../src/session/checkpoints.js';
 import type { ThreadUpdate } from '../../src/webview/protocol.js';
 
 const FIXTURES = join(
@@ -38,11 +39,15 @@ function session(
   resume?: ChatConfig['resume'],
   unseen?: PendingReport[],
   instructions?: ChatConfig['instructions'],
+  checkpoints?: CheckpointStore,
+  fileNotes?: ChatConfig['fileNotes'],
 ) {
   const updates: ThreadUpdate[] = [];
   const busy: boolean[] = [];
   const sessionIds: [string, string][] = [];
   const kept: (readonly PendingReport[])[] = [];
+  const contexts: [string, { used: number; window: number | null }][] = [];
+  const notes: FileNotes[] = [];
   const config: ChatConfig = {
     cwd,
     leader: { cli: 'codex', model: 'gpt-6.1-sol', effort: 'low', permission: 'auto' },
@@ -66,6 +71,8 @@ function session(
     ...(resume ? { resume } : {}),
     ...(unseen ? { unseen } : {}),
     ...(instructions ? { instructions } : {}),
+    ...(checkpoints ? { checkpoints } : {}),
+    ...(fileNotes ? { fileNotes } : {}),
     logPath: join(root, 'logs', 'chat.jsonl'),
   };
   const chat = new ChatSession(config, {
@@ -73,9 +80,123 @@ function session(
     busy: (value) => busy.push(value),
     sessionId: (role, id) => sessionIds.push([role, id]),
     unseen: (reports) => kept.push([...reports]),
+    context: (role, context) => contexts.push([role, context]),
+    fileNotes: (pending) => notes.push(pending),
   });
-  return { chat, updates, busy, sessionIds, kept };
+  return { chat, updates, busy, sessionIds, kept, contexts, notes };
 }
+
+describe('chat session: files named with @ (ADR 0015)', () => {
+  it('shows the user’s text and hands the agent the attachments after it', async () => {
+    const { chat, updates } = session('auto');
+    try {
+      await chat.send('@impl rivedi @calc.py', {
+        text: 'Allegati indicati dall’utente:\n- calc.py',
+        paths: ['calc.py'],
+      });
+    } finally {
+      await chat.dispose();
+    }
+    expect(updates[0]).toMatchObject({
+      type: 'user',
+      text: '@impl rivedi @calc.py',
+      attachments: ['calc.py'],
+    });
+    // The fake implementer echoes its prompt.
+    expect(doneTurns(updates)[0]?.text).toContain('rivedi @calc.py\n\nAllegati indicati');
+  });
+});
+
+describe('chat session: context of each session', () => {
+  it('reports how full the leader’s and the implementer’s sessions are after their turns', async () => {
+    const { chat, contexts } = session('auto');
+    try {
+      await chat.send('@impl primo');
+      await chat.send('ciao');
+    } finally {
+      await chat.dispose();
+    }
+    expect(contexts).toEqual([
+      ['implementer', { used: 6057, window: 1_000_000 }],
+      ['leader', { used: 1050, window: 258_400 }],
+    ]);
+  });
+});
+
+describe('chat session: checkpoints and review (ADR 0014)', () => {
+  it('records the folder before a message and lists what the message changed', async () => {
+    writeFileSync(join(cwd, 'calc.py'), 'x = 1\n');
+    const store = new CheckpointStore(join(root, 'checkpoints'), cwd);
+    const { chat, updates } = session('manual', 'always', undefined, undefined, undefined, store);
+    try {
+      const sent = chat.send('[spec] aggiungi una funzione');
+      // While the delegation waits, the folder changes, as an agent would change it.
+      await expect.poll(() => updates.find((u) => u.type === 'approval')).toBeTruthy();
+      writeFileSync(join(cwd, 'calc.py'), 'x = 1\ny = 2\n');
+      const approval = updates.find((u) => u.type === 'approval');
+      if (approval?.type === 'approval') chat.decide(approval.id, 'cancel');
+      await sent;
+    } finally {
+      await chat.dispose();
+    }
+    const user = updates.find((u) => u.type === 'user');
+    const card = updates.find((u) => u.type === 'changes');
+    expect(user?.type === 'user' && user.checkpoint).toMatch(/^ckpt-/);
+    expect(card).toMatchObject({
+      type: 'changes',
+      checkpoint: user?.type === 'user' ? user.checkpoint : '',
+      files: [{ path: 'calc.py', kind: 'modified', added: 1, removed: 0 }],
+      uncovered: [],
+    });
+    // The card replaces the plain list of changed files.
+    expect(updates.some((u) => u.type === 'notice' && u.text.startsWith('File cambiati'))).toBe(
+      false,
+    );
+  });
+
+  it('keeps the notes a role has not received with the chat, and resumes from them', async () => {
+    // A reopened chat: the implementer already had the note, the leader not yet.
+    const { chat, updates, notes } = session(
+      'auto',
+      'always',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        leader: ['calc.py: rimesso com’era prima del messaggio'],
+      },
+    );
+    try {
+      await chat.send('@impl primo');
+      await chat.send('ciao');
+    } finally {
+      await chat.dispose();
+    }
+    const done = doneTurns(updates);
+    expect(done[0]?.text).not.toContain('calc.py: rimesso');
+    expect(done[1]?.text).toContain('calc.py: rimesso');
+    // Saved when the leader received it: nothing left to tell.
+    expect(notes.at(-1)).toEqual({ leader: [], implementer: [] });
+  });
+
+  it('tells the leader and the implementer, each once, which files the user put back', async () => {
+    const { chat, updates } = session('auto');
+    try {
+      chat.noteFiles('calc.py: rimesso com’era prima del messaggio');
+      await chat.send('@impl primo');
+      await chat.send('ciao');
+      await chat.send('di nuovo');
+    } finally {
+      await chat.dispose();
+    }
+    const done = doneTurns(updates);
+    // The fake CLIs echo their prompt.
+    expect(done[0]?.text).toContain('calc.py: rimesso com’era');
+    expect(done[1]?.text).toContain('calc.py: rimesso com’era');
+    expect(done[2]?.text).not.toContain('calc.py: rimesso com’era');
+  });
+});
 
 describe('chat session: the user’s instructions per role (ADR 0013)', () => {
   it('adds them to the role’s own instructions', async () => {

@@ -201,6 +201,17 @@ tocca e come le mitiga.
   ciascuna verificata sul suo tipo. Percorsi dei CLI, comandi consentiti, comando di verifica e
   istruzioni per ruolo sono `machine`: una cartella non può impostarli, nemmeno dalla pagina.
 
+### T14. Revisione, ripristino e file indicati (ADR 0014, 0015)
+
+- **Minaccia:** la webview che fa scrivere, cancellare o leggere un file fuori dalla cartella.
+- **Mitigazioni:**
+  - rifiuto e ripristino toccano solo percorsi registrati nel checkpoint della chat; la webview
+    nomina un file della scheda, e l'host lo cerca lì;
+  - ogni percorso risolto deve restare nella cartella, altrimenti si rifiuta;
+  - le menzioni `@` passano agli agenti solo se il percorso reale (link risolti) è dentro la
+    cartella; un intervallo di righe è copiato solo se breve;
+  - i contenuti del diff si leggono da uno schema in sola lettura, solo per hash validi.
+
 ## Sicurezza della supply chain (bootstrap)
 
 - Versioni esatte e lockfile (`pnpm install --frozen-lockfile`).

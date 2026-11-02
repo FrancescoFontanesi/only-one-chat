@@ -146,6 +146,8 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
             ? { usage: { byModel, costUsd, durationMs: Date.now() - startedAt } }
             : {}),
           quota: result.quota,
+          // Unlike usage, the context is the session's own size, known even after a resume.
+          context: result.context,
           identity: {
             provider: 'Claude Code',
             model: result.model,

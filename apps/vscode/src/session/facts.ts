@@ -9,9 +9,17 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 /** Folders never walked: dependencies, caches, version control. */
-const SKIPPED = new Set(['.git', 'node_modules', '__pycache__', '.venv', 'venv', 'dist', 'out']);
+export const SKIPPED = new Set([
+  '.git',
+  'node_modules',
+  '__pycache__',
+  '.venv',
+  'venv',
+  'dist',
+  'out',
+]);
 /** A workspace larger than this is not hashed: the facts say so instead. */
-const MAX_FILES = 5_000;
+export const MAX_FILES = 5_000;
 
 /** `unavailable`: too many files, or the folder could not be read. */
 export type Snapshot = ReadonlyMap<string, string> | 'unavailable';

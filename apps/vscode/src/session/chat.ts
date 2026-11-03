@@ -190,21 +190,25 @@ export class ChatSession {
    * next turn and always in the role's own CLI session: model and effort go to
    * the same session; another permission level reopens that session with the
    * new rules. Another CLI is not applied: the chat keeps its providers, since
-   * moving the work to another provider is a handoff (to be designed).
-   * Returns false when the choice was not applied.
+   * moving the work to another provider is a handoff (to be designed). The
+   * leader keeps its model too: without a handoff of the leader, its
+   * conversation stays with the model it began with.
+   * Returns false when the choice was not applied in full.
    */
   setRole(role: TurnRole, choice: AgentChoice): boolean {
     const before = this.roles[role];
     if (choice.cli !== before.cli) return false;
+    const locked = role === 'leader' && choice.model !== before.model;
+    if (locked) choice = { ...choice, model: before.model };
     this.roles[role] = choice;
     const session = role === 'leader' ? this.leaderSession : this.implementerSession;
     if (choice.permission !== before.permission && session) {
       this.reopen.add(role);
-      return true;
+      return !locked;
     }
     if (choice.model !== before.model) session?.setModel?.(choice.model);
     if (choice.effort !== before.effort) session?.setEffort?.(choice.effort);
-    return true;
+    return !locked;
   }
 
   /** The roles of this chat, with the user's changes. */
@@ -418,11 +422,18 @@ export class ChatSession {
     }
   }
 
-  /** Sends the user's message: to the leader, or with `@impl` to the implementer; one at a time. */
+  /**
+   * Sends the user's message, one at a time: to the leader, or to the
+   * implementer alone. Without `to`, an `@impl` at the start chooses it (the
+   * tests and older callers); the panel always says.
+   */
   async send(
     text: string,
     attached?: { readonly text: string; readonly paths: readonly string[] },
+    to?: 'leader' | 'implementer',
   ): Promise<void> {
+    const direct = to ? to === 'implementer' : DIRECT.test(text);
+    if (!to && direct) text = text.replace(DIRECT, '');
     const attachments = attached?.text ?? '';
     if (this.running) {
       this.events.update({
@@ -437,6 +448,7 @@ export class ChatSession {
       type: 'user',
       id: this.id('u'),
       text,
+      to: direct ? 'implementer' : 'leader',
       ...(checkpoint ? { checkpoint: checkpoint.id } : {}),
       ...(attached && attached.paths.length > 0 ? { attachments: attached.paths } : {}),
     });
@@ -450,8 +462,8 @@ export class ChatSession {
       await this.applyRoleChanges();
       // The files the user named reach the agent after the text; the thread shows the text.
       const prompt = attachments === '' ? text : `${text}\n\n${attachments}`;
-      if (DIRECT.test(prompt)) {
-        await this.toImplementer(prompt.replace(DIRECT, ''), baseline, shown);
+      if (direct) {
+        await this.toImplementer(prompt, baseline, shown);
       } else await this.toLeader(prompt, baseline, shown);
     } catch (error) {
       this.events.update({

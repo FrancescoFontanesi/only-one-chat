@@ -128,6 +128,8 @@ export interface SessionInfo {
   readonly enterSends: boolean;
   /** How full each role's session is, after its latest turn. */
   readonly context: Partial<Record<TurnRole, ContextInfo>>;
+  /** Usage windows past this percentage are flagged; 0: never. */
+  readonly usageThreshold: number;
 }
 
 /** A session's context: the tokens of its latest request, and the model's window if known. */
@@ -152,6 +154,8 @@ export type ThreadUpdate =
       readonly type: 'user';
       readonly id: string;
       readonly text: string;
+      /** Who it is for; older chats wrote `@impl` at the start of the text instead. */
+      readonly to?: RoleName;
       /** The folder as it was before this message (ADR 0014). */
       readonly checkpoint?: string;
       /** Files and folders named with `@`, as the agents received them (ADR 0015). */
@@ -336,6 +340,12 @@ export type WebviewToHostMessage =
       readonly target: SettingsTarget;
     }
   | { readonly type: 'openNativeSettings' }
+  /** From the settings page: back to the chat. */
+  | { readonly type: 'showChat' }
+  /** VS Code's Workspace Trust page, for a folder not trusted. */
+  | { readonly type: 'manageTrust' }
+  /** Text for the clipboard: an error's details. */
+  | { readonly type: 'copy'; readonly text: string }
   | {
       /** A file of a changes card: show its diff, keep it, or put it back as it was. */
       readonly type: 'reviewFile';
@@ -466,6 +476,14 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
       return typeof checkpoint === 'string' && ID_PATTERN.test(checkpoint)
         ? { type: 'restoreCheckpoint', checkpoint }
         : undefined;
+    }
+    case 'showChat':
+      return { type: 'showChat' };
+    case 'manageTrust':
+      return { type: 'manageTrust' };
+    case 'copy': {
+      const body = text(msg['text']);
+      return body !== undefined ? { type: 'copy', text: body } : undefined;
     }
     case 'openNativeSettings':
       return { type: 'openNativeSettings' };

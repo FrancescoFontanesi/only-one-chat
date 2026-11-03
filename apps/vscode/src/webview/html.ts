@@ -8,13 +8,17 @@ export interface WebviewHtmlOptions {
   readonly cspSource: string;
   readonly nonce: string;
   readonly scriptUri: string;
-  readonly styleUri: string;
+  /** In order: the fonts, the design's tokens and layout, its components, the app's additions. */
+  readonly styleUris: readonly string[];
   readonly title: string;
-  /** Which view the bundle renders: the chat (default) or a side view. */
+  /** Which view the bundle renders: the chat (default) or the settings page. */
   readonly view?: WebviewKind;
 }
 
-export type WebviewKind = 'chat' | 'roles' | 'monitor' | 'usage' | 'settings';
+export type WebviewKind = 'chat' | 'settings';
+
+/** The stylesheets of every webview, under media/cn (ADR 0016). */
+export const STYLESHEETS = ['fonts.css', 'oo.css', 'bundle.css', 'app.css'] as const;
 
 export function createNonce(): string {
   return randomBytes(16).toString('base64');
@@ -53,7 +57,7 @@ export function renderWebviewHtml(options: WebviewHtmlOptions): string {
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="${escapeHtml(csp)}">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="${escapeHtml(options.styleUri)}">
+${options.styleUris.map((uri) => `  <link rel="stylesheet" href="${escapeHtml(uri)}">`).join('\n')}
   <title>${escapeHtml(options.title)}</title>
 </head>
 <body>

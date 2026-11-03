@@ -50,8 +50,6 @@ export function expandMentions(text: string, cwd: string): Expanded {
   for (const match of text.matchAll(MENTION)) {
     if (mentions.length >= MAX_MENTIONS) break;
     const raw = (match[2] ?? '').replace(/\/+$/, '');
-    // `@impl` at the start addresses the implementer; it is not a file.
-    if (match.index === 0 && raw.toLowerCase() === 'impl') continue;
     const found = inside(cwd, raw);
     if (!found) continue;
     const path = raw.replace(/\\/g, '/') + (found.folder ? '/' : '');

@@ -9,10 +9,8 @@ import { MonitorStore } from './session/monitor.js';
 import { UsageStore } from './session/usage.js';
 import { usageWarnings } from './notifications.js';
 import { CheckpointContentProvider, CHECKPOINT_SCHEME } from './webview/checkpointContent.js';
-import { MonitorViewProvider } from './webview/monitorView.js';
 import { OnlyOneChatPanel } from './webview/panel.js';
-import { RolesViewProvider } from './webview/rolesView.js';
-import { UsageViewProvider } from './webview/usageView.js';
+import { CodexUsageReader } from './usageReader.js';
 
 /**
  * Value returned by `activate`. Only the integration tests use it; it is not
@@ -42,30 +40,20 @@ export function activate(context: vscode.ExtensionContext): OnlyOneChatExports {
     },
   });
   const roles = new RoleSettings(catalog);
-  const usageView = new UsageViewProvider(context, usage);
-  const monitorView = new MonitorViewProvider(context, monitor);
-  const rolesView = new RolesViewProvider(context, roles, catalog, OnlyOneChatPanel.chatRoles);
+  const codexUsage = new CodexUsageReader(context, usage);
   context.subscriptions.push(
+    roles,
     vscode.workspace.registerTextDocumentContentProvider(
       CHECKPOINT_SCHEME,
       new CheckpointContentProvider(context),
     ),
-  );
-  context.subscriptions.push(
-    roles,
-    usageView,
-    monitorView,
-    rolesView,
-    vscode.window.registerWebviewViewProvider(RolesViewProvider.viewType, rolesView),
-    vscode.window.registerWebviewViewProvider(MonitorViewProvider.viewType, monitorView),
-    vscode.window.registerWebviewViewProvider(UsageViewProvider.viewType, usageView),
   );
   const services = {
     usage,
     monitor,
     roles,
     catalog,
-    refreshCodexUsage: () => usageView.refreshCodex(),
+    refreshCodexUsage: () => codexUsage.refresh(),
   };
   registerCommands(context, services);
   context.subscriptions.push(

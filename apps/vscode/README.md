@@ -24,34 +24,47 @@ its answer:
 
 ## The chat
 
-- **At the top:** the title of the conversation, STORICO (the chats of this folder) and + NUOVA.
-- **At the bottom:** the box you write in. Under its divider are the settings of the message:
-  - **who receives it:** LEADER, or IMPLEMENTATORE. Writing to the implementer directly is the
-    cheapest way when you already know what to ask; the leader reads that report with your next
-    message.
-  - **VIA**, the route you ask of the leader: it decides, delega, fai tu, chiedi prima. Typing
-    `@impl`, `/delega`, `/fai` or `/chiedi` at the start of the message works too.
+The chat opens in an editor tab, which you can move and resize; the layout follows its width.
+
+- **The bar:** the folder and the chat's title, its state (PRONTO, IN CORSO, ASPETTA TE, NON
+  PRONTO), STORICO (the chats of this folder), + NUOVA, IMPOSTAZIONI and SQUAD.
+- **The thread:** one column; each message opens with a line saying who wrote it, with which
+  model, and its state, and COPIA (and ↺ RIPRISTINA QUI on yours) at hand. An agent's tools
+  (commands, files read and changed, sub-agents) show as a terminal log inside its turn: the
+  latest ones while it works, all of them with "+ N AZIONI"; its context, output, time and, for
+  Claude, nominal cost close it. Delegations (D01, D02) and reports are one line, their text one
+  click away; then the facts the extension verified and the changes to review.
+- **The dock, at the bottom:** what waits for you takes its place — a permission (keys 1, 2, 3;
+  Esc denies), a delegation or a report to approve, editable — else the box you write in. It
+  grows with the text up to about a third of the panel, then scrolls. Around the text:
+  - **LEADER / IMPLEMENTATORE:** who receives it, one per message. Writing to the implementer
+    directly is the cheapest way when you already know what to ask; the leader reads that report
+    with your next message;
+  - **VIA**, the route you ask of the leader: DECIDE LUI, DELEGA, FAI TU, CHIEDI;
+  - **CTX:** how full the session of the agent you write to is, after its latest turn;
+  - **@ FILE** attaches a file or a folder (see below);
+  - **/ COMANDI**, or `/` at the start of the text: `/delega`, `/fai`, `/chiedi`, `/impl`,
+    `/leader`, `/allega`, `/nuova` (or `/ferma` while it works), `/squad`, `/impostazioni`;
   - **DELEGHE:** whether you approve each message between the agents or they pass on their own.
-- **Enter** sends, **Shift+Enter** starts a new line.
+- **Enter** sends, **Shift+Enter** starts a new line (the other way round in the settings).
 
 A brief written in the ChatGPT web app (it starts with `<<<OOC-BRIEF`) can be pasted into the
 chat. The leader does not rewrite it: it forwards it with targeted notes or corrections only.
 
-## Choosing models and reasoning
+## The Squad panel
 
-The **Only One Chat** icon in the activity bar opens three views: **Ruoli**, **Attività** and
-**Utilizzo**.
+SQUAD opens a panel over the chat: how the work flows (you, the leader, the implementer), the
+roles with their model, permissions, state and context, the events, what waits for you, the
+changes, the models the CLIs offer, and the usage of the subscriptions. Select a role to change:
 
-- **In Ruoli you choose for each role:**
-  - the model, among those the CLIs offer, grouped by provider. They are read from Codex and
-    Claude Code themselves, with no model turn and no quota;
-  - the reasoning, among the levels that model supports;
-  - the permissions.
-- **When a change applies:**
-  - model, reasoning and permissions apply from that role's next turn, in the same session;
-  - another provider applies from the next chat: a chat keeps the providers it started with,
-    because moving its work to another provider needs a handoff, which is not designed yet.
-- **Nothing changes the roles automatically.**
+- the model, among those the CLIs offer, read from Codex and Claude Code themselves with no turn
+  and no quota. The leader's model stays the one the chat began with; another applies from the
+  next chat;
+- the reasoning, among the levels that model supports, and the permissions: from the role's next
+  turn, in the same session;
+- another provider: from the next chat, since a chat keeps its providers.
+
+Nothing changes the roles automatically.
 
 Some starting points:
 
@@ -68,21 +81,17 @@ Some starting points:
 
 ## Usage of the subscriptions
 
-**Attività** shows each role with its model, whether it is working or waiting for you, what it
-is doing and its sub-agents, and below the events of the chat, latest first.
+The Squad panel shows each subscription's 5-hour and weekly windows.
 
-**Utilizzo** is one table: each subscription with its 5-hour and weekly windows.
-
-- **Codex** is read from Codex itself, without using quota: every 2 minutes while the view is
-  visible, after each turn, and with the view's refresh button.
-- **Claude** reports its windows only when a turn starts, so the view shows the last value seen,
-  with its time.
+- **Codex** is read from Codex itself, without using quota: when the chat opens, every 2 minutes
+  while it is in view, and after each turn.
+- **Claude** reports its windows only when a turn starts, so the panel shows the last value seen.
 
 Nothing is read from credential files or session files.
 
 ## Settings
 
-IMPOSTAZIONI in the chat header (or "Only One Chat: Settings", or the gear of the Ruoli view)
+IMPOSTAZIONI in the chat's bar (or "Only One Chat: Settings")
 opens a page with all the settings, grouped: roles, delegations, your own instructions per role,
 sub-agents, permissions and unsaved files, the composer, notifications, the CLIs.
 
@@ -93,13 +102,14 @@ sub-agents, permissions and unsaved files, the composer, notifications, the CLIs
 
 ## Files and context
 
-- **`@` in the box** lists the folder's files and folders; pick one with the arrows and Enter.
-  **Ctrl+Alt+K** in the editor (or "Add File or Selection to Chat" in its context menu) adds the
-  open file, or the selected lines as `@file#L10-20`.
+- **`@` in the box** (or @ FILE) lists the folder's files and folders; pick one with the arrows
+  and Enter: it becomes an attachment above the text. `@` is for files only. **Ctrl+Alt+K** in the editor (or "Add File or
+  Selection to Chat" in its context menu) attaches the open file, or the selected lines as
+  `file#L10-20`.
 - **The agents receive paths**, and read the files themselves: your leader's context does not
   fill with files. Selected lines are copied into the message when they are few (up to 80).
-- **CONTESTO** under the box tells how full the session of the agent you write to is, after its
-  latest turn; the Attività view shows it for both roles.
+- **CTX** above the text tells how full the session of the agent you write to is, after its
+  latest turn; the Squad panel shows it for both roles.
 
 ## Reviewing and undoing changes
 

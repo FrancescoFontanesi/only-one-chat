@@ -1,3 +1,8 @@
+// The settings page, as the canvas's Impostazioni board draws it (ADR 0013,
+// 0016): a rail with the sections and where to save, the roles for the next
+// chats, then each setting with where its value comes from. VS Code's own
+// settings underneath.
+
 import { useEffect, useState } from 'preact/hooks';
 import {
   parseHostMessage,
@@ -5,18 +10,20 @@ import {
   type SettingValue,
   type SettingsState,
   type SettingsTarget,
-  type WebviewToHostMessage,
 } from '../src/webview/protocol.js';
-import { RolesBlock } from './Roles.js';
-import { vscodeApi } from './vscodeApi.js';
+import { post, RoleFields, Seg, useTheme } from './ui.js';
 
-const post = (message: WebviewToHostMessage) => {
-  vscodeApi.postMessage(message);
-};
+const SCOPE = { user: '[ UTENTE ]', workspace: '[ CARTELLA ]' } as const;
 
-const SCOPE = { default: 'PREDEFINITO', user: 'UTENTE', workspace: 'CARTELLA' } as const;
+const slug = (title: string) =>
+  title
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
 
-/** A text field written when it loses focus, not at each key. */
+/** A text written when it loses focus, not at each key; a list is comma-separated. */
 function TextField({
   item,
   multiline,
@@ -26,7 +33,8 @@ function TextField({
   multiline: boolean;
   write: (value: SettingValue) => void;
 }) {
-  const shown = Array.isArray(item.value) ? item.value.join('\n') : String(item.value);
+  const list = item.kind === 'list';
+  const shown = Array.isArray(item.value) ? item.value.join(', ') : String(item.value);
   const [text, setText] = useState(shown);
   useEffect(() => {
     setText(shown);
@@ -34,20 +42,19 @@ function TextField({
   const commit = () => {
     if (text === shown) return;
     write(
-      item.kind === 'list'
+      list
         ? text
-            .split('\n')
-            .map((line) => line.trim())
+            .split(',')
+            .map((part) => part.trim())
             .filter(Boolean)
         : text,
     );
   };
   return multiline ? (
     <textarea
-      class="editor"
-      rows={item.kind === 'list' ? 3 : 5}
+      class="ta"
+      aria-label={item.label}
       value={text}
-      placeholder={item.kind === 'list' ? 'un valore per riga' : ''}
       onInput={(event) => {
         setText((event.target as HTMLTextAreaElement).value);
       }}
@@ -55,8 +62,11 @@ function TextField({
     />
   ) : (
     <input
-      class="editor"
+      class="inp"
+      type="text"
+      aria-label={item.label}
       value={text}
+      placeholder={list ? 'valori separati da virgole' : ''}
       onInput={(event) => {
         setText((event.target as HTMLInputElement).value);
       }}
@@ -68,7 +78,7 @@ function TextField({
   );
 }
 
-function Setting({ item, target }: { item: SettingItem; target: SettingsTarget }) {
+function Row({ item, target }: { item: SettingItem; target: SettingsTarget }) {
   // A setting that never comes from a folder is always written for the user.
   const where: SettingsTarget = item.userOnly ? 'user' : target;
   const write = (value: SettingValue) => {
@@ -80,37 +90,38 @@ function Setting({ item, target }: { item: SettingItem; target: SettingsTarget }
   switch (item.kind) {
     case 'boolean':
       control = (
-        <input
-          type="checkbox"
-          checked={item.value === true}
-          onChange={(event) => {
-            write((event.target as HTMLInputElement).checked);
+        <Seg
+          label={item.label}
+          value={item.value ? 'yes' : 'no'}
+          options={[
+            { value: 'yes', label: 'SÌ' },
+            { value: 'no', label: 'NO' },
+          ]}
+          onChange={(value) => {
+            write(value === 'yes');
           }}
         />
       );
       break;
     case 'enum':
       control = (
-        <select
-          class="select"
+        <Seg
+          label={item.label}
           value={String(item.value)}
-          onChange={(event) => {
-            write((event.target as HTMLSelectElement).value);
-          }}
-        >
-          {item.options?.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          options={(item.options ?? []).map((o) => ({
+            value: o.value,
+            label: o.label.toUpperCase(),
+          }))}
+          onChange={write}
+        />
       );
       break;
     case 'number':
       control = (
         <input
-          class="editor narrow"
+          class="inp"
           type="number"
+          aria-label={item.label}
           min={item.min}
           max={item.max}
           value={String(item.value)}
@@ -122,43 +133,45 @@ function Setting({ item, target }: { item: SettingItem; target: SettingsTarget }
       );
       break;
     default:
-      control = (
-        <TextField
-          item={item}
-          multiline={item.kind === 'text' || item.kind === 'list'}
-          write={write}
-        />
-      );
+      control = <TextField item={item} multiline={item.kind === 'text'} write={write} />;
   }
   return (
-    <div class="setting">
-      <div class="setting-head">
-        <span class="data">{item.label}</span>
-        <span class={item.scope === 'default' ? 'tag' : 'tag tag-strong'}>{SCOPE[item.scope]}</span>
-        {item.userOnly && <span class="tag">SOLO UTENTE</span>}
+    <div class="srow">
+      <div class="srow__n">
+        <b>{item.label}</b>
+        <span>{item.description}</span>
+      </div>
+      <div>{control}</div>
+      <div class="srow__o">
+        {item.userOnly && <span class="cn-tag">SOLO UTENTE</span>}
+        {item.scope === 'default' ? (
+          <span class="cn-tag">PREDEFINITO</span>
+        ) : (
+          <span class="cn-tag cn-tag--ink">{SCOPE[item.scope]}</span>
+        )}
         {resettable && (
           <button
+            class="cn-btn cn-btn--text"
             type="button"
-            class="seg"
-            title="Torna al valore predefinito o a quello dell’utente"
+            title="Toglie il valore da qui: vale quello dell’utente o il predefinito"
             onClick={() => {
               post({ type: 'setSetting', key: item.key, target: where });
             }}
           >
-            RIPRISTINA
+            <span class="cn-btn__label">RIPRISTINA</span>
           </button>
         )}
       </div>
-      {control}
-      {item.description && <p class="data muted">{item.description}</p>}
     </div>
   );
 }
 
-/** The settings page (ADR 0013): VS Code's own settings, grouped, with where each value comes from. */
 export function SettingsApp() {
+  const theme = useTheme();
   const [state, setState] = useState<SettingsState>();
   const [target, setTarget] = useState<SettingsTarget>('user');
+  const [query, setQuery] = useState('');
+  const [current, setCurrent] = useState('ruoli');
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<unknown>) => {
@@ -172,57 +185,209 @@ export function SettingsApp() {
     };
   }, []);
 
-  if (!state) return <p class="data muted side">Lettura delle impostazioni…</p>;
+  if (!state) {
+    return (
+      <div class="cn app app--page" data-theme={theme}>
+        <p class="hint" style={{ padding: '24px' }}>
+          Lettura delle impostazioni…
+        </p>
+      </div>
+    );
+  }
+  const q = query.trim().toLowerCase();
+  const sections = [
+    { id: 'ruoli', title: 'Ruoli' },
+    ...state.sections.map((s) => ({ id: slug(s.title), title: s.title })),
+  ];
+  const go = (id: string) => {
+    setCurrent(id);
+    document.getElementById(id)?.scrollIntoView({ block: 'start' });
+  };
+  const providers = sections.find((s) => s.title === 'Provider');
+
   return (
-    <div class="settings">
-      <header class="bar">
-        <div class="bar-row">
-          <span class="chat-title">Impostazioni</span>
-          <span class="label">SALVA PER</span>
-          <span class="seg-group" role="group" aria-label="Dove salvare">
-            <button
-              type="button"
-              class={target === 'user' ? 'seg on' : 'seg'}
-              onClick={() => {
-                setTarget('user');
-              }}
-            >
-              UTENTE
-            </button>
-            <button
-              type="button"
-              class={target === 'workspace' ? 'seg on' : 'seg'}
-              disabled={!state.hasWorkspace}
-              onClick={() => {
-                setTarget('workspace');
-              }}
-            >
-              CARTELLA
-            </button>
-          </span>
-          <button
-            type="button"
-            class="seg"
-            onClick={() => {
-              post({ type: 'openNativeSettings' });
-            }}
-          >
-            APRI IN VS CODE
-          </button>
+    <div class="cn app app--page" data-theme={theme}>
+      <div class="st">
+        <aside class="rail">
+          <div class="mark">Only/One</div>
+          <nav class="nav" aria-label="Sezioni">
+            {sections.map((section, index) => (
+              <a
+                key={section.id}
+                href={`#${section.id}`}
+                class={current === section.id ? 'cn-accent' : ''}
+                aria-current={current === section.id}
+                onClick={(event) => {
+                  event.preventDefault();
+                  go(section.id);
+                }}
+              >
+                {section.title} <span>{String(index + 1).padStart(2, '0')}</span>
+              </a>
+            ))}
+          </nav>
+          <div class="rail__s">
+            <span class="cn-tag">SALVA PER</span>
+            <div class="seg" role="group" aria-label="Salva per">
+              <button
+                type="button"
+                class={target === 'user' ? 'cn-accent' : ''}
+                aria-pressed={target === 'user'}
+                onClick={() => {
+                  setTarget('user');
+                }}
+              >
+                UTENTE
+              </button>
+              <button
+                type="button"
+                class={target === 'workspace' ? 'cn-accent' : ''}
+                aria-pressed={target === 'workspace'}
+                disabled={!state.hasWorkspace}
+                onClick={() => {
+                  setTarget('workspace');
+                }}
+              >
+                CARTELLA
+              </button>
+            </div>
+            {!state.hasWorkspace && <span class="t-data mut">Nessuna cartella aperta</span>}
+          </div>
+        </aside>
+        <div class="smain">
+          <header class="bar">
+            <span class="crumb">
+              IMPOSTAZIONI /{' '}
+              <b>{(sections.find((s) => s.id === current)?.title ?? '').toUpperCase()}</b>
+            </span>
+            <label class="cn-field hide-m" style={{ flex: '1', maxWidth: '420px' }}>
+              <span class="sr">Cerca un’impostazione</span>
+              <span class="cn-field__box" data-prompt="/" style={{ height: '36px' }}>
+                <input
+                  placeholder="Cerca un’impostazione"
+                  value={query}
+                  onInput={(event) => {
+                    setQuery((event.target as HTMLInputElement).value);
+                  }}
+                />
+              </span>
+            </label>
+            <div class="bar__r">
+              <button
+                class="cn-btn cn-btn--text"
+                type="button"
+                onClick={() => {
+                  post({ type: 'openNativeSettings' });
+                }}
+              >
+                <span class="cn-btn__label">APRI IN VS CODE ↗</span>
+              </button>
+              <button
+                class="cn-btn cn-btn--outline cn-btn--sm"
+                type="button"
+                onClick={() => {
+                  post({ type: 'showChat' });
+                }}
+              >
+                <span class="cn-btn__label">← CHAT</span>
+              </button>
+            </div>
+          </header>
+          <div class="sbody">
+            {state.roles.fake && (
+              <section
+                class="cn-slab"
+                data-theme={theme === 'dark' ? 'light' : 'dark'}
+                style={{
+                  padding: '24px',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '16px',
+                }}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <span class="cn-tag">
+                    <b>▲</b> CLI FINTI ATTIVI
+                  </span>
+                  <h2 class="t-title">Le chat non parlano con modelli veri.</h2>
+                </div>
+                {providers && (
+                  <button
+                    class="cn-btn cn-btn--sm"
+                    type="button"
+                    onClick={() => {
+                      go(providers.id);
+                    }}
+                  >
+                    <span class="cn-btn__label">VAI A PROVIDER</span>
+                    <span class="cn-btn__icon">→</span>
+                  </button>
+                )}
+              </section>
+            )}
+            {(q === '' || 'ruoli modello reasoning permessi provider'.includes(q)) && (
+              <section class="sec" id="ruoli">
+                <div class="sec__h">
+                  <span class="cn-tag">
+                    <b>01/</b>
+                  </span>
+                  <h2 class="t-title">Ruoli</h2>
+                  <span class="hint" style={{ marginLeft: 'auto' }}>
+                    VALORI PER LE PROSSIME CHAT
+                  </span>
+                </div>
+                <div class="roles">
+                  {(['leader', 'implementer'] as const).map((role) => (
+                    <section key={role} class="cn-frame" aria-label={`Ruolo ${role}`}>
+                      <header class="cn-frame__head">
+                        <span class="cn-tag">
+                          <b>{role === 'leader' ? 'LEADER' : 'IMPLEMENTATORE'}</b>
+                        </span>
+                      </header>
+                      <div class="cn-frame__body" style={{ padding: '8px 24px 16px' }}>
+                        <RoleFields
+                          role={role}
+                          info={state.roles.roles[role]}
+                          catalog={state.roles.catalog}
+                          providerNote={
+                            role === 'leader'
+                              ? 'NELLA CHAT IL MODELLO SI BLOCCA AL PRIMO MESSAGGIO'
+                              : 'IN CHAT, UN ALTRO PROVIDER VALE DALLA CHAT SUCCESSIVA'
+                          }
+                        />
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              </section>
+            )}
+            {state.sections.map((section, index) => {
+              const rows = section.items.filter(
+                (item) =>
+                  q === '' ||
+                  item.label.toLowerCase().includes(q) ||
+                  item.description.toLowerCase().includes(q),
+              );
+              if (rows.length === 0) return null;
+              return (
+                <section key={section.title} class="sec" id={slug(section.title)}>
+                  <div class="sec__h">
+                    <span class="cn-tag">
+                      <b>{String(index + 2).padStart(2, '0')}/</b>
+                    </span>
+                    <h2 class="t-title">{section.title}</h2>
+                  </div>
+                  {rows.map((item) => (
+                    <Row key={item.key} item={item} target={target} />
+                  ))}
+                </section>
+              );
+            })}
+          </div>
         </div>
-      </header>
-      <section class="settings-section">
-        <h2 class="label">RUOLI</h2>
-        <RolesBlock state={state.roles} />
-      </section>
-      {state.sections.map((section) => (
-        <section key={section.title} class="settings-section">
-          <h2 class="label">{section.title.toUpperCase()}</h2>
-          {section.items.map((item) => (
-            <Setting key={item.key} item={item} target={target} />
-          ))}
-        </section>
-      ))}
+      </div>
     </div>
   );
 }

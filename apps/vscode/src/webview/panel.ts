@@ -3,17 +3,18 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { getRuntimeInfo } from '@only-one-chat/runtime';
 import { cliLaunch, isFake } from '../clis.js';
-import type { RoleSettings, Roles } from '../roles.js';
+import type { ChatRoles, RoleSettings, Roles } from '../roles.js';
 import { ChatSession } from '../session/chat.js';
 import { CheckpointStore } from '../session/checkpoints.js';
 import { SKIPPED } from '../session/facts.js';
 import { expandMentions } from '../session/mentions.js';
 import { ChatHistory, forReplay, newChatId, type ChatRecord } from '../session/history.js';
 import { checkpointUri, checkpointsRoot } from './checkpointContent.js';
+import type { ModelCatalog } from '../session/catalog.js';
 import type { MonitorStore } from '../session/monitor.js';
 import { notifyChat } from '../notifications.js';
 import { providerOf, type UsageStore } from '../session/usage.js';
-import { createNonce, renderWebviewHtml } from './html.js';
+import { createNonce, renderWebviewHtml, STYLESHEETS } from './html.js';
 import {
   parseWebviewMessage,
   type ApprovalMode,
@@ -22,7 +23,7 @@ import {
   type ThreadUpdate,
   type WebviewToHostMessage,
 } from './protocol.js';
-import type { ChatRoles } from './rolesView.js';
+import { CODEX_INTERVAL_MS } from '../usageReader.js';
 
 const TITLE = 'Only One Chat';
 
@@ -62,6 +63,7 @@ export interface PanelServices {
   readonly usage: UsageStore;
   readonly monitor: MonitorStore;
   readonly roles: RoleSettings;
+  readonly catalog: ModelCatalog;
   readonly refreshCodexUsage: () => Promise<void>;
 }
 
@@ -187,7 +189,9 @@ export class OnlyOneChatPanel {
       cspSource: webview.cspSource,
       nonce: createNonce(),
       scriptUri: webview.asWebviewUri(vscode.Uri.joinPath(webviewRoot, 'main.js')).toString(),
-      styleUri: webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'webview.css')).toString(),
+      styleUris: STYLESHEETS.map((file) =>
+        webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'cn', file)).toString(),
+      ),
       title: TITLE,
     });
 
@@ -201,6 +205,15 @@ export class OnlyOneChatPanel {
       }),
       vscode.workspace.onDidGrantWorkspaceTrust(() => {
         void this.postSession();
+      }),
+      // The Squad panel lives in the chat (ADR 0016): its data follows the stores.
+      { dispose: services.monitor.onChange(() => void this.postSquad('monitor')) },
+      { dispose: services.usage.onChange(() => void this.postSquad('usage')) },
+      { dispose: services.catalog.onChange(() => void this.postSquad('roles')) },
+      OnlyOneChatPanel.rolesEmitter.event(() => void this.postSquad('roles')),
+      // Codex's usage windows every two minutes while the chat is in view (no quota).
+      panel.onDidChangeViewState(() => {
+        this.watchUsage();
       }),
       services.roles.onDidChange(() => {
         this.applyRoles();
@@ -274,7 +287,35 @@ export class OnlyOneChatPanel {
         vscode.workspace.getConfiguration('onlyOneChat').get<boolean>('composer.enterSends') ??
         true,
       context: this.record.context ?? {},
+      usageThreshold:
+        vscode.workspace
+          .getConfiguration('onlyOneChat')
+          .get<number>('notifications.usageThreshold') ?? 80,
     };
+  }
+
+  /** The Squad panel's data: roles and models, the agents' activity, the usage windows. */
+  private postSquad(part: 'roles' | 'monitor' | 'usage'): Thenable<boolean> | undefined {
+    if (!this.ready) return undefined;
+    if (part === 'roles') {
+      return this.post({
+        type: 'roles',
+        roles: this.services.roles.state(this.chatRoles(), isFake(this.context)),
+      });
+    }
+    if (part === 'monitor') {
+      return this.post({ type: 'monitor', monitor: this.services.monitor.snapshot() });
+    }
+    return this.post({ type: 'usage', providers: this.services.usage.snapshot() });
+  }
+
+  private usageTimer: NodeJS.Timeout | undefined;
+
+  private watchUsage(): void {
+    clearInterval(this.usageTimer);
+    this.usageTimer = this.panel.visible
+      ? setInterval(() => void this.services.refreshCodexUsage(), CODEX_INTERVAL_MS)
+      : undefined;
   }
 
   private emptyRecord(): ChatRecord {
@@ -382,7 +423,14 @@ export class OnlyOneChatPanel {
         this.ready = true;
         if (this.pendingInsert) await this.post({ type: 'insert', text: this.pendingInsert });
         this.pendingInsert = undefined;
+        await this.postSquad('roles');
+        await this.postSquad('monitor');
+        await this.postSquad('usage');
         OnlyOneChatPanel.readyEmitter.fire();
+        // The models and Codex's usage windows are read when the chat opens: no turn, no quota.
+        void this.services.catalog.load();
+        void this.services.refreshCodexUsage();
+        this.watchUsage();
         break;
       case 'ping':
         void this.post({ type: 'pong', id: message.id, receivedAt: new Date().toISOString() });
@@ -392,14 +440,10 @@ export class OnlyOneChatPanel {
         const chat = await this.ensureChat();
         if (!chat) break;
         // The composer's recipient and route, written as the commands the chat reads.
-        const typed = /^(@impl|\/(fai|delega|chiedi))\b/i.test(message.text);
-        const prefix = typed
-          ? ''
-          : message.to === 'implementer'
-            ? '@impl '
-            : message.route
-              ? `/${message.route} `
-              : '';
+        // `@` is for files only: the recipient comes from the composer's control.
+        const to = message.to ?? 'leader';
+        const typed = /^\/(fai|delega|chiedi)\b/i.test(message.text);
+        const prefix = to === 'leader' && !typed && message.route ? `/${message.route} ` : '';
         // Files named with `@` reach the agents as paths (ADR 0015).
         const cwd = workspaceFolder();
         const expanded = cwd ? expandMentions(message.text, cwd) : undefined;
@@ -414,6 +458,7 @@ export class OnlyOneChatPanel {
                 ),
               }
             : undefined,
+          to,
         );
         break;
       }
@@ -439,8 +484,24 @@ export class OnlyOneChatPanel {
         if (record) await this.switchTo(record);
         break;
       }
+      case 'setRole': {
+        const { role, cli, model, effort, permission } = message;
+        if (!(await this.services.roles.choose(role, { cli, model, effort, permission }))) {
+          void this.postSquad('roles');
+        }
+        break;
+      }
+      case 'refreshModels':
+        await this.services.catalog.load(true);
+        break;
       case 'refreshUsage':
         await this.services.refreshCodexUsage();
+        break;
+      case 'copy':
+        await vscode.env.clipboard.writeText(message.text);
+        break;
+      case 'manageTrust':
+        await vscode.commands.executeCommand('workbench.trust.manage');
         break;
       case 'openFolder':
         await vscode.commands.executeCommand('workbench.action.files.openFolder');
@@ -779,6 +840,7 @@ export class OnlyOneChatPanel {
   }
 
   private dispose(): void {
+    clearInterval(this.usageTimer);
     this.saveNow();
     OnlyOneChatPanel.current = undefined;
     void this.chat?.dispose();

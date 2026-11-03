@@ -99,7 +99,8 @@ describe('chat session: files named with @ (ADR 0015)', () => {
     }
     expect(updates[0]).toMatchObject({
       type: 'user',
-      text: '@impl rivedi @calc.py',
+      text: 'rivedi @calc.py',
+      to: 'implementer',
       attachments: ['calc.py'],
     });
     // The fake implementer echoes its prompt.
@@ -292,6 +293,27 @@ describe('chat session: roles changed during the chat (ADR 0012)', () => {
     expect(runs[1]).toContain('--resume');
   });
 
+  it('keeps the leader’s model for the chat, and still takes its reasoning', async () => {
+    const { chat, updates } = session('auto');
+    try {
+      await chat.send('ciao');
+      const applied = chat.setRole('leader', {
+        ...chat.currentRoles.leader,
+        model: 'gpt-6-luna',
+        effort: 'high',
+      });
+      expect(applied).toBe(false);
+      await chat.send('di nuovo');
+    } finally {
+      await chat.dispose();
+    }
+    expect(chat.currentRoles.leader).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' });
+    expect(doneTurns(updates).map((u) => u.agent)).toEqual([
+      'Codex (gpt-6.1-sol)',
+      'Codex (gpt-6.1-sol)',
+    ]);
+  });
+
   it('keeps the chat’s provider: another CLI is not a change for this chat', async () => {
     const { chat, updates } = session('auto');
     try {
@@ -405,6 +427,18 @@ describe('chat session', () => {
     // The fake leader echoes its prompt: the report came before the user's message.
     expect(done[1]?.text).toMatch(/Nel frattempo l’implementatore ha lavorato/);
     expect(done[1]?.text?.endsWith('com’è andata?')).toBe(true);
+  });
+
+  it('takes the recipient the panel gives: a typed @impl then is text for the leader', async () => {
+    const { chat, updates } = session('auto');
+    try {
+      await chat.send('@impl aggiungi round', undefined, 'leader');
+    } finally {
+      await chat.dispose();
+    }
+    expect(updates[0]).toMatchObject({ type: 'user', text: '@impl aggiungi round', to: 'leader' });
+    const done = updates.flatMap((u) => (u.type === 'turn' && u.status === 'done' ? [u] : []));
+    expect(done.map((u) => u.role)).toEqual(['leader']);
   });
 
   it('reports the unseen work as it changes, to keep it with the chat', async () => {

@@ -1,0 +1,620 @@
+/* What the live webview needs beyond the canvas (oo.css): a full-height shell where only the
+   thread scrolls, the segmented controls, the composer with its tools, the thread in one column
+   with its tool logs, popovers, the design system's motion (progress, cursor, reveal, flash),
+   1-bit scrollbars, and Squad as a layer over the chat that scrolls and stacks when the panel is
+   narrow. Colors, sizes and lines only from the design system's variables. */
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--ground);
+}
+
+.app--live {
+  height: 100vh;
+  overflow: hidden;
+}
+.app--live > .thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: var(--space-4);
+}
+.app--live > .dock {
+  border-top: var(--stroke-hairline) solid var(--line);
+  position: relative;
+}
+
+/* Text the agents and the user wrote: their line breaks are kept. */
+.txt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Popovers: the files for @, the commands for /, the chats of the folder. */
+.pop {
+  position: absolute;
+  z-index: 10;
+  width: min(420px, calc(100% - 2 * var(--space-4)));
+  max-height: 50vh;
+  overflow-y: auto;
+  background: var(--ground);
+}
+.pop--up {
+  left: var(--space-4);
+  bottom: calc(100% + 8px);
+}
+.pop--down {
+  right: var(--space-4);
+  top: calc(100% + 8px);
+}
+.pick {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  padding: 10px 16px;
+  cursor: pointer;
+}
+.pick + .pick {
+  border-top: var(--stroke-hairline) solid var(--line);
+}
+.pick__n {
+  font-family: var(--font-display);
+  font-size: 18px;
+  line-height: 22px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pick__m {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 14px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.pick--mono .pick__n {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 400;
+}
+.pick.cn-accent .pick__m {
+  color: var(--on-slab-muted);
+}
+.pick[aria-disabled='true'] {
+  color: var(--ink-disabled);
+  cursor: not-allowed;
+}
+.pick:focus-visible {
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: -4px;
+}
+.bar {
+  position: relative;
+}
+
+/* A record the user opened: its full text. */
+.opn {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: var(--stroke-hairline) solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ink-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Squad: a layer over the chat; the chat behind it veiled in 1-bit. */
+.stage--layer {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: transparent;
+}
+.stage--layer .sqw__m,
+.stage--layer .sqw__s {
+  overflow-y: auto;
+}
+.flow .fn {
+  text-align: left;
+}
+@container oo (max-width: 980px) {
+  .sqw {
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 64px auto auto;
+    overflow-y: auto;
+  }
+  .sqw__m,
+  .sqw__s {
+    overflow: visible;
+  }
+  .sqw__s {
+    border-left: 0;
+    border-top: var(--stroke-hairline) solid var(--line);
+  }
+  .flow {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 8px;
+  }
+  .flow .fc {
+    flex-direction: row;
+    justify-content: center;
+  }
+  .flow .fc__l {
+    display: none;
+  }
+  .fu {
+    display: none;
+  }
+}
+
+/* Settings: one scrolling page. */
+.app--page {
+  height: 100vh;
+  overflow: hidden;
+}
+.app--page > .st {
+  flex: 1;
+  min-height: 0;
+}
+.st > .rail {
+  overflow-y: auto;
+}
+.st > .smain {
+  overflow-y: auto;
+}
+
+textarea:focus-visible,
+input:focus-visible {
+  outline: none;
+}
+
+/* ── Scrollbars: a hairline track, a square thumb that turns ink under the pointer. ── */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--ground);
+  border-left: var(--stroke-hairline) solid var(--line);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 2px solid var(--ground);
+  border-left-width: 3px;
+}
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+  background: var(--ink);
+}
+::-webkit-scrollbar-corner {
+  background: var(--ground);
+}
+
+/* ── Segmented control: the chosen option is the inversion held (aria-pressed). ── */
+.seg {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.seg button[aria-pressed='true'] {
+  background: var(--ink);
+  color: var(--ground);
+}
+.seg button[aria-pressed='false']:hover:not(:disabled) {
+  color: var(--ink);
+  outline: var(--stroke-hairline) solid var(--ink);
+  outline-offset: -1px;
+}
+.seg button:disabled {
+  color: var(--ink-disabled);
+  cursor: not-allowed;
+}
+.seg button[aria-pressed='true']:disabled {
+  background: var(--ink-disabled);
+  color: var(--ground);
+}
+.seg--sm button {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 10px;
+}
+.rset__v .seg {
+  align-self: flex-start;
+}
+
+/* ── Composer: one frame; recipient and route above the text, the tools below. ── */
+.dock {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+.cmp {
+  position: relative;
+  border: var(--stroke-hairline) solid var(--line-strong);
+  background: var(--ground);
+}
+.cmp:focus-within {
+  border-color: var(--ink);
+}
+.cmp--off {
+  border-color: var(--ink-disabled);
+}
+.cmp__head,
+.cmp__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 8px 12px;
+}
+.cmp__head {
+  border-bottom: var(--stroke-hairline) solid var(--line);
+}
+.cmp__foot {
+  border-top: var(--stroke-hairline) solid var(--line);
+  gap: 8px 12px;
+}
+.cmp__head .ctx {
+  margin-left: auto;
+}
+.cmp__g {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.cmp__k {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--ink-muted);
+}
+.cmp__atts {
+  padding: 10px 12px 0;
+}
+.cmp__in {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+}
+.cmp__in::before {
+  content: '>';
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 26px;
+  color: var(--ink-muted);
+}
+.cmp--off .cmp__in::before,
+.cmp--off textarea::placeholder {
+  color: var(--ink-disabled);
+}
+.cmp textarea {
+  all: unset;
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  /* Grows with the text up to a limit, then scrolls. */
+  field-sizing: content;
+  min-height: 52px;
+  max-height: min(40vh, 312px);
+  overflow-y: auto;
+  padding-right: 8px;
+  font-family: var(--font-display);
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cmp textarea::placeholder {
+  color: var(--ink-muted);
+}
+.cmp__send {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.tool {
+  all: unset;
+  box-sizing: border-box;
+  height: 24px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: var(--stroke-hairline) solid var(--line-strong);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.tool b {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 500;
+}
+.tool:hover:not(:disabled),
+.tool[aria-pressed='true'] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--ground);
+}
+.tool:hover:not(:disabled) b,
+.tool[aria-pressed='true'] b {
+  color: var(--ground);
+}
+.tool:disabled {
+  border-color: var(--ink-disabled);
+  color: var(--ink-disabled);
+  cursor: not-allowed;
+}
+.tool:focus-visible {
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: 3px;
+}
+.cmp > .pop--up {
+  left: -1px;
+  width: min(520px, 100%);
+}
+.pop__h {
+  padding: 10px 16px;
+}
+.pop__f {
+  padding: 8px 16px;
+}
+.pop__e {
+  padding: 10px 16px;
+}
+.pop .pick__n {
+  font-size: 16px;
+}
+.pop .pick--mono .pick__n {
+  font-size: 12px;
+}
+
+/* The approval of a delegation or a report, and the permission Slab. */
+.apr .cn-frame__body {
+  padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.apr .box {
+  margin-top: 0;
+}
+.apr .cn-frame__foot {
+  align-items: center;
+  flex-wrap: wrap;
+}
+.box--mono textarea {
+  field-sizing: content;
+  max-height: min(45vh, 360px);
+  overflow-y: auto;
+}
+.pslab {
+  padding: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px 24px;
+  align-items: end;
+}
+.pslab__m {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.pslab__c {
+  display: block;
+  border: var(--stroke-hairline) solid var(--line-strong);
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.pslab__a {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+}
+.pslab__h {
+  grid-column: 1 / -1;
+}
+@container oo (max-width: 640px) {
+  .pslab {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── Thread: one column; each message's head line carries its actions. ── */
+.turn {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 12px;
+}
+.who {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding-top: 0;
+  min-height: 24px;
+}
+.who__acts {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 16px;
+  visibility: hidden;
+}
+.turn:hover .who__acts,
+.turn:focus-within .who__acts {
+  visibility: visible;
+}
+.cn-btn--text.act {
+  padding: 0;
+  font-size: 10px;
+}
+.turn--you .tb {
+  border-left: var(--stroke-rule) solid var(--ink);
+  padding-left: var(--space-3);
+}
+.tb--flush {
+  gap: 0;
+}
+.hint--gap {
+  padding-top: 8px;
+}
+.note__a {
+  gap: 16px;
+}
+.cn-spec.facts {
+  grid-template-columns: 160px minmax(0, 1fr);
+}
+
+/* The tools an agent uses, as a terminal log inside its turn. */
+.tlog {
+  border: var(--stroke-hairline) solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+}
+.tlog--live {
+  border-color: var(--line-strong);
+}
+.tlog__h {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.tlog__h b {
+  font-weight: 500;
+}
+.tlog__h:hover {
+  background: var(--ink);
+  color: var(--ground);
+}
+.tlog__h:hover .mut {
+  color: var(--ground);
+}
+.tlog__h:focus-visible {
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: -4px;
+}
+.tlog__l {
+  margin: 0;
+  padding: 6px 12px 8px;
+  list-style: none;
+  border-top: var(--stroke-hairline) solid var(--line);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.tl {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 2px 0;
+  color: var(--ink-muted);
+}
+.tl > span:nth-child(2) {
+  overflow-wrap: anywhere;
+}
+.tl b {
+  color: var(--ink);
+  font-weight: 500;
+}
+.tl--comandi,
+.tl > span:first-child {
+  color: var(--ink);
+}
+.tl--sub {
+  padding-left: 26px;
+}
+
+/* ── Motion (the design system's bundle, without its inline styles) ── */
+.cn-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+}
+.cn-progress__label {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.cn-progress--cells .cn-progress__bar {
+  display: inline-flex;
+  gap: 2px;
+}
+.cn-progress--cells i {
+  width: 8px;
+  height: 12px;
+  box-sizing: border-box;
+  border: var(--stroke-hairline) solid var(--line-strong);
+}
+.cn-progress--cells i.on {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+.cn-progress--spinner .cn-progress__bar {
+  display: inline-block;
+  width: 1ch;
+  color: var(--ink);
+}
+.cn-term__cur {
+  display: inline-block;
+  width: 0.62em;
+  height: 1.05em;
+  vertical-align: text-bottom;
+  background: var(--ink);
+  animation: cn-blink 1s steps(1) infinite;
+}
+.cn-reveal {
+  position: relative;
+}
+.cn-reveal-mask {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 3;
+  pointer-events: none;
+}
+.cn-flashing {
+  background: var(--ground);
+  color: var(--ink);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cn-term__cur {
+    animation: none;
+  }
+}

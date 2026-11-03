@@ -1,11 +1,10 @@
 import * as vscode from 'vscode';
 import { isFake } from '../clis.js';
-import type { RoleSettings } from '../roles.js';
+import type { ChatRoles, RoleSettings } from '../roles.js';
 import type { ModelCatalog } from '../session/catalog.js';
 import { settingsSections, writeSetting } from '../settings.js';
-import { createNonce, renderWebviewHtml } from './html.js';
+import { createNonce, renderWebviewHtml, STYLESHEETS } from './html.js';
 import { parseWebviewMessage, type WebviewToHostMessage } from './protocol.js';
-import type { ChatRoles } from './rolesView.js';
 
 const EXTENSION_ID = 'francesco-fontanesi.only-one-chat';
 
@@ -44,9 +43,9 @@ export class SettingsPanel {
       cspSource: panel.webview.cspSource,
       nonce: createNonce(),
       scriptUri: panel.webview.asWebviewUri(vscode.Uri.joinPath(webviewRoot, 'main.js')).toString(),
-      styleUri: panel.webview
-        .asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'webview.css'))
-        .toString(),
+      styleUris: STYLESHEETS.map((file) =>
+        panel.webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'cn', file)).toString(),
+      ),
       title: 'Impostazioni',
       view: 'settings',
     });
@@ -110,6 +109,9 @@ export class SettingsPanel {
         }
         break;
       }
+      case 'showChat':
+        await vscode.commands.executeCommand('onlyOneChat.openPanel');
+        break;
       case 'openNativeSettings':
         await vscode.commands.executeCommand(
           'workbench.action.openSettings',

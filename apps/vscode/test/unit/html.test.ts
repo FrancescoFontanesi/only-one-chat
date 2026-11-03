@@ -45,7 +45,7 @@ describe('renderWebviewHtml', () => {
     cspSource,
     nonce: 'n0nce',
     scriptUri: 'https://example.invalid/main.js',
-    styleUri: 'https://example.invalid/webview.css',
+    styleUris: ['https://example.invalid/oo.css'],
     title: 'A <b>"title"</b>',
   });
 

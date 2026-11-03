@@ -1,0 +1,484 @@
+/* Vendored from the Cyber Nihilism design system (the canvas's asset 468244d190d731bd150ed19d1d21b20d,
+   project/components/bundle.css): the rules this extension uses, copied unchanged. Left out: the
+   Google Fonts @import (the webview loads nothing from the network; fonts.css self-hosts the same
+   families), ASCII framing, construction lines, brackets, the matrix, the motion kit and decks. */
+/* Cyber Nihilism — component layer. Load AFTER tokens.css (every variable and the .t-* type classes). Colors, sizes and lines come only from tokens.css variables. */
+
+/* ── Base ─────────────────────────────────────────────── */
+.cn {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 18px;
+  line-height: 1.45;
+  font-weight: 500;
+  -webkit-font-smoothing: antialiased;
+}
+.cn *,
+.cn *::before,
+.cn *::after {
+  box-sizing: border-box;
+}
+.cn ::selection {
+  background: var(--ink);
+  color: var(--ground);
+}
+.cn h1,
+.cn h2,
+.cn h3,
+.cn h4,
+.cn p,
+.cn dl,
+.cn dd,
+.cn ul,
+.cn ol {
+  margin: 0;
+}
+.cn a:not([class]) {
+  color: inherit;
+}
+
+.t-label {
+  text-transform: uppercase;
+}
+.t-data {
+  font-variant-numeric: tabular-nums;
+}
+.cn-muted {
+  color: var(--ink-muted);
+}
+.cn-light {
+  font-weight: 300;
+}
+.cn-mono {
+  font-family: var(--font-mono);
+}
+
+/* Expression: Light = Print → heavier display, 2px opening rules */
+[data-theme='light'] .t-display-xl,
+[data-theme='light'] .t-display-l,
+[data-theme='light'] .t-heading {
+  font-weight: 600;
+}
+[data-theme='light'] .cn-light {
+  font-weight: 400;
+}
+[data-theme='dark'] .t-display-xl,
+[data-theme='dark'] .t-display-l {
+  font-weight: 500;
+}
+
+.cn-rule {
+  border: 0;
+  border-top: var(--stroke-hairline) solid var(--line);
+  margin: 0;
+}
+[data-theme='light'] .cn-rule--open {
+  border-top: var(--stroke-rule) solid var(--ink);
+}
+
+/* ── Cross corners ────────────────────────────────────
+   Every corner is square. Frames (and any box marked .cn-cross) let their edges run on past each vertex by
+   layout-cross-ext — the same at all four corners — like a Swiss grid or a drafting sheet. Drawn by ::after,
+   outside the box, never clipped by it; it does not take pointer events. .cn-cross--off removes the marks
+   (boxes that touch each other edge to edge). */
+.cn-frame,
+.cn-cross {
+  --xc: var(--layout-cross-ext, 8px);
+}
+.cn-cross {
+  position: relative;
+  --_xc: var(--line-strong);
+}
+.cn-frame::after,
+.cn-cross::after {
+  content: '';
+  position: absolute;
+  inset: calc(-1 * var(--xc));
+  pointer-events: none;
+  z-index: 1;
+  background:
+    linear-gradient(var(--_xc), var(--_xc)) left 0 top var(--xc) / var(--xc) var(--stroke-hairline)
+      no-repeat,
+    linear-gradient(var(--_xc), var(--_xc)) left var(--xc) top 0 / var(--stroke-hairline) var(--xc)
+      no-repeat,
+    linear-gradient(var(--_xc), var(--_xc)) right 0 top var(--xc) / var(--xc) var(--stroke-hairline)
+      no-repeat,
+    linear-gradient(var(--_xc), var(--_xc)) right var(--xc) top 0 / var(--stroke-hairline) var(--xc)
+      no-repeat,
+    linear-gradient(var(--_xc), var(--_xc)) left 0 bottom var(--xc) / var(--xc)
+      var(--stroke-hairline) no-repeat,
+    linear-gradient(var(--_xc), var(--_xc)) left var(--xc) bottom 0 / var(--stroke-hairline)
+      var(--xc) no-repeat,
+    linear-gradient(var(--_xc), var(--_xc)) right 0 bottom var(--xc) / var(--xc)
+      var(--stroke-hairline) no-repeat,
+    linear-gradient(var(--_xc), var(--_xc)) right var(--xc) bottom 0 / var(--stroke-hairline)
+      var(--xc) no-repeat;
+}
+.cn-cross--off::after {
+  display: none;
+}
+
+/* ── Button ───────────────────────────────────────────── */
+.cn-btn {
+  --_stroke: var(--ink);
+  --_fill: var(--ink);
+  color: var(--ground);
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: stretch;
+  min-height: 40px;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  text-decoration: none;
+  background: var(--_stroke);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.cn-btn::before {
+  content: '';
+  position: absolute;
+  inset: var(--stroke-hairline);
+  background: var(--_fill);
+  z-index: -1;
+}
+.cn-btn__label {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-3);
+}
+.cn-btn__icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  border-left: var(--stroke-hairline) solid currentColor;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+.cn-btn:hover,
+.cn-btn[aria-pressed='true'] {
+  --_fill: var(--ground);
+  color: var(--ink);
+}
+.cn-btn--outline {
+  --_fill: var(--ground);
+  color: var(--ink);
+}
+.cn-btn--outline:hover,
+.cn-btn--outline[aria-pressed='true'] {
+  --_fill: var(--ink);
+  color: var(--ground);
+}
+.cn-btn--sm {
+  min-height: 32px;
+  font-size: 11px;
+}
+.cn-btn--sm .cn-btn__label {
+  padding: 0 12px;
+}
+.cn-btn--sm .cn-btn__icon {
+  width: 32px;
+}
+.cn-btn:focus-visible {
+  outline: none;
+}
+.cn-btn:focus-visible::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border: var(--stroke-focus) solid currentColor;
+  pointer-events: none;
+}
+.cn-btn:disabled,
+.cn-btn[aria-disabled='true'] {
+  --_stroke: var(--ink-disabled);
+  --_fill: var(--ground);
+  color: var(--ink-disabled);
+  cursor: not-allowed;
+}
+.cn-btn--text {
+  --_stroke: transparent;
+  --_fill: transparent;
+  color: var(--ink);
+  min-height: 0;
+  padding: var(--space-1) 0;
+}
+.cn-btn--text::before {
+  display: none;
+}
+.cn-btn--text .cn-btn__label {
+  padding: 0;
+}
+.cn-btn--text .cn-btn__label::before {
+  content: '[\00a0';
+}
+.cn-btn--text .cn-btn__label::after {
+  content: '\00a0]';
+}
+.cn-btn--text:hover {
+  --_stroke: var(--ink);
+  color: var(--ground);
+}
+.cn-btn--text:focus-visible {
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: 3px;
+}
+.cn-btn--text:focus-visible::after {
+  display: none;
+}
+
+/* ── Tag ──────────────────────────────────────────────── */
+.cn-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+.cn-tag b {
+  color: var(--ink);
+  font-weight: 500;
+}
+.cn-tag--bracket::before {
+  content: '[\00a0';
+}
+.cn-tag--bracket::after {
+  content: '\00a0]';
+}
+.cn-tag--solid {
+  background: var(--ink);
+  color: var(--ground);
+  padding: 2px 8px;
+}
+.cn-tag--solid b {
+  color: var(--ground);
+}
+.cn-tag--live::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  background: var(--ink);
+  animation: cn-blink 1s steps(1) infinite;
+}
+.cn-tag--ink {
+  color: var(--ink);
+}
+
+/* ── Field ────────────────────────────────────────────── */
+.cn-field {
+  display: grid;
+  gap: var(--space-2);
+}
+.cn-field__label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.cn-field__box {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 44px;
+  padding: 0 12px;
+  border: var(--stroke-hairline) solid var(--line-strong);
+  background: var(--ground);
+}
+.cn-field__box::before {
+  content: attr(data-prompt);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+.cn-field__box:not([data-prompt])::before {
+  content: '>';
+}
+.cn-field input,
+.cn-field textarea {
+  all: unset;
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--ink);
+  caret-color: var(--ink);
+}
+.cn-field input::placeholder {
+  color: var(--ink-muted);
+}
+.cn-field__box:hover {
+  border-color: var(--ink);
+}
+.cn-field__box:focus-within {
+  border-color: var(--ink);
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: 3px;
+}
+.cn-field__hint {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ink-muted);
+}
+
+/* ── Frame ────────────────────────────────────────────── */
+.cn-frame {
+  --_stroke: var(--line-strong);
+  --_xc: var(--_stroke);
+  --_fill: var(--ground);
+  position: relative;
+  isolation: isolate;
+  background: var(--_stroke);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+}
+.cn-frame::before {
+  content: '';
+  position: absolute;
+  inset: var(--stroke-hairline);
+  background: var(--_fill);
+  z-index: -1;
+}
+.cn-frame--ink {
+  --_stroke: var(--ink);
+  --_xc: var(--ink);
+}
+.cn-frame__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 12px var(--space-4);
+  border-bottom: var(--stroke-hairline) solid var(--line);
+  margin: 0 var(--stroke-hairline);
+}
+.cn-frame__body {
+  padding: var(--space-4);
+  flex: 1;
+}
+.cn-frame__foot {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 12px var(--space-4);
+  border-top: var(--stroke-hairline) solid var(--line);
+  margin: 0 var(--stroke-hairline);
+}
+
+/* ── Slab ─────────────────────────────────────────────── */
+/* Fallback: ink fill. With data-slab + bundle.js (or an explicit opposite data-theme) the slab becomes a real flipped theme. */
+.cn-slab {
+  background: var(--ink);
+  color: var(--ground);
+  padding: var(--space-5);
+  position: relative;
+}
+.cn-slab .cn-muted {
+  color: var(--on-slab-muted);
+}
+.cn-slab[data-theme] {
+  background: var(--ground);
+  color: var(--ink);
+}
+.cn-slab[data-theme] .cn-muted {
+  color: var(--ink-muted);
+}
+
+/* ── SpecList ─────────────────────────────────────────── */
+.cn-spec {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 2fr;
+  border-top: var(--stroke-hairline) solid var(--line-strong);
+}
+.cn-spec dt {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  padding: 14px var(--space-3) 14px 0;
+  border-bottom: var(--stroke-hairline) solid var(--line);
+}
+.cn-spec dd {
+  margin: 0;
+  padding: 10px 0;
+  border-bottom: var(--stroke-hairline) solid var(--line);
+  font-size: 18px;
+  line-height: 24px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* 1-bit meter: hairline track, ink fill, optional half-tone remainder */
+.cn-meter {
+  flex: 1;
+  height: 8px;
+  border: var(--stroke-hairline) solid var(--line-strong);
+  position: relative;
+  min-width: 80px;
+}
+.cn-meter > i {
+  position: absolute;
+  inset: 1px auto 1px 1px;
+  width: calc(var(--v, 0.5) * (100% - 2px));
+  background: var(--ink);
+}
+
+/* ── Utilities ─────────────────────────────────────────── */
+.cn-cursor::after {
+  content: '_';
+  animation: cn-blink 1s steps(1) infinite;
+}
+@keyframes cn-blink {
+  50% {
+    visibility: hidden;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cn-cursor::after,
+  .cn-tag--live::before {
+    animation: none;
+  }
+}
+
+/* ── Accent: partial inversion INSIDE a panel (head bar, index chip, side strip, table row) ── */
+.cn-accent {
+  background: var(--ink);
+  color: var(--ground);
+}
+.cn-accent:not([data-theme]) .cn-muted,
+.cn-accent:not([data-theme]) .cn-tag {
+  color: var(--on-slab-muted);
+}
+.cn-accent:not([data-theme]) .cn-tag b,
+.cn-accent:not([data-theme]) .cn-tag--ink {
+  color: var(--ground);
+}
+.cn-accent[data-theme] {
+  background: var(--ground);
+  color: var(--ink);
+}
+.cn-frame__head.cn-accent {
+  border-bottom-color: transparent;
+  margin: var(--stroke-hairline) var(--stroke-hairline) 0;
+}

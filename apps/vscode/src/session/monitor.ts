@@ -88,7 +88,7 @@ export class MonitorStore {
   apply(update: ThreadUpdate): void {
     switch (update.type) {
       case 'user': {
-        const direct = /^@impl\b/i.test(update.text);
+        const direct = update.to ? update.to === 'implementer' : /^@impl\b/i.test(update.text);
         const to = direct ? 'Implementatore' : 'Leader';
         this.log('info', `Tu → ${to}: ${oneLine(update.text.replace(/^@impl\b\s*/i, ''))}`);
         break;

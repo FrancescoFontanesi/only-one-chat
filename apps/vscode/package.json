@@ -33,34 +33,6 @@
     "virtualWorkspaces": false
   },
   "contributes": {
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "onlyOneChat",
-          "title": "Only One Chat",
-          "icon": "media/icon.svg"
-        }
-      ]
-    },
-    "views": {
-      "onlyOneChat": [
-        {
-          "type": "webview",
-          "id": "onlyOneChat.roles",
-          "name": "Ruoli"
-        },
-        {
-          "type": "webview",
-          "id": "onlyOneChat.monitor",
-          "name": "Attività"
-        },
-        {
-          "type": "webview",
-          "id": "onlyOneChat.usage",
-          "name": "Utilizzo"
-        }
-      ]
-    },
     "commands": [
       {
         "command": "onlyOneChat.openPanel",
@@ -300,32 +272,17 @@
       }
     },
     "menus": {
-      "view/title": [
-        {
-          "command": "onlyOneChat.openPanel",
-          "when": "view == onlyOneChat.roles",
-          "group": "navigation@1"
-        },
-        {
-          "command": "onlyOneChat.openSettings",
-          "when": "view == onlyOneChat.roles",
-          "group": "navigation@2"
-        },
-        {
-          "command": "onlyOneChat.refreshModels",
-          "when": "view == onlyOneChat.roles",
-          "group": "navigation@3"
-        },
-        {
-          "command": "onlyOneChat.refreshUsage",
-          "when": "view == onlyOneChat.usage",
-          "group": "navigation"
-        }
-      ],
       "editor/context": [
         {
           "command": "onlyOneChat.addSelection",
           "group": "onlyOneChat@1"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "onlyOneChat.openSettings",
+          "when": "activeWebviewPanelId == onlyOneChat.panel",
+          "group": "navigation"
         }
       ]
     },

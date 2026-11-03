@@ -20,3 +20,4 @@ Una decisione superata non si cancella: si marca "Sostituita da NNNN".
 | [0013](0013-settings-page.md)                     | Pagina impostazioni e valutazione delle funzioni proposte            | Accettata                                    |
 | [0014](0014-checkpoints-and-review.md)            | Checkpoint della cartella e revisione delle modifiche                | Accettata                                    |
 | [0015](0015-context-and-mentions.md)              | Indicatore di contesto e file indicati con `@`                       | Accettata                                    |
+| [0016](0016-chat-squad-layout.md)                 | La chat, il pannello Squad e le impostazioni dal canvas di design    | Accettata                                    |

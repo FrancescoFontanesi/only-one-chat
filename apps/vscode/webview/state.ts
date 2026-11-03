@@ -3,6 +3,7 @@
 
 import type {
   ChangedFile,
+  RoleName,
   ThreadUpdate,
   TurnRole,
   TurnUsageSummary,
@@ -19,6 +20,7 @@ export type ThreadItem =
       readonly kind: 'user';
       readonly id: string;
       readonly text: string;
+      readonly to?: RoleName;
       readonly checkpoint?: string;
       readonly attachments?: readonly string[];
     }
@@ -89,6 +91,7 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
           kind: 'user',
           id: update.id,
           text: update.text,
+          ...(update.to ? { to: update.to } : {}),
           ...(update.checkpoint ? { checkpoint: update.checkpoint } : {}),
           ...(update.attachments ? { attachments: update.attachments } : {}),
         },

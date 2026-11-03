@@ -59,6 +59,10 @@ reasoning nell'intestazione.
     processo con `--model` e `--effort`;
   - permessi: la sessione del CLI si riapre con le nuove regole (`thread/resume`, `--resume`), con
     il suo contesto.
+- **Il modello del leader resta quello di inizio chat** (decisione dell'utente, 2026-11-02):
+  senza un handoff del leader, che dipende dal layer di memoria, la sua conversazione non cambia
+  modello. Reasoning e permessi restano modificabili; il nuovo modello vale dalla chat
+  successiva.
 - **Un altro provider vale dalla chat successiva.** Una chat tiene i provider con cui è nata,
   anche riaperta dallo storico. Spostare il lavoro su un altro provider a chat avviata è un
   handoff: richiede un contesto condiviso (punto da cui riprendere, storico del progetto), che

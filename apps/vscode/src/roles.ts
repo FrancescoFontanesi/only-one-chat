@@ -18,6 +18,12 @@ export interface Roles {
   readonly implementer: AgentChoice;
 }
 
+/** The roles of the chat shown, if its agents have started, and when they change. */
+export interface ChatRoles {
+  current(): Roles | null;
+  readonly onDidChange: vscode.Event<void>;
+}
+
 const KEYS = ['cli', 'model', 'effort', 'permission'] as const;
 
 function choiceOf(settings: vscode.WorkspaceConfiguration, role: RoleName): AgentChoice {

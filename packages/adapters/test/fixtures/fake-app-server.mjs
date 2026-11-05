@@ -353,6 +353,88 @@ const handlers = {
       const start = text.split('\n').find((line) => line.startsWith('<<<OOC-RESULT v1'));
       if (start) answer = [start, '## Outcome', 'done', 'OOC-RESULT>>>'].join('\n');
     }
+    // ADR 0019: a turn's steps, as recorded from 0.164.0: an intermediate
+    // message, the reasoning, a command and its output, a file change, the plan.
+    if (text.includes('[steps]')) {
+      const item = (body) => ({ threadId, turnId, item: body, startedAtMs: Date.now() });
+      notify(
+        'item/started',
+        item({ type: 'agentMessage', id: 'c1', text: '', phase: 'commentary' }),
+      );
+      notify('item/agentMessage/delta', { threadId, turnId, itemId: 'c1', delta: 'Guardo ' });
+      notify('item/agentMessage/delta', { threadId, turnId, itemId: 'c1', delta: 'i file.' });
+      notify(
+        'item/completed',
+        item({ type: 'agentMessage', id: 'c1', text: 'Guardo i file.', phase: 'commentary' }),
+      );
+      notify('item/started', item({ type: 'reasoning', id: 'r1', summary: [], content: [] }));
+      notify('item/reasoning/summaryTextDelta', {
+        threadId,
+        turnId,
+        itemId: 'r1',
+        delta: 'Serve un test.',
+        summaryIndex: 0,
+      });
+      notify(
+        'item/completed',
+        item({ type: 'reasoning', id: 'r1', summary: ['Serve un test.'], content: [] }),
+      );
+      notify('turn/plan/updated', {
+        threadId,
+        turnId,
+        explanation: 'Due passi',
+        plan: [
+          { step: 'Leggere', status: 'completed' },
+          { step: 'Provare', status: 'inProgress' },
+        ],
+      });
+      notify(
+        'item/started',
+        item({
+          type: 'commandExecution',
+          id: 'x1',
+          command: 'pnpm test',
+          status: 'inProgress',
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        }),
+      );
+      notify('item/commandExecution/outputDelta', {
+        threadId,
+        turnId,
+        itemId: 'x1',
+        delta: 'ok 3 tests\n',
+      });
+      notify(
+        'item/completed',
+        item({
+          type: 'commandExecution',
+          id: 'x1',
+          command: 'pnpm test',
+          status: 'completed',
+          aggregatedOutput: 'ok 3 tests\n',
+          exitCode: 0,
+          durationMs: 517,
+        }),
+      );
+      notify(
+        'item/completed',
+        item({
+          type: 'fileChange',
+          id: 'f1',
+          status: 'completed',
+          changes: [
+            {
+              path: 'calc.py',
+              kind: { type: 'update', move_path: null },
+              diff: '@@ -1 +1,2 @@\n-a = 1\n+a = 2\n+b = 3',
+            },
+          ],
+        }),
+      );
+      answer = 'Fatto.';
+    }
     // ADR 0019: a question in a normal turn, only when the thread allows it.
     const asks =
       threads.get(threadId)?.config?.['features.default_mode_request_user_input'] === true;

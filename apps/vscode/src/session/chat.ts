@@ -538,6 +538,9 @@ export class ChatSession {
             text: `${kind}: ${detail.slice(0, 240)}`,
           });
         },
+        onStep: (step) => {
+          this.events.update({ type: 'step', turnId: id, step });
+        },
       },
       skill ? { skill } : undefined,
     );
@@ -1039,6 +1042,11 @@ export class ChatSession {
         this.events.turnUsage?.(event.identity.provider, usage, event.quota ?? null);
         if (event.context) this.events.context?.(role, event.context);
         this.noteSession(role, event.identity.sessionId);
+        break;
+      }
+      case 'step': {
+        const turnId = this.currentTurn.get(roleOf(event.role));
+        if (turnId) update({ type: 'step', turnId, step: event.step });
         break;
       }
       case 'activity':

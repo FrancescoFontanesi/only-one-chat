@@ -134,13 +134,28 @@ export function newChatId(now = Date.now()): string {
 
 /**
  * The updates worth keeping: the streamed chunks of a turn are dropped once the
- * turn is done, since its final text holds them.
+ * turn is done, since its final text holds them; of each step of a done turn
+ * (ADR 0019) only its last version stays, where it first appeared.
  */
 export function compact(updates: readonly ThreadUpdate[]): ThreadUpdate[] {
   const done = new Set(
     updates.flatMap((u) => (u.type === 'turn' && u.status !== 'running' ? [u.id] : [])),
   );
-  return updates.filter((u) => !(u.type === 'chunk' && done.has(u.turnId))).slice(-MAX_UPDATES);
+  const last = new Map<string, ThreadUpdate>();
+  for (const u of updates) {
+    if (u.type === 'step' && done.has(u.turnId)) last.set(`${u.turnId}\n${u.step.id}`, u);
+  }
+  const placed = new Set<string>();
+  return updates
+    .flatMap((u): ThreadUpdate[] => {
+      if (u.type === 'chunk' && done.has(u.turnId)) return [];
+      if (u.type !== 'step' || !done.has(u.turnId)) return [u];
+      const key = `${u.turnId}\n${u.step.id}`;
+      if (placed.has(key)) return [];
+      placed.add(key);
+      return [last.get(key) ?? u];
+    })
+    .slice(-MAX_UPDATES);
 }
 
 /**

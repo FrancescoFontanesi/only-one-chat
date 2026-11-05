@@ -48,13 +48,17 @@ export type {
   AgentIdentity,
   AgentSubagentEvent,
   AgentSubagentOptions,
+  AgentFileChange,
   AgentQuestionAnswers,
+  AgentStepStatus,
   AgentSession,
   AgentSkillRef,
   AgentUserQuestion,
   AgentTurn,
   AgentTurnHandlers,
+  AgentTurnStep,
 } from './agent.js';
+export { StepStream, diffCounts, tail } from './steps.js';
 export {
   subagentThreadConfig,
   writableThreadConfig,
@@ -65,6 +69,7 @@ export {
   codexAnswers,
   codexInput,
   codexQuestions,
+  itemStep,
   type CodexAgentConfig,
 } from './codex/agent.js';
 export { createClaudeAgentFactory, type ClaudeAgentConfig } from './claude/agent.js';
@@ -81,7 +86,7 @@ export {
   type ModelInfo,
   type SkillInfo,
 } from './models.js';
-export { claudePrompt } from './claude/agent.js';
+export { claudePrompt, claudeToolStep } from './claude/agent.js';
 export {
   startPermissionBridge,
   summarizeToolCall,

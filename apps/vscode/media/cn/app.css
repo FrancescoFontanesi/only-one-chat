@@ -1510,7 +1510,7 @@ input:focus-visible {
   padding: 8px 16px;
 }
 /* Why the skills popover has nothing to choose yet (ADR 0019). */
-.pop__note {
+.pop .pop__note {
   margin: 0;
   padding: 10px 16px;
 }
@@ -1539,7 +1539,7 @@ input:focus-visible {
 
 /* The approval of a delegation or a report, and the permission Slab. */
 /* The leader's questions (ADR 0019): the question, then the choices as rows. */
-.qst__q {
+.qst .qst__q {
   margin: 8px 0 16px;
 }
 .qst__opts {
@@ -1600,7 +1600,7 @@ input:focus-visible {
 .asked {
   flex-wrap: wrap;
 }
-.asked__l {
+.asked .asked__l {
   flex-basis: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1616,7 +1616,7 @@ input:focus-visible {
   color: var(--ink);
 }
 /* Paths of the brief that look like files and do not exist: told, not blocking. */
-.apr__miss {
+.apr .apr__miss {
   margin: 8px 0 0;
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1789,6 +1789,85 @@ input:focus-visible {
 }
 .tl--sub {
   padding-left: 26px;
+}
+
+/* The turn as it happened (ADR 0019): its steps in order, each opening on a click. */
+.tsteps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+}
+.st + .st {
+  margin-top: 2px;
+}
+.st--msg {
+  padding: 4px 0;
+}
+.tsteps .st--msg .txt {
+  margin: 0;
+  color: var(--ink-muted);
+}
+.st__h {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 2px 0;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.st__h:disabled {
+  cursor: default;
+}
+.st__h:not(:disabled):hover b {
+  text-decoration: underline;
+}
+.st__h:focus-visible {
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: 2px;
+}
+.tsteps .st__more {
+  margin: 4px 0 8px 26px;
+  padding: 8px 12px;
+  border-left: var(--stroke-hairline) solid var(--line-strong);
+  max-height: 320px;
+  overflow: auto;
+}
+.diff {
+  margin: 4px 0 8px 26px;
+  padding: 8px 12px;
+  border-left: var(--stroke-hairline) solid var(--line-strong);
+  max-height: 320px;
+  overflow: auto;
+}
+.diff__a {
+  color: var(--ink);
+}
+.diff__d {
+  color: var(--ink-disabled);
+  text-decoration: line-through;
+}
+.diff__h {
+  color: var(--ink-muted);
+}
+.tsteps .tplan {
+  margin: 2px 0 6px 26px;
+  padding: 0;
+  list-style: none;
+}
+.tplan__s {
+  color: var(--ink-muted);
+}
+.tplan__s--inProgress {
+  color: var(--ink);
+}
+.tplan__s--completed {
+  color: var(--ink-disabled);
 }
 
 /* ── Motion (the design system's bundle, without its inline styles) ── */

@@ -94,3 +94,35 @@ describe('the webview thread', () => {
     expect(formatTokens(348_000)).toBe('348k');
   });
 });
+
+describe('the steps of a turn (ADR 0019)', () => {
+  it('adds a step, then replaces it by its id', () => {
+    let items = applyUpdate([], {
+      type: 'turn',
+      id: 't',
+      role: 'leader',
+      agent: 'Codex',
+      status: 'running',
+    });
+    items = applyUpdate(items, {
+      type: 'step',
+      turnId: 't',
+      step: { kind: 'message', id: 'a', text: 'G' },
+    });
+    items = applyUpdate(items, {
+      type: 'step',
+      turnId: 't',
+      step: { kind: 'reasoning', id: 'r', text: '' },
+    });
+    items = applyUpdate(items, {
+      type: 'step',
+      turnId: 't',
+      step: { kind: 'message', id: 'a', text: 'Guardo' },
+    });
+    const turn = items[0];
+    expect(turn?.kind === 'turn' ? turn.steps : []).toEqual([
+      { kind: 'message', id: 'a', text: 'Guardo' },
+      { kind: 'reasoning', id: 'r', text: '' },
+    ]);
+  });
+});

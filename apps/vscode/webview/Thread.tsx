@@ -198,6 +198,198 @@ function ToolLog({ item, ops }: { item: Item<'turn'>; ops: readonly { line: stri
   );
 }
 
+type Step = Item<'turn'>['steps'][number];
+
+/** How a step ended: interrupted when its turn ended while it ran. */
+function stepState(step: Step, running: boolean): 'running' | 'done' | 'failed' | 'stopped' {
+  if (!('status' in step)) return 'done';
+  return step.status === 'running' && !running ? 'stopped' : step.status;
+}
+
+const PLAN_GLYPH = { completed: '■', inProgress: '▶', pending: '□' } as const;
+
+/** A diff, a line at a time, coloured by what the line does. */
+function Diff({ text }: { text: string }) {
+  return (
+    <pre class="outp diff">
+      {text.split('\n').map((line, index) => (
+        <span
+          key={index}
+          class={
+            line.startsWith('+') && !line.startsWith('+++')
+              ? 'diff__a'
+              : line.startsWith('-') && !line.startsWith('---')
+                ? 'diff__d'
+                : line.startsWith('@@')
+                  ? 'diff__h'
+                  : undefined
+          }
+        >
+          {line}
+          {'\n'}
+        </span>
+      ))}
+    </pre>
+  );
+}
+
+/**
+ * The turn as it happened (ADR 0019), in order: intermediate messages as
+ * text, the reasoning, commands with their output, file changes with their
+ * diff, the turn's plan, other tools. A step opens on a click.
+ */
+function Steps({ item }: { item: Item<'turn'> }) {
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const running = item.status === 'running';
+  const toggle = (id: string) => {
+    setOpen((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const end = (step: Step) => {
+    const state = stepState(step, running);
+    return state === 'running' ? (
+      <Progress variant="spinner" />
+    ) : state === 'stopped' ? (
+      <span class="mut">× INTERROTTO</span>
+    ) : state === 'failed' ? (
+      <span>× ERRORE</span>
+    ) : null;
+  };
+  return (
+    <ol class="tsteps">
+      {item.steps.map((step) => {
+        const isOpen = open.has(step.id);
+        switch (step.kind) {
+          case 'message':
+            return (
+              <li key={step.id} class="st st--msg">
+                <p class="t-body txt">{step.text}</p>
+              </li>
+            );
+          case 'reasoning':
+            return (
+              <li key={step.id} class="st">
+                <button
+                  class="tl st__h"
+                  type="button"
+                  disabled={step.text === ''}
+                  aria-expanded={isOpen}
+                  onClick={() => {
+                    toggle(step.id);
+                  }}
+                >
+                  <span>◇</span>
+                  <span>
+                    <b>RAGIONA</b> {!isOpen && step.text.split('\n')[0]}
+                  </span>
+                  <span />
+                </button>
+                {isOpen && <p class="st__more txt">{step.text}</p>}
+              </li>
+            );
+          case 'command':
+            return (
+              <li key={step.id} class="st">
+                <button
+                  class="tl tl--comandi st__h"
+                  type="button"
+                  disabled={step.output === ''}
+                  aria-expanded={isOpen}
+                  onClick={() => {
+                    toggle(step.id);
+                  }}
+                >
+                  <span>$</span>
+                  <span>
+                    <b>{step.command}</b>
+                  </span>
+                  <span>
+                    {end(step) ??
+                      [
+                        step.exitCode !== null ? `EXIT ${String(step.exitCode)}` : null,
+                        step.durationMs !== null ? duration(step.durationMs) : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                  </span>
+                </button>
+                {isOpen && <pre class="outp st__more">{step.output}</pre>}
+              </li>
+            );
+          case 'file':
+            return (
+              <li key={step.id} class="st">
+                {step.changes.map((change, index) => {
+                  const key = `${step.id}#${String(index)}`;
+                  return (
+                    <Fragment key={key}>
+                      <button
+                        class="tl st__h"
+                        type="button"
+                        disabled={change.diff === ''}
+                        aria-expanded={open.has(key)}
+                        onClick={() => {
+                          toggle(key);
+                        }}
+                      >
+                        <span>
+                          {change.change === 'add' ? '+' : change.change === 'delete' ? '−' : '~'}
+                        </span>
+                        <span>
+                          <b>{change.path}</b>{' '}
+                          <span class="mut">
+                            +{change.added} −{change.removed}
+                          </span>
+                        </span>
+                        <span>{index === step.changes.length - 1 && end(step)}</span>
+                      </button>
+                      {open.has(key) && <Diff text={change.diff} />}
+                    </Fragment>
+                  );
+                })}
+              </li>
+            );
+          case 'plan':
+            return (
+              <li key={step.id} class="st st--plan">
+                <span class="tl">
+                  <span>☰</span>
+                  <span>
+                    <b>PIANO</b> {step.explanation}
+                  </span>
+                  <span />
+                </span>
+                <ul class="tplan">
+                  {step.steps.map((s, index) => (
+                    <li key={index} class={`tplan__s tplan__s--${s.status}`}>
+                      <span>{PLAN_GLYPH[s.status]}</span> {s.step}
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            );
+          case 'tool':
+            return (
+              <li key={step.id} class="st">
+                <span class="tl">
+                  <span>↳</span>
+                  <span>
+                    <b>{step.name}</b> {step.detail}
+                  </span>
+                  <span>{end(step)}</span>
+                </span>
+              </li>
+            );
+        }
+      })}
+    </ol>
+  );
+}
+
 function Turn({ item }: { item: Item<'turn'> }) {
   const ops = item.activity.map((line) => ({ line, op: readOp(line) }));
   // A leader's route line of older chats is left out; its delegation block is in its card (ADR 0018).
@@ -222,7 +414,14 @@ function Turn({ item }: { item: Item<'turn'> }) {
         <span class="who__acts">{body !== '' && !running && <Copy text={body} />}</span>
       </div>
       <div class="tb">
-        {(ops.length > 0 || item.subagents.length > 0) && <ToolLog item={item} ops={ops} />}
+        {item.steps.length > 0 ? (
+          <>
+            {item.subagents.length > 0 && <ToolLog item={item} ops={[]} />}
+            <Steps item={item} />
+          </>
+        ) : (
+          (ops.length > 0 || item.subagents.length > 0) && <ToolLog item={item} ops={ops} />
+        )}
         {body !== '' ? (
           <p class={running && !writing ? 't-body txt cn-cursor' : 't-body txt'}>
             <Linked text={body} refs={item.refs} />

@@ -111,7 +111,11 @@ export type ClaudeEvent =
       readonly text: string;
       readonly parentToolUseId: string | null;
       readonly model: string | null;
+      /** Its message also calls tools: an intermediate message, not the answer (ADR 0019). */
+      readonly withTools?: boolean;
     }
+  /** A thinking block; its text is often empty (Claude 5 does not give it in -p). */
+  | { readonly type: 'thinking'; readonly text: string; readonly parentToolUseId: string | null }
   | {
       readonly type: 'tool_use';
       readonly id: string;
@@ -126,6 +130,8 @@ export type ClaudeEvent =
       readonly toolUseId: string;
       readonly isError: boolean;
       readonly parentToolUseId: string | null;
+      /** What the tool returned, as text (ADR 0019: a command's output). */
+      readonly content?: string;
     }
   | { readonly type: 'rate_limit'; readonly info: unknown }
   | { readonly type: 'other'; readonly message: Readonly<Record<string, unknown>> };
@@ -543,7 +549,9 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
           const messageModel = message['message']['model'];
           const blockModel = typeof messageModel === 'string' ? messageModel : null;
           const content = message['message']['content'];
-          for (const block of Array.isArray(content) ? content : []) {
+          const blocks = Array.isArray(content) ? content : [];
+          const withTools = blocks.some((b) => isRecord(b) && b['type'] === 'tool_use');
+          for (const block of blocks) {
             if (!isRecord(block)) continue;
             if (block['type'] === 'text' && typeof block['text'] === 'string') {
               options.onEvent?.({
@@ -551,6 +559,13 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
                 text: block['text'],
                 parentToolUseId,
                 model: blockModel,
+                ...(withTools ? { withTools } : {}),
+              });
+            } else if (block['type'] === 'thinking') {
+              options.onEvent?.({
+                type: 'thinking',
+                text: typeof block['thinking'] === 'string' ? block['thinking'] : '',
+                parentToolUseId,
               });
             } else if (block['type'] === 'tool_use') {
               options.onEvent?.({
@@ -568,11 +583,23 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
           const content = message['message']['content'];
           for (const block of Array.isArray(content) ? content : []) {
             if (!isRecord(block) || block['type'] !== 'tool_result') continue;
+            const result = block['content'];
+            const text =
+              typeof result === 'string'
+                ? result
+                : Array.isArray(result)
+                  ? result
+                      .flatMap((part) =>
+                        isRecord(part) && typeof part['text'] === 'string' ? [part['text']] : [],
+                      )
+                      .join('\n')
+                  : '';
             options.onEvent?.({
               type: 'tool_result',
               toolUseId: String(block['tool_use_id']),
               isError: block['is_error'] === true,
               parentToolUseId: typeof parent === 'string' ? parent : null,
+              ...(text !== '' ? { content: text } : {}),
             });
           }
         } else if (type === 'rate_limit_event') {

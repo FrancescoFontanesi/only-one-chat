@@ -4,7 +4,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
   CODEX_SUBAGENT_FORBIDDEN_NAMES,
@@ -22,6 +22,12 @@ import {
   codexAnswers,
   codexInput,
   codexQuestions,
+  claudeToolStep,
+  diffCounts,
+  itemStep,
+  StepStream,
+  tail,
+  type AgentTurnStep,
 } from '../src/index.js';
 import { testEnv } from './env.js';
 
@@ -100,6 +106,8 @@ describe('Codex agent session', () => {
       input: [{ type: 'text', text: 'ciao' }],
       model: 'gpt-6-luna',
       effort: 'low',
+      // The reasoning's summary, a step of the turn (ADR 0019).
+      summary: 'auto',
     });
   });
 
@@ -861,5 +869,121 @@ describe('a Codex leader’s questions (ADR 0019)', () => {
       { id: 'a', header: '', question: 'Q?', options: null, other: false, secret: false },
     ]);
     expect(codexAnswers({ a: ['x'] })).toEqual({ answers: { a: { answers: ['x'] } } });
+  });
+});
+
+describe('the steps of a turn (ADR 0019)', () => {
+  it('reports a Codex turn as it happens; the answer leaves the intermediate messages out', async () => {
+    const steps: AgentTurnStep[] = [];
+    const session = await codex();
+    const result = await session.runTurn('[steps] prova', {
+      ...handlers().value,
+      onStep: (step) => steps.push(step),
+    }).done;
+    expect(result.text).toBe('Fatto.');
+    const last = new Map(steps.map((s) => [s.id, s]));
+    expect([...last.values()]).toEqual([
+      { kind: 'message', id: 'c1', text: 'Guardo i file.' },
+      { kind: 'reasoning', id: 'r1', text: 'Serve un test.' },
+      {
+        kind: 'plan',
+        id: 'plan',
+        explanation: 'Due passi',
+        steps: [
+          { step: 'Leggere', status: 'completed' },
+          { step: 'Provare', status: 'inProgress' },
+        ],
+      },
+      {
+        kind: 'command',
+        id: 'x1',
+        command: 'pnpm test',
+        status: 'done',
+        exitCode: 0,
+        durationMs: 517,
+        output: 'ok 3 tests\n',
+      },
+      {
+        kind: 'file',
+        id: 'f1',
+        status: 'done',
+        changes: [
+          {
+            path: 'calc.py',
+            change: 'update',
+            added: 2,
+            removed: 1,
+            diff: '@@ -1 +1,2 @@\n-a = 1\n+a = 2\n+b = 3',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('marks a command that exits with an error as failed, and keeps only an output’s tail', () => {
+    expect(
+      itemStep(
+        {
+          type: 'commandExecution',
+          id: 'x',
+          command: ['git', 'push'],
+          exitCode: 1,
+          status: 'completed',
+        },
+        true,
+      ),
+    ).toMatchObject({ kind: 'command', command: 'git push', status: 'failed', exitCode: 1 });
+    expect(itemStep({ type: 'webSearch', id: 'w', query: 'vitest' }, false)).toEqual({
+      kind: 'tool',
+      id: 'w',
+      name: 'web',
+      detail: 'vitest',
+      status: 'running',
+    });
+    expect(itemStep({ type: 'userMessage', id: 'u' }, true)).toBeUndefined();
+    expect(tail('abcdef', 3)).toBe('…def');
+    expect(diffCounts('--- a\n+++ b\n-x\n+y\n+z')).toEqual({ added: 2, removed: 1 });
+  });
+
+  it('shows Claude’s tool calls as commands, file changes or tools', () => {
+    expect(claudeToolStep('t1', 'Bash', { command: 'ls' })).toMatchObject({
+      kind: 'command',
+      command: 'ls',
+    });
+    expect(
+      claudeToolStep('t2', 'Edit', { file_path: 'a.py', old_string: 'x', new_string: 'y\nz' }),
+    ).toEqual({
+      kind: 'file',
+      id: 't2',
+      status: 'running',
+      changes: [{ path: 'a.py', change: 'update', added: 2, removed: 1, diff: '-x\n+y\n+z' }],
+    });
+    expect(claudeToolStep('t3', 'Read', { file_path: 'a.py' })).toEqual({
+      kind: 'tool',
+      id: 't3',
+      name: 'Read',
+      detail: 'a.py',
+      status: 'running',
+    });
+  });
+
+  it('sends a streaming step at most every interval, and at once when asked', () => {
+    vi.useFakeTimers();
+    try {
+      const sent: string[] = [];
+      const stream = new StepStream(
+        (step) => sent.push(step.kind === 'message' ? step.text : ''),
+        250,
+      );
+      stream.put({ kind: 'message', id: 'a', text: 'a' });
+      stream.put({ kind: 'message', id: 'a', text: 'ab' });
+      expect(sent).toEqual([]);
+      vi.advanceTimersByTime(250);
+      expect(sent).toEqual(['ab']);
+      stream.put({ kind: 'message', id: 'a', text: 'abc' }, true);
+      expect(sent).toEqual(['ab', 'abc']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

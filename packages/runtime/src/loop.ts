@@ -24,6 +24,7 @@ import type {
   QuotaSnapshot,
   QuestionAnswers,
   SkillRef,
+  TurnStep,
   SubagentEvent,
   SubagentPolicy,
   TurnUsage,
@@ -145,6 +146,8 @@ export type ThreadEvent =
       readonly message: string;
     }
   | { readonly type: 'error'; readonly message: string }
+  /** A step of an agent's turn (ADR 0019); shown, not logged: outputs can be long. */
+  | { readonly type: 'step'; readonly role: Role; readonly step: TurnStep }
   | { readonly type: 'finished'; readonly outcome: LoopOutcome };
 
 export type LoopOutcome =
@@ -1107,6 +1110,9 @@ export function runLoop(options: LoopOptions): Loop {
           void emit({ type: 'activity', role, ...activity });
         },
         onSubagent,
+        onStep: (step: TurnStep) => {
+          options.onEvent?.({ type: 'step', role, step });
+        },
         ...(options.onQuestion
           ? {
               onQuestion: async (questions: readonly AgentQuestion[]) => {

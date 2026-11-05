@@ -4,6 +4,7 @@
 import type {
   ChangedFile,
   QuestionItem,
+  StepView,
   RoleName,
   ThreadUpdate,
   TurnRole,
@@ -40,6 +41,8 @@ export type ThreadItem =
       readonly usage?: TurnUsageSummary;
       readonly activity: readonly string[];
       readonly subagents: readonly SubagentRow[];
+      /** The turn as it happened, in order (ADR 0019); empty in older chats. */
+      readonly steps: readonly StepView[];
       readonly refs?: readonly string[];
     }
   | {
@@ -131,6 +134,7 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
             text: update.text ?? '',
             activity: [],
             subagents: [],
+            steps: [],
             ...(update.label ? { label: update.label } : {}),
             ...(update.usage ? { usage: update.usage } : {}),
             ...(update.refs ? { refs: update.refs } : {}),
@@ -153,6 +157,17 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
     }
     case 'chunk':
       return mapTurn(update.turnId, (turn) => ({ ...turn, text: turn.text + update.text }));
+    case 'step':
+      return mapTurn(update.turnId, (turn) => {
+        const at = turn.steps.findIndex((s) => s.id === update.step.id);
+        return {
+          ...turn,
+          steps:
+            at < 0
+              ? [...turn.steps, update.step]
+              : turn.steps.map((s, index) => (index === at ? update.step : s)),
+        };
+      });
     case 'activity':
       return mapTurn(update.turnId, (turn) => ({
         ...turn,

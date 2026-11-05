@@ -155,3 +155,24 @@ describe('a question left open (ADR 0019)', () => {
     });
   });
 });
+
+describe('the steps of a turn in the history (ADR 0019)', () => {
+  it('keeps each step’s last version where it first appeared, once its turn is done', () => {
+    const step = (id: string, text: string): ThreadUpdate => ({
+      type: 'step',
+      turnId: 't-1',
+      step: { kind: 'message', id, text },
+    });
+    const updates: ThreadUpdate[] = [
+      { type: 'turn', id: 't-1', role: 'leader', agent: 'Codex', status: 'running' },
+      step('a', 'G'),
+      step('b', 'X'),
+      step('a', 'Guardo'),
+      { type: 'turn', id: 't-1', role: 'leader', agent: 'Codex', status: 'done', text: 'Fatto.' },
+    ];
+    expect(compact(updates).filter((u) => u.type === 'step')).toEqual([
+      step('a', 'Guardo'),
+      step('b', 'X'),
+    ]);
+  });
+});

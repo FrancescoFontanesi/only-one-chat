@@ -786,3 +786,24 @@ describe('chat session: the leader’s questions (ADR 0019)', () => {
     );
   });
 });
+
+describe('chat session: the turn as it happens (ADR 0019)', () => {
+  it('shows the leader’s steps in its turn, and its answer without the intermediate messages', async () => {
+    const { chat, updates } = session('auto');
+    try {
+      await chat.send('[steps] prova');
+    } finally {
+      await chat.dispose();
+    }
+    const turn = updates.find(
+      (u): u is Extract<ThreadUpdate, { type: 'turn' }> => u.type === 'turn' && u.role === 'leader',
+    );
+    const steps = updates.filter(
+      (u): u is Extract<ThreadUpdate, { type: 'step' }> => u.type === 'step',
+    );
+    expect(steps.length).toBeGreaterThan(0);
+    expect(steps.every((u) => u.turnId === turn?.id)).toBe(true);
+    expect(steps.map((u) => u.step.kind)).toContain('command');
+    expect(doneTurns(updates).find((t) => t.role === 'leader')?.text).toBe('Fatto.');
+  });
+});

@@ -37,9 +37,10 @@ The chat opens in an editor tab, which you can move and resize; the layout follo
 - **The bar:** the folder and the chat's title, its state (PRONTO, IN CORSO, ASPETTA TE, NON
   PRONTO), STORICO (the chats of this folder), + NUOVA, IMPOSTAZIONI and SQUAD.
 - **The thread:** one column; each message opens with a line saying who wrote it, with which
-  model, and its state, and COPIA (and ↺ RIPRISTINA QUI on yours) at hand. An agent's tools
-  (commands, files read and changed, sub-agents) show as a terminal log inside its turn: the
-  latest ones while it works, all of them with "+ N AZIONI"; its context, output, time and, for
+  model, and its state, and COPIA (and ↺ RIPRISTINA QUI on yours) at hand. A turn shows what the
+  agent does as it happens (ADR 0019): its intermediate messages, its reasoning (Codex's summary;
+  with Claude only that it reasoned), each command with its exit code, time and output, each
+  changed file with its diff, the turn's plan and its other tools; a step opens on a click; its context, output, time and, for
   Claude, nominal cost close it. Delegations (D01, D02) are one line, their brief one click away; the
   leader's text leaves the brief out. A `@path` that exists in the folder opens the file; then
   the facts the extension verified and the changes to review.

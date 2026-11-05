@@ -14,7 +14,9 @@ import type {
   AgentSkillRef,
   AgentTurn,
   AgentTurnHandlers,
+  AgentTurnStep,
 } from '../agent.js';
+import { tail } from '../steps.js';
 import {
   ClaudeError,
   SUBAGENT_TOOL,
@@ -32,6 +34,64 @@ export type ClaudeAgentConfig = Omit<
   ClaudeTurnOptions,
   'prompt' | 'appendSystemPrompt' | 'resumeSessionId' | 'onEvent' | 'subagents'
 >;
+
+const lines = (text: string) => (text === '' ? [] : text.split('\n'));
+
+/**
+ * The step of a Claude tool call (ADR 0019): Bash a command, Edit and Write a
+ * file change with its diff, anything else a tool with its main argument.
+ */
+export function claudeToolStep(id: string, name: string, input: unknown): AgentTurnStep {
+  const args =
+    typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
+  const text = (key: string) => (typeof args[key] === 'string' ? args[key] : '');
+  if (name === 'Bash') {
+    return {
+      kind: 'command',
+      id,
+      command: text('command'),
+      status: 'running',
+      exitCode: null,
+      durationMs: null,
+      output: '',
+    };
+  }
+  if (name === 'Edit' || name === 'Write') {
+    const before = name === 'Edit' ? lines(text('old_string')) : [];
+    const after = lines(name === 'Edit' ? text('new_string') : text('content'));
+    const diff = [...before.map((l) => `-${l}`), ...after.map((l) => `+${l}`)].join('\n');
+    return {
+      kind: 'file',
+      id,
+      status: 'running',
+      changes: [
+        {
+          path: text('file_path'),
+          change: 'update',
+          added: after.length,
+          removed: before.length,
+          diff: diff.length > 20_000 ? `${diff.slice(0, 20_000)}\n…` : diff,
+        },
+      ],
+    };
+  }
+  const detail =
+    text('file_path') ||
+    text('pattern') ||
+    text('skill') ||
+    text('query') ||
+    text('url') ||
+    JSON.stringify(input ?? null).slice(0, 240);
+  return { kind: 'tool', id, name, detail, status: 'running' };
+}
+
+/** A tool call's step once its result is back. */
+function endStep(step: AgentTurnStep, failed: boolean, output: string): AgentTurnStep {
+  const status = failed ? 'failed' : 'done';
+  if (step.kind === 'command') return { ...step, status, output: tail(output) };
+  if (step.kind === 'file' || step.kind === 'tool') return { ...step, status };
+  return step;
+}
 
 /**
  * What Claude receives as the user's text (ADR 0019). In -p a leading `/` runs
@@ -75,6 +135,9 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
       const startedAt = Date.now();
       /** Sub-agents of this turn, by Agent tool call id. */
       const children = new Map<string, { identified: boolean }>();
+      /** The tool calls shown as steps, waiting for their result (ADR 0019). */
+      const toolSteps = new Map<string, AgentTurnStep>();
+      let stepCount = 0;
       /** The first message of a sub-agent tells which model actually ran it. */
       function identify(id: string, model: string | null): void {
         const subagent = children.get(id);
@@ -96,8 +159,21 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
           if (event.type === 'text' && event.parentToolUseId !== null) {
             identify(event.parentToolUseId, event.model);
             handlers.onSubagent?.({ type: 'text', id: event.parentToolUseId, text: event.text });
+          } else if (event.type === 'text' && event.withTools === true) {
+            // Text before a tool call: an intermediate message, a step of the turn (ADR 0019).
+            handlers.onStep?.({
+              kind: 'message',
+              id: `m-${String(++stepCount)}`,
+              text: event.text,
+            });
           } else if (event.type === 'text') handlers.onText(event.text);
-          else if (event.type === 'tool_use' && event.parentToolUseId !== null) {
+          else if (event.type === 'thinking' && event.parentToolUseId === null) {
+            handlers.onStep?.({
+              kind: 'reasoning',
+              id: `r-${String(++stepCount)}`,
+              text: event.text,
+            });
+          } else if (event.type === 'tool_use' && event.parentToolUseId !== null) {
             identify(event.parentToolUseId, event.model);
             handlers.onSubagent?.({
               type: 'activity',
@@ -122,6 +198,13 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
               kind: 'tool',
               detail: `${event.name} ${JSON.stringify(event.input)}`,
             });
+            const step = claudeToolStep(event.id, event.name, event.input);
+            toolSteps.set(event.id, step);
+            handlers.onStep?.(step);
+          } else if (event.type === 'tool_result' && toolSteps.has(event.toolUseId)) {
+            const step = toolSteps.get(event.toolUseId);
+            toolSteps.delete(event.toolUseId);
+            if (step) handlers.onStep?.(endStep(step, event.isError, event.content ?? ''));
           } else if (event.type === 'tool_result' && children.has(event.toolUseId)) {
             children.delete(event.toolUseId);
             handlers.onSubagent?.({

@@ -148,6 +148,48 @@ export interface TurnUsageSummary {
   readonly durationMs: number;
 }
 
+/** One step of a turn as it happens (ADR 0019), replaced whole by id. */
+export type StepView =
+  | { readonly kind: 'message'; readonly id: string; readonly text: string }
+  | { readonly kind: 'reasoning'; readonly id: string; readonly text: string }
+  | {
+      readonly kind: 'command';
+      readonly id: string;
+      readonly command: string;
+      readonly status: 'running' | 'done' | 'failed';
+      readonly exitCode: number | null;
+      readonly durationMs: number | null;
+      readonly output: string;
+    }
+  | {
+      readonly kind: 'file';
+      readonly id: string;
+      readonly status: 'running' | 'done' | 'failed';
+      readonly changes: readonly {
+        readonly path: string;
+        readonly change: 'add' | 'delete' | 'update';
+        readonly added: number;
+        readonly removed: number;
+        readonly diff: string;
+      }[];
+    }
+  | {
+      readonly kind: 'plan';
+      readonly id: string;
+      readonly explanation: string;
+      readonly steps: readonly {
+        readonly step: string;
+        readonly status: 'pending' | 'inProgress' | 'completed';
+      }[];
+    }
+  | {
+      readonly kind: 'tool';
+      readonly id: string;
+      readonly name: string;
+      readonly detail: string;
+      readonly status: 'running' | 'done' | 'failed';
+    };
+
 /** One question of an agent (ADR 0019); `options` null: a free answer only. */
 export interface QuestionItem {
   readonly id: string;
@@ -191,6 +233,8 @@ export type ThreadUpdate =
       readonly refs?: readonly string[];
     }
   | { readonly type: 'chunk'; readonly turnId: string; readonly text: string }
+  /** A step of a turn (ADR 0019): added, or replaced by its id. */
+  | { readonly type: 'step'; readonly turnId: string; readonly step: StepView }
   | { readonly type: 'activity'; readonly turnId: string; readonly text: string }
   | {
       readonly type: 'subagent';

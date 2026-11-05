@@ -67,6 +67,59 @@ export interface AgentQuestion {
 /** The user's answers by question id; null when the user did not answer. */
 export type QuestionAnswers = Readonly<Record<string, readonly string[]>> | null;
 
+/**
+ * One step of a turn as it happens (ADR 0019), sent again whole on every
+ * change and replaced by id: an intermediate message, the reasoning, a
+ * command with its output, file changes, the turn's plan, another tool.
+ */
+export type StepStatus = 'running' | 'done' | 'failed';
+
+export interface FileStepChange {
+  readonly path: string;
+  readonly change: 'add' | 'delete' | 'update';
+  readonly added: number;
+  readonly removed: number;
+  /** Unified diff, cut to its first part when long. */
+  readonly diff: string;
+}
+
+export type TurnStep =
+  | { readonly kind: 'message'; readonly id: string; readonly text: string }
+  /** The reasoning; `text` is its summary, empty when the CLI gives none. */
+  | { readonly kind: 'reasoning'; readonly id: string; readonly text: string }
+  | {
+      readonly kind: 'command';
+      readonly id: string;
+      readonly command: string;
+      readonly status: StepStatus;
+      readonly exitCode: number | null;
+      readonly durationMs: number | null;
+      /** The last part of what it printed. */
+      readonly output: string;
+    }
+  | {
+      readonly kind: 'file';
+      readonly id: string;
+      readonly status: StepStatus;
+      readonly changes: readonly FileStepChange[];
+    }
+  | {
+      readonly kind: 'plan';
+      readonly id: string;
+      readonly explanation: string;
+      readonly steps: readonly {
+        readonly step: string;
+        readonly status: 'pending' | 'inProgress' | 'completed';
+      }[];
+    }
+  | {
+      readonly kind: 'tool';
+      readonly id: string;
+      readonly name: string;
+      readonly detail: string;
+      readonly status: StepStatus;
+    };
+
 export interface AgentTurnHandlers {
   /** Text as it streams (deltas or whole messages, depending on the agent). */
   onText(text: string): void;
@@ -76,6 +129,8 @@ export interface AgentTurnHandlers {
   onActivity?(activity: { readonly kind: string; readonly detail: string }): void;
   /** The agent's own sub-agents: visible, not approved (D13). */
   onSubagent?(event: SubagentEvent): void;
+  /** A step of the turn as it happens (ADR 0019). */
+  onStep?(step: TurnStep): void;
   /** The agent asks the user while the turn waits (ADR 0019). Absent: it cannot ask. */
   onQuestion?(questions: readonly AgentQuestion[]): Promise<QuestionAnswers>;
 }

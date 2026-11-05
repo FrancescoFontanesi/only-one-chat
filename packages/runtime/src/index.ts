@@ -23,6 +23,7 @@ export function getRuntimeInfo(): RuntimeInfo {
 export type {
   AgentFactory,
   AgentQuestion,
+  FileStepChange,
   AgentIdentity,
   AgentSession,
   AgentSessionOptions,
@@ -34,11 +35,13 @@ export type {
   ContextUsage,
   QuotaSnapshot,
   QuestionAnswers,
+  StepStatus,
   SkillRef,
   TurnOptions,
   SubagentEvent,
   SubagentPolicy,
   TokenUsage,
+  TurnStep,
   TurnUsage,
 } from './agent.js';
 export {

@@ -21,8 +21,10 @@ import type {
   AgentTurn,
   AgentTurnHandlers,
   AgentSkillRef,
+  AgentTurnStep,
   AgentUserQuestion,
 } from '../agent.js';
+import { diffCounts, StepStream, tail } from '../steps.js';
 import { CodexAuthError, isUsable } from './auth.js';
 import {
   NO_TOKENS,
@@ -259,6 +261,117 @@ function itemActivity(item: Json): { kind: string; detail: string } | undefined 
   return undefined;
 }
 
+/** A step of the turn, kept for its deltas and sent; `now` at its start and end. */
+function putStep(turn: RunningTurn, step: AgentTurnStep, now = false): void {
+  turn.steps.set(step.id, step);
+  turn.stream.put(step, now);
+}
+
+/** The turn's plan, as Codex updates it (`turn/plan/updated`). */
+function planStep(params: Json): AgentTurnStep {
+  const plan = Array.isArray(params['plan']) ? params['plan'] : [];
+  return {
+    kind: 'plan',
+    id: 'plan',
+    explanation: stringOrNull(params['explanation']) ?? '',
+    steps: plan.flatMap((entry) => {
+      if (!isRecord(entry) || typeof entry['step'] !== 'string') return [];
+      const status = entry['status'];
+      return [
+        {
+          step: entry['step'],
+          status:
+            status === 'completed'
+              ? 'completed'
+              : status === 'inProgress'
+                ? 'inProgress'
+                : 'pending',
+        } as const,
+      ];
+    }),
+  };
+}
+
+/**
+ * The step of a Codex item, at its start or its end (ADR 0019): the
+ * reasoning, a command, file changes, an MCP tool or a web search. Agent
+ * messages and sub-agents are handled apart; other items are not shown.
+ */
+export function itemStep(item: Json, ended: boolean): AgentTurnStep | undefined {
+  const id = String(item['id']);
+  const status = (): 'running' | 'done' | 'failed' => {
+    if (!ended) return 'running';
+    const value = item['status'];
+    return value === 'failed' || value === 'declined' ? 'failed' : 'done';
+  };
+  switch (item['type']) {
+    case 'reasoning': {
+      const summary = Array.isArray(item['summary']) ? item['summary'] : [];
+      return {
+        kind: 'reasoning',
+        id,
+        text: summary.filter((s): s is string => typeof s === 'string').join('\n\n'),
+      };
+    }
+    case 'commandExecution': {
+      const exitCode = typeof item['exitCode'] === 'number' ? item['exitCode'] : null;
+      const command = item['command'];
+      return {
+        kind: 'command',
+        id,
+        command: Array.isArray(command)
+          ? command.join(' ')
+          : typeof command === 'string'
+            ? command
+            : '',
+        status: ended && exitCode !== null && exitCode !== 0 ? 'failed' : status(),
+        exitCode,
+        durationMs: typeof item['durationMs'] === 'number' ? item['durationMs'] : null,
+        output: tail(typeof item['aggregatedOutput'] === 'string' ? item['aggregatedOutput'] : ''),
+      };
+    }
+    case 'fileChange': {
+      const changes = Array.isArray(item['changes']) ? item['changes'] : [];
+      return {
+        kind: 'file',
+        id,
+        status: status(),
+        changes: changes.flatMap((change) => {
+          if (!isRecord(change) || typeof change['path'] !== 'string') return [];
+          const kind = isRecord(change['kind']) ? change['kind']['type'] : undefined;
+          const diff = typeof change['diff'] === 'string' ? change['diff'] : '';
+          return [
+            {
+              path: change['path'],
+              change: kind === 'add' ? 'add' : kind === 'delete' ? 'delete' : 'update',
+              ...diffCounts(diff),
+              diff: diff.length > 20_000 ? `${diff.slice(0, 20_000)}\n…` : diff,
+            } as const,
+          ];
+        }),
+      };
+    }
+    case 'mcpToolCall':
+      return {
+        kind: 'tool',
+        id,
+        name: `${String(item['server'])}/${String(item['tool'])}`,
+        detail: JSON.stringify(item['arguments'] ?? null).slice(0, 240),
+        status: status(),
+      };
+    case 'webSearch':
+      return {
+        kind: 'tool',
+        id,
+        name: 'web',
+        detail: typeof item['query'] === 'string' ? item['query'] : '',
+        status: status(),
+      };
+    default:
+      return undefined;
+  }
+}
+
 type TurnOutcome =
   | {
       text: string;
@@ -273,7 +386,13 @@ type TurnOutcome =
 interface RunningTurn {
   readonly handlers: AgentTurnHandlers;
   turnId?: string;
+  /** The answer's messages: every agent message but the intermediate ones. */
   readonly messages: string[];
+  /** The phase of each agent message, from its start (ADR 0019). */
+  readonly phases: Map<string, unknown>;
+  /** The steps shown so far, by item id, to add the deltas to. */
+  readonly steps: Map<string, AgentTurnStep>;
+  readonly stream: StepStream;
   readonly startedAt: number;
   /** The thread's cumulative tokens when the turn started. */
   readonly baseline: TokenUsage;
@@ -417,15 +536,51 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
           return;
         }
         if (notifiedThread !== threadId) return;
+        const itemId = typeof params['itemId'] === 'string' ? params['itemId'] : '';
         if (method === 'item/agentMessage/delta' && typeof params['delta'] === 'string') {
-          turn.handlers.onText(params['delta']);
+          // An intermediate message is a step of the turn; the answer streams as text.
+          const shown = turn.steps.get(itemId);
+          if (turn.phases.get(itemId) === 'commentary' && shown?.kind === 'message') {
+            putStep(turn, { ...shown, text: shown.text + params['delta'] });
+          } else turn.handlers.onText(params['delta']);
+        } else if (
+          (method === 'item/reasoning/summaryTextDelta' ||
+            method === 'item/commandExecution/outputDelta') &&
+          typeof params['delta'] === 'string'
+        ) {
+          const shown = turn.steps.get(itemId);
+          if (shown?.kind === 'reasoning') {
+            putStep(turn, { ...shown, text: shown.text + params['delta'] });
+          } else if (shown?.kind === 'command') {
+            putStep(turn, { ...shown, output: tail(shown.output + params['delta']) });
+          }
+        } else if (method === 'turn/plan/updated' && Array.isArray(params['plan'])) {
+          putStep(turn, planStep(params), true);
         } else if (method === 'item/completed' && isRecord(params['item'])) {
           const item = params['item'];
           if (item['type'] === 'agentMessage' && typeof item['text'] === 'string') {
-            turn.messages.push(item['text']);
+            if (item['phase'] === 'commentary') {
+              putStep(turn, { kind: 'message', id: String(item['id']), text: item['text'] }, true);
+            } else turn.messages.push(item['text']);
+          } else {
+            const step = itemStep(item, true);
+            if (step) putStep(turn, step, true);
           }
         } else if (method === 'item/started' && isRecord(params['item'])) {
           const item = params['item'];
+          if (item['type'] === 'agentMessage') {
+            turn.phases.set(String(item['id']), item['phase']);
+            if (item['phase'] === 'commentary') {
+              turn.steps.set(String(item['id']), {
+                kind: 'message',
+                id: String(item['id']),
+                text: '',
+              });
+            }
+          } else {
+            const step = itemStep(item, false);
+            if (step) putStep(turn, step, true);
+          }
           if (item['type'] === 'subAgentActivity') onSubagentActivity(turn, item);
           else if (item['type'] === 'collabAgentToolCall') {
             turn.handlers.onActivity?.({ kind: 'collab', detail: String(item['tool']) });
@@ -438,6 +593,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         } else if (method === 'turn/completed' && isRecord(params['turn'])) {
           const completed = params['turn'];
           if (turn.turnId !== undefined && completed['id'] !== turn.turnId) return;
+          turn.stream.flush();
           const status = completed['status'];
           if (status === 'completed') {
             // A resumed thread's totals before this session are unknown: the
@@ -570,6 +726,9 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
       const turn: RunningTurn = {
         handlers,
         messages: [],
+        phases: new Map(),
+        steps: new Map(),
+        stream: new StepStream((step) => handlers.onStep?.(step)),
         startedAt: Date.now(),
         baseline: totals.get(threadId) ?? NO_TOKENS,
         quota: null,
@@ -582,6 +741,8 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
           input: codexInput(prompt, options?.skill),
           ...(currentModel ? { model: currentModel } : {}),
           ...(currentEffort ? { effort: currentEffort } : {}),
+          // A summary of the reasoning, shown as a step of the turn (ADR 0019).
+          summary: 'auto',
         })
         .then((response) => {
           if (isRecord(response) && isRecord(response['turn'])) {

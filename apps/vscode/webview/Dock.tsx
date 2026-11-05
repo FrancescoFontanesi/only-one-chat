@@ -1,9 +1,9 @@
 // The dock of the Chat board (ADR 0016): what waits for the user takes the
-// composer's place (a permission as the view's one Slab, a delegation or a
-// report to approve as an ink frame), else the composer: one lattice cell,
-// closed on its four sides with a + at each corner, the text and, under a
-// rule, one line with the recipient, the route and the delegations as picks,
-// the context and the send. `@` in the text attaches a file, `/` lists the
+// composer's place (a permission as the view's one Slab, a delegation held by
+// the manual delivery as an ink frame: the chat waits for it, ADR 0018), else
+// the composer: one lattice cell, closed on its four sides with a + at each
+// corner, the text and, under a rule, one line with the recipient and the
+// delivery as picks, the context and the send. `@` in the text attaches a file, `/` lists the
 // commands. On a wide panel, beside the composer, the two dials (Hud.tsx):
 // who you talk to, and the providers' usage.
 
@@ -16,7 +16,6 @@ import {
   type RolesState,
   type PermitDecision,
   type RoleName,
-  type Route,
   type SessionInfo,
 } from '../src/webview/protocol.js';
 import { matchPaths } from './mentions.js';
@@ -104,9 +103,13 @@ function PermissionSlab({ item, theme }: { item: Item<'permission'>; theme: 'dar
   );
 }
 
+/**
+ * A delegation the manual delivery holds (ADR 0018): the brief as free text,
+ * editable, sent as it is or as edited, or cancelled. The chat waits for it.
+ * Paths that look like files and do not exist are pointed out, not blocking.
+ */
 function ApprovalFrame({ item, number }: { item: Item<'approval'>; number: string }) {
   const [text, setText] = useState(item.text);
-  const delegation = item.approval === 'delegation';
   const edited = text !== item.text;
   const decide = (action: 'approve' | 'edit' | 'cancel') => {
     post(
@@ -116,24 +119,17 @@ function ApprovalFrame({ item, number }: { item: Item<'approval'>; number: strin
     );
   };
   return (
-    <section
-      class="cn-frame cn-frame--ink apr"
-      aria-label={delegation ? 'Delega da approvare' : 'Rapporto da approvare'}
-    >
+    <section class="cn-frame cn-frame--ink apr" aria-label="Delega da inviare">
       <header class="cn-frame__head cn-accent">
         <span class="cn-tag">
-          <b>
-            {delegation ? '→ D' : '← R'}
-            {number}
-          </b>{' '}
-          {delegation ? 'DELEGA' : 'RAPPORTO'} · {item.from} → {item.to}
+          <b>→ D{number}</b> DELEGA · {item.from} → {item.to}
         </span>
-        <span class="cn-tag">APPROVO IO</span>
+        <span class="cn-tag">CONSEGNA MANUALE</span>
       </header>
       <div class="cn-frame__body">
         <div class="ctl">
           <label class="cn-tag" for="brief">
-            {delegation ? 'BRIEF · MODIFICABILE' : 'MESSAGGIO AL LEADER · MODIFICABILE'}
+            BRIEF · MODIFICABILE
           </label>
           {edited && <span class="cn-tag cn-tag--ink">MODIFICATO DA TE</span>}
         </div>
@@ -148,13 +144,15 @@ function ApprovalFrame({ item, number }: { item: Item<'approval'>; number: strin
             />
           </div>
         </div>
+        {item.missing && item.missing.length > 0 && (
+          <p class="apr__miss">
+            ▲ {item.missing.length === 1 ? 'Percorso non trovato' : 'Percorsi non trovati'}:{' '}
+            {item.missing.join(', ')} · un file da creare non esiste ancora
+          </p>
+        )}
       </div>
       <footer class="cn-frame__foot">
-        <span class="hint">
-          {delegation
-            ? 'L’IMPLEMENTATORE PARTE SOLO DOPO LA TUA CONFERMA'
-            : 'IL LEADER LO LEGGE SOLO DOPO LA TUA CONFERMA'}
-        </span>
+        <span class="hint">LA CHAT ASPETTA: INVIA O ANNULLA</span>
         <div class="ctl__g">
           <button
             class="cn-btn cn-btn--text"
@@ -174,7 +172,7 @@ function ApprovalFrame({ item, number }: { item: Item<'approval'>; number: strin
                   decide('approve');
                 }}
               >
-                <span class="cn-btn__label">APPROVA ORIGINALE</span>
+                <span class="cn-btn__label">INVIA ORIGINALE</span>
               </button>
               <button
                 class="cn-btn cn-btn--sm"
@@ -183,7 +181,7 @@ function ApprovalFrame({ item, number }: { item: Item<'approval'>; number: strin
                   decide('edit');
                 }}
               >
-                <span class="cn-btn__label">APPROVA MODIFICATO</span>
+                <span class="cn-btn__label">INVIA MODIFICATO</span>
                 <span class="cn-btn__icon">→</span>
               </button>
             </>
@@ -195,7 +193,7 @@ function ApprovalFrame({ item, number }: { item: Item<'approval'>; number: strin
                 decide('approve');
               }}
             >
-              <span class="cn-btn__label">APPROVA</span>
+              <span class="cn-btn__label">INVIA</span>
               <span class="cn-btn__icon">→</span>
             </button>
           )}
@@ -205,12 +203,19 @@ function ApprovalFrame({ item, number }: { item: Item<'approval'>; number: strin
   );
 }
 
-export const ROUTES: readonly { value: Route | 'auto'; label: string; title: string }[] = [
-  { value: 'auto', label: 'DECIDE LUI', title: 'Il leader sceglie: risponde, chiede o delega' },
-  { value: 'delega', label: 'DELEGA', title: 'Il leader scrive un brief all’implementatore' },
-  { value: 'fai', label: 'FAI TU', title: 'Il leader lavora da sé' },
-  { value: 'chiedi', label: 'CHIEDI', title: 'Il leader chiede prima di procedere' },
+/** How the leader's delegations reach the implementer (ADR 0018). */
+const DELIVERY: readonly { value: ApprovalMode; label: string; title: string }[] = [
+  { value: 'auto', label: 'AUTO', title: 'Il brief parte subito per l’implementatore' },
+  {
+    value: 'manual',
+    label: 'MANUALE',
+    title: 'Il brief aspetta te, modificabile; la chat si ferma finché non lo invii o annulli',
+  },
 ];
+
+const setMode = (mode: ApprovalMode) => {
+  post({ type: 'setMode', mode });
+};
 
 interface Command {
   name: string;
@@ -229,7 +234,7 @@ interface Pop {
 }
 
 const RECIPIENTS: readonly { value: RoleName; label: string; title: string }[] = [
-  { value: 'leader', label: 'LEADER', title: 'Il leader risponde, chiede o delega' },
+  { value: 'leader', label: 'LEADER', title: 'Ragioni con il leader; delega quando glielo chiedi' },
   {
     value: 'implementer',
     label: 'IMPLEMENTATORE',
@@ -242,15 +247,11 @@ function Composer({
   openSquad,
   to,
   setTo,
-  route,
-  setRoute,
 }: {
   session: SessionInfo | undefined;
   openSquad: () => void;
   to: RoleName;
   setTo: (to: RoleName) => void;
-  route: Route | 'auto';
-  setRoute: (route: Route | 'auto') => void;
 }) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<readonly string[]>([]);
@@ -291,14 +292,6 @@ function Composer({
   };
 
   const commands: Command[] = [
-    ...ROUTES.filter((r) => r.value !== 'auto').map((r) => ({
-      name: r.value,
-      hint: `Via · ${r.title}`,
-      run: () => {
-        setTo('leader');
-        setRoute(r.value);
-      },
-    })),
     {
       name: 'impl',
       hint: 'Scrivi all’implementatore',
@@ -393,7 +386,6 @@ function Composer({
       type: 'send',
       text: mentions ? `${text.trimEnd()}\n\n${mentions}` : text,
       ...(to === 'implementer' ? { to } : {}),
-      ...(to === 'leader' && route !== 'auto' ? { route } : {}),
     });
     setText('');
     setAttachments([]);
@@ -526,11 +518,10 @@ function Composer({
             {to === 'leader' ? (
               <Pick
                 compact
-                label="Via"
-                value={route}
-                options={ROUTES}
-                disabled={!ready}
-                onChange={setRoute}
+                label="Consegna"
+                value={session?.mode ?? 'manual'}
+                options={DELIVERY}
+                onChange={setMode}
               />
             ) : (
               <span class="pk pk--off pk--compact">
@@ -538,18 +529,6 @@ function Composer({
               </span>
             )}
           </span>
-          <Pick
-            short="DELEGHE"
-            label="Deleghe"
-            value={session?.mode ?? 'manual'}
-            options={[
-              { value: 'manual', label: 'APPROVO IO', title: 'Ogni delega e rapporto aspetta te' },
-              { value: 'auto', label: 'AUTO', title: 'Deleghe e rapporti passano da soli' },
-            ]}
-            onChange={(mode: ApprovalMode) => {
-              post({ type: 'setMode', mode });
-            }}
-          />
           <span
             class="ctx cmp__ctx"
             title={
@@ -652,7 +631,6 @@ export function Dock({
   );
   const approval = items.find((i): i is Item<'approval'> => i.kind === 'approval' && !i.closed);
   const [to, setTo] = useState<RoleName>('leader');
-  const [route, setRoute] = useState<Route | 'auto'>('auto');
   const recipient = roles ? (roles.chat?.[to] ?? roles.roles[to]) : undefined;
   return (
     <footer class="dock">
@@ -663,9 +641,8 @@ export function Dock({
             monitor={monitor}
             to={to}
             setTo={setTo}
-            route={route}
-            setRoute={setRoute}
-            routes={ROUTES}
+            mode={session?.mode ?? 'manual'}
+            setMode={setMode}
             busy={session?.busy ?? false}
           />
         </aside>
@@ -698,14 +675,7 @@ export function Dock({
               number={numbers.get(approval.id) ?? ''}
             />
           ) : (
-            <Composer
-              session={session}
-              openSquad={openSquad}
-              to={to}
-              setTo={setTo}
-              route={route}
-              setRoute={setRoute}
-            />
+            <Composer session={session} openSquad={openSquad} to={to} setTo={setTo} />
           )}
         </div>
         <aside class="dock__side" aria-label="Utilizzo">

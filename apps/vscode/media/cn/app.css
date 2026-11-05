@@ -54,6 +54,23 @@ body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* A path the text names that exists in the folder (ADR 0018): it opens the file. */
+.ref {
+  all: unset;
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: var(--ink);
+  text-decoration: underline dotted var(--line-strong);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.ref:hover {
+  text-decoration-color: var(--ink);
+}
+.ref:focus-visible {
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: 2px;
+}
 
 /* Popovers: the files for @, the commands for /, the chats of the folder. */
 .pop {
@@ -1044,51 +1061,30 @@ input:focus-visible {
   letter-spacing: 0.12em;
   color: var(--ink);
 }
-/* Below it: the model, then the route or the handoff. */
+/* Below it: the model, then the delivery or the handoff. */
 .hud__act {
   position: absolute;
   left: 8px;
   width: 124px;
   top: 124px;
 }
-/* The route's drum: the one before, the chosen one, the one after; it rolls one line on a change. */
-.drum {
+/* The leader's delivery: its key, then the two choices side by side, the chosen one bright. */
+.sw {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  align-items: center;
+  grid-template-rows: 16px 16px;
+  row-gap: 4px;
   height: 40px;
-  overflow: hidden;
-  cursor: ns-resize;
 }
-.drum:focus-visible {
+.sw:focus-visible {
   outline: var(--stroke-focus) solid var(--ink);
   outline-offset: 2px;
 }
-.drum__k {
-  align-self: center;
+.sw__opts {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
 }
-.drum__win {
-  display: grid;
-  grid-auto-rows: 12px;
-  row-gap: 2px;
-}
-.drum__win--down {
-  animation: drum-down 120ms steps(3) both;
-}
-.drum__win--up {
-  animation: drum-up 120ms steps(3) both;
-}
-@keyframes drum-down {
-  from {
-    transform: translateY(14px);
-  }
-}
-@keyframes drum-up {
-  from {
-    transform: translateY(-14px);
-  }
-}
-.drum__o {
+.sw__o {
   all: unset;
   box-sizing: border-box;
   font-family: var(--font-mono);
@@ -1100,23 +1096,17 @@ input:focus-visible {
   color: var(--ink-disabled);
   cursor: pointer;
 }
-.drum__o:hover {
+.sw__o:hover {
   color: var(--ink-muted);
 }
-.drum__o--on {
+.sw__o--on {
   font-size: 11px;
   color: var(--ink);
-  cursor: inherit;
+  cursor: default;
 }
-.drum__o--on::before {
+.sw__o--on::before {
   content: '› ';
   color: var(--ink-muted);
-}
-@media (prefers-reduced-motion: reduce) {
-  .drum__win--down,
-  .drum__win--up {
-    animation: none;
-  }
 }
 .hud__turn--right {
   left: 0;
@@ -1530,6 +1520,15 @@ input:focus-visible {
 }
 
 /* The approval of a delegation or a report, and the permission Slab. */
+/* Paths of the brief that look like files and do not exist: told, not blocking. */
+.apr__miss {
+  margin: 8px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
 .apr .cn-frame__body {
   padding: 16px 24px;
   display: flex;

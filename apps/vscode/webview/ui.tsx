@@ -315,21 +315,25 @@ export function RoleFields({
     },
     {
       name: 'Permessi',
-      note: 'VALE DAL TURNO SUCCESSIVO',
-      control: (
-        <Scale
-          still={still === true}
-          label={`Permessi: ${ROLE[role]}`}
-          value={info.permission}
-          options={PERMISSIONS.map((p) => ({
-            value: p.value,
-            label: p.label.toUpperCase(),
-          }))}
-          onChange={(value) => {
-            set({ permission: value });
-          }}
-        />
-      ),
+      // The leader reasons and delegates; it never writes (ADR 0018).
+      note: role === 'leader' ? 'IL LEADER NON SCRIVE CODICE' : 'VALE DAL TURNO SUCCESSIVO',
+      control:
+        role === 'leader' ? (
+          <Fixed value="SOLA LETTURA" tag="■ BLOCCATO" />
+        ) : (
+          <Scale
+            still={still === true}
+            label={`Permessi: ${ROLE[role]}`}
+            value={info.permission}
+            options={PERMISSIONS.map((p) => ({
+              value: p.value,
+              label: p.label.toUpperCase(),
+            }))}
+            onChange={(value) => {
+              set({ permission: value });
+            }}
+          />
+        ),
     },
   ];
   return (

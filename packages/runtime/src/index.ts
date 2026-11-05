@@ -41,6 +41,7 @@ export {
   DELEGATION_END,
   DELEGATION_SECTIONS,
   DELEGATION_START,
+  delegationStart,
   delegationTemplate,
   parseDelegation,
   type Delegation,

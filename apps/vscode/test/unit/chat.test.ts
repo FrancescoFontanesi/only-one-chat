@@ -5,7 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { PendingReport } from '@only-one-chat/runtime';
-import { ChatSession, type ChatConfig, type FileNotes } from '../../src/session/chat.js';
+import {
+  ChatSession,
+  type ChatConfig,
+  type DraftDelegation,
+  type FileNotes,
+} from '../../src/session/chat.js';
 import { CheckpointStore } from '../../src/session/checkpoints.js';
 import type { ThreadUpdate } from '../../src/webview/protocol.js';
 
@@ -41,6 +46,7 @@ function session(
   instructions?: ChatConfig['instructions'],
   checkpoints?: CheckpointStore,
   fileNotes?: ChatConfig['fileNotes'],
+  extra: Partial<ChatConfig> = {},
 ) {
   const updates: ThreadUpdate[] = [];
   const busy: boolean[] = [];
@@ -48,6 +54,7 @@ function session(
   const kept: (readonly PendingReport[])[] = [];
   const contexts: [string, { used: number; window: number | null }][] = [];
   const notes: FileNotes[] = [];
+  const drafts: (DraftDelegation | null)[] = [];
   const config: ChatConfig = {
     cwd,
     leader: { cli: 'codex', model: 'gpt-6.1-sol', effort: 'low', permission: 'auto' },
@@ -74,6 +81,7 @@ function session(
     ...(checkpoints ? { checkpoints } : {}),
     ...(fileNotes ? { fileNotes } : {}),
     logPath: join(root, 'logs', 'chat.jsonl'),
+    ...extra,
   };
   const chat = new ChatSession(config, {
     update: (update) => updates.push(update),
@@ -82,8 +90,9 @@ function session(
     unseen: (reports) => kept.push([...reports]),
     context: (role, context) => contexts.push([role, context]),
     fileNotes: (pending) => notes.push(pending),
+    draft: (draft) => drafts.push(draft),
   });
-  return { chat, updates, busy, sessionIds, kept, contexts, notes };
+  return { chat, updates, busy, sessionIds, kept, contexts, notes, drafts };
 }
 
 describe('chat session: files named with @ (ADR 0015)', () => {
@@ -533,5 +542,136 @@ describe('chat session', () => {
     } finally {
       await chat.dispose();
     }
+  });
+});
+
+describe('chat session: the delegation cycle (ADR 0018)', () => {
+  it('runs the leader read-only whatever the settings say: Codex never asks to leave its sandbox', async () => {
+    const log = join(root, 'codex.jsonl');
+    const { chat } = session(
+      'auto',
+      'always',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        codexLauncherArgs: [
+          join(FIXTURES, 'fake-app-server.mjs'),
+          '--account=chatgpt',
+          `--log=${log}`,
+        ],
+      },
+    );
+    try {
+      await chat.send('ciao');
+    } finally {
+      await chat.dispose();
+    }
+    const start = readFileSync(log, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+      .find((m) => m.method === 'thread/start');
+    expect(start?.params).toMatchObject({ sandbox: 'read-only', approvalPolicy: 'never' });
+    expect(chat.currentRoles.leader.permission).toBe('read-only');
+    expect(chat.setRole('leader', { ...chat.currentRoles.leader, permission: 'auto' })).toBe(true);
+    expect(chat.currentRoles.leader.permission).toBe('read-only');
+  });
+
+  it('with automatic delivery still shows the delegation as a card, closed as sent', async () => {
+    const { chat, updates, drafts } = session('auto');
+    try {
+      await chat.send('[spec] aggiungi una funzione');
+    } finally {
+      await chat.dispose();
+    }
+    const card = updates.find((u) => u.type === 'approval');
+    expect(card).toMatchObject({ type: 'approval', kind: 'delegation' });
+    expect(updates).toContainEqual({ type: 'approval_closed', id: card?.id, action: 'sent' });
+    expect(drafts).toEqual([]);
+  });
+
+  it('keeps a delegation held for the user with the chat until it is decided', async () => {
+    const { chat, updates, drafts } = session('manual');
+    try {
+      const sent = chat.send('[spec] aggiungi una funzione');
+      await expect.poll(() => updates.find((u) => u.type === 'approval')).toBeTruthy();
+      const card = updates.find((u) => u.type === 'approval');
+      if (card?.type !== 'approval') throw new Error('no card');
+      expect(drafts).toEqual([{ id: card.id, text: card.text, from: card.from, to: card.to }]);
+      chat.decide(card.id, 'approve');
+      await sent;
+    } finally {
+      await chat.dispose();
+    }
+    expect(drafts.at(-1)).toBeNull();
+    // The report reached the leader without being held: one card only.
+    expect(updates.filter((u) => u.type === 'approval')).toHaveLength(1);
+    expect(doneTurns(updates).map((t) => t.role)).toEqual(['leader', 'implementer', 'leader']);
+  });
+
+  it('closing the chat keeps a waiting delegation; reopened, it is sent with no leader turn first', async () => {
+    const first = session('manual');
+    let draft: DraftDelegation | null | undefined;
+    try {
+      void first.chat.send('[spec] aggiungi una funzione');
+      await expect.poll(() => first.drafts.length).toBe(1);
+      draft = first.drafts[0];
+    } finally {
+      await first.chat.dispose();
+    }
+    // Closing is not stopping: the draft stays.
+    expect(first.drafts).toHaveLength(1);
+    if (!draft) throw new Error('no draft');
+
+    const second = session(
+      'manual',
+      'always',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        draft,
+      },
+    );
+    try {
+      await second.chat.send('altro');
+      expect(second.updates).toContainEqual(
+        expect.objectContaining({ type: 'notice', level: 'warn' }),
+      );
+      expect(second.updates.some((u) => u.type === 'user')).toBe(false);
+      second.chat.decide(draft.id, 'edit', 'Brief modificato.');
+      await expect.poll(() => doneTurns(second.updates).length).toBe(2);
+      await expect.poll(() => second.chat.busy).toBe(false);
+    } finally {
+      await second.chat.dispose();
+    }
+    expect(second.updates).toContainEqual({
+      type: 'approval_closed',
+      id: draft.id,
+      action: 'edit',
+    });
+    expect(second.drafts).toEqual([null]);
+    const done = doneTurns(second.updates);
+    expect(done.map((t) => t.role)).toEqual(['implementer', 'leader']);
+    // The fake implementer echoes what it received: the edited brief.
+    expect(done[0]?.text).toContain('Brief modificato.');
+  });
+
+  it('stopping a waiting delegation drops it', async () => {
+    const { chat, updates, drafts } = session('manual');
+    try {
+      const sent = chat.send('[spec] uno');
+      await expect.poll(() => updates.find((u) => u.type === 'approval')).toBeTruthy();
+      await chat.stop();
+      await sent;
+    } finally {
+      await chat.dispose();
+    }
+    expect(drafts.at(-1)).toBeNull();
   });
 });

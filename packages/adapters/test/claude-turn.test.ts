@@ -114,6 +114,19 @@ describe('arguments', () => {
     expect(args[args.indexOf('--permission-prompts') + 1]).toBe('none');
   });
 
+  it('with a read-only shell adds only Bash, with no rule that allows a command', () => {
+    const shell = claudeTurnArgs({ executable: 'c', cwd: '.', prompt: 'x', readOnlyShell: true });
+    expect(shell[shell.indexOf('--tools') + 1]).toBe('Read,Grep,Glob,Bash');
+    const denied = shell[shell.indexOf('--disallowedTools') + 1]?.split(',') ?? [];
+    expect(denied).not.toContain('Bash');
+    for (const tool of ['PowerShell', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'WebFetch']) {
+      expect(denied).toContain(tool);
+    }
+    expect(shell).not.toContain('--allowedTools');
+    expect(shell[shell.indexOf('--permission-prompts') + 1]).toBe('none');
+    expect(shell[shell.indexOf('--permission-mode') + 1]).toBe('default');
+  });
+
   it('never bypasses permissions', () => {
     expect(args.join(' ')).not.toMatch(/dangerously|bypassPermissions|acceptEdits/);
   });

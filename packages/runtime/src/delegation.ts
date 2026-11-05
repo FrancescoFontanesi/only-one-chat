@@ -3,7 +3,8 @@
 // a longer answer (plan first, then the block), and must contain the expected
 // sections in order, none empty: the delegation's six by default, the
 // gateway's specification sections in gateway mode. The start line may name the recipient:
-// `<<<DELEGA @claude`.
+// `<<<DELEGA #claude` (ADR 0018: `@` is for files); the older `<<<DELEGA @claude` is still read,
+// for sessions resumed with the earlier instructions.
 
 export const DELEGATION_START = '<<<DELEGA';
 export const DELEGATION_END = 'DELEGA>>>';
@@ -33,7 +34,12 @@ export type DelegationParse =
   | { readonly status: 'absent' }
   | { readonly status: 'malformed'; readonly errors: readonly string[] };
 
-const START_LINE = /^<<<DELEGA(?:\s+@([\w.-]+))?$/;
+const START_LINE = /^<<<DELEGA(?:\s+[#@]([\w.-]+))?$/;
+
+/** The start line of a block for `recipient`. */
+export function delegationStart(recipient: string): string {
+  return `${DELEGATION_START} #${recipient}`;
+}
 
 /**
  * Template shown to the orchestrator in its role instructions. `sections`
@@ -44,7 +50,7 @@ export function delegationTemplate(
   sections: readonly string[] = DELEGATION_SECTIONS,
 ): string {
   return [
-    recipient ? `${DELEGATION_START} @${recipient}` : DELEGATION_START,
+    recipient ? delegationStart(recipient) : DELEGATION_START,
     ...sections.map((section) => `## ${section}\n<testo>`),
     DELEGATION_END,
   ].join('\n');

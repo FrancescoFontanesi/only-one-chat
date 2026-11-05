@@ -23,6 +23,8 @@ export type ThreadItem =
       readonly to?: RoleName;
       readonly checkpoint?: string;
       readonly attachments?: readonly string[];
+      /** The `@` paths of the text that exist in the folder (ADR 0018). */
+      readonly refs?: readonly string[];
     }
   | {
       readonly kind: 'turn';
@@ -35,6 +37,7 @@ export type ThreadItem =
       readonly usage?: TurnUsageSummary;
       readonly activity: readonly string[];
       readonly subagents: readonly SubagentRow[];
+      readonly refs?: readonly string[];
     }
   | {
       readonly kind: 'approval';
@@ -43,7 +46,10 @@ export type ThreadItem =
       readonly from: string;
       readonly to: string;
       readonly text: string;
-      /** The user's decision, once taken. */
+      readonly refs?: readonly string[];
+      /** `@` paths that look like files and do not exist. */
+      readonly missing?: readonly string[];
+      /** The user's decision, once taken; `sent` when it went on by itself. */
       readonly closed?: string;
     }
   | {
@@ -94,6 +100,7 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
           ...(update.to ? { to: update.to } : {}),
           ...(update.checkpoint ? { checkpoint: update.checkpoint } : {}),
           ...(update.attachments ? { attachments: update.attachments } : {}),
+          ...(update.refs ? { refs: update.refs } : {}),
         },
       ];
     case 'turn': {
@@ -112,6 +119,7 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
             subagents: [],
             ...(update.label ? { label: update.label } : {}),
             ...(update.usage ? { usage: update.usage } : {}),
+            ...(update.refs ? { refs: update.refs } : {}),
           },
         ];
       }
@@ -125,6 +133,7 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
           text: update.text ?? turn.text,
           ...(update.label ? { label: update.label } : {}),
           ...(update.usage ? { usage: update.usage } : {}),
+          ...(update.refs ? { refs: update.refs } : {}),
         };
       });
     }
@@ -156,6 +165,8 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
           from: update.from,
           to: update.to,
           text: update.text,
+          ...(update.refs ? { refs: update.refs } : {}),
+          ...(update.missing ? { missing: update.missing } : {}),
         },
       ];
     case 'approval_closed':

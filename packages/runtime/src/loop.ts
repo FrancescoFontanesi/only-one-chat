@@ -26,11 +26,11 @@ import type {
   TurnUsage,
 } from './agent.js';
 import {
+  delegationStart,
   delegationTemplate,
   parseDelegation,
   DELEGATION_END,
   DELEGATION_SECTIONS,
-  DELEGATION_START,
   type DelegationParse,
 } from './delegation.js';
 import { extractResult, parseBrief, resultTemplate, type Brief } from './brief.js';
@@ -263,6 +263,18 @@ export interface LoopOptions {
    * correction. `intercept` and `onMalformedDelegation` are not called.
    */
   readonly autoApprove?: boolean;
+  /**
+   * `leader` mode: a delegation the user already approved (a draft kept with
+   * the chat, ADR 0018): it goes to the implementer without a leader turn
+   * first, then the report is reviewed as usual. `request` is ignored.
+   */
+  readonly delegation?: string;
+  /**
+   * What a message between agents becomes on its way (ADR 0018): the
+   * delegation before the implementer reads it, the report before the leader
+   * does, e.g. `@path` mentions as plain paths. Default: unchanged.
+   */
+  relay?(text: string): string;
   /** Policies for the agents' own sub-agents (D13), per role. */
   readonly subagents?: {
     readonly orchestrator?: SubagentPolicy;
@@ -470,8 +482,10 @@ export function gatewayInstructions(implementerId: string): string {
 
 /** The implementer's final report, in both gateway styles. */
 const IMPLEMENTER_REPORT = [
+  '## Status',
+  '<done, partial oppure blocked>',
   '## Files',
-  '<file creati o modificati>',
+  '<file creati o modificati, come @percorso>',
   '## Tests',
   '<per ogni caso o criterio: id, nome del test che lo verifica, esito>',
   '## Verification',
@@ -482,6 +496,19 @@ const IMPLEMENTER_REPORT = [
   '<problemi rimasti, oppure "None">',
   '## Out of scope',
   '<cose notate e non toccate, oppure "None">',
+];
+
+/**
+ * How the implementer writes code (ADR 0018), the same for every provider: in
+ * the spirit of skills such as ponytail, without depending on any of them.
+ */
+const IMPLEMENTATION_MANUAL = [
+  'Come scrivi il codice:',
+  '- prima di scrivere, cerca nel repository e nella libreria standard qualcosa da riusare;',
+  '- fai la modifica più piccola che soddisfa i criteri; non toccare ciò che il brief non chiede;',
+  '- scrivi prima i test dei criteri, poi il codice che li fa passare;',
+  '- nessuna astrazione, opzione o configurazione per casi che il brief non chiede;',
+  '- nessuna dipendenza nuova se il brief non la prevede: se serve, fermati e riportalo.',
 ];
 
 /**
@@ -560,7 +587,9 @@ export const LIGHT_IMPLEMENTER_INSTRUCTIONS = [
   'i punti minori lasciati aperti e riportali. Lavori nella cartella corrente: crea e modifica file',
   'solo lì. Scrivi test automatici per i criteri di accettazione, eseguili insieme a quelli',
   'esistenti e correggi finché passano. Se manca una decisione che cambia il risultato, fermati e',
-  'riportalo. Alla fine rispondi solo con questo rapporto:',
+  'riportalo.',
+  ...IMPLEMENTATION_MANUAL,
+  'Alla fine rispondi solo con questo rapporto:',
   ...IMPLEMENTER_REPORT,
   '',
   ...AGENT_RULES.slice(2),
@@ -643,50 +672,59 @@ export function resultPrompt(
 }
 
 /**
- * `leader` mode: the one chat of Only One Chat. The leader converses with the
- * user for the whole session and keeps its own context small: sub-agents
- * explore, small focused changes it makes itself, larger ones go to the
- * implementer on another subscription, a structured brief is forwarded with
- * its notes only, and results are judged on the facts. Its session must be
- * able to write, for the small changes.
+ * `leader` mode: the one chat of Only One Chat (ADR 0010, 0018). The leader
+ * reasons and plans with the user for the whole session and never writes code:
+ * its session is read-only, so its context holds reasoning and delegations. It
+ * writes a delegation block only when the user asks for the prompt or the work;
+ * a structured brief is forwarded with its notes only, and results are judged
+ * on the facts.
  */
 export function leaderInstructions(implementerId: string): string {
   return [
-    'Sei il leader di Only One Chat: l’interlocutore con cui l’utente ragiona e conversa, in una',
+    'Sei il leader di Only One Chat: l’interlocutore con cui l’utente ragiona e pianifica, in una',
     'chat che dura tutta la sessione di lavoro. Hai un collaboratore esterno, l’implementatore',
     `"${implementerId}": è un altro modello, su un’altra subscription, non un tuo sotto-agente, e non`,
-    'vede questa conversazione. Il tuo contesto dura quanto la conversazione: proteggilo, e usa le',
-    'subscription in modo che il consumo resti il più basso possibile e ripartito fra le due.',
+    'vede questa conversazione. Il tuo contesto dura quanto la conversazione: tienilo fatto di',
+    'ragionamento e di deleghe, e usa le subscription in modo che il consumo resti basso.',
     '',
-    'Per ogni richiesta scegli una via e dichiarala nella prima riga della risposta, così:',
-    '"Via: <rispondo | chiedo | faccio io | delego> — <il perché in poche parole>".',
-    '- rispondo: domande, spiegazioni, ragionamento; nessun file da cambiare.',
-    '- chiedo: manca una decisione che cambia il risultato.',
-    '- delego: ogni modifica al codice, anche piccola. L’implementatore riprende la sua sessione e',
-    '  conosce già il lavoro fatto, quindi un seguito gli costa poco; a te, scrivere ogni file',
-    '  costerebbe di più. Spiega all’utente cosa deleghi e perché, poi scrivi UN SOLO blocco di',
-    '  delega. Per un lavoro nuovo il brief è autosufficiente: Goal, Decisions con il perché, Plan a',
-    '  tappe se servono, Latitude, Constraints, Acceptance criteria verificabili. Per un seguito di un',
-    '  lavoro appena fatto basta un messaggio mirato e breve. Non esplorare il codice a fondo per',
-    '  prepararlo: l’esplorazione la fa l’implementatore.',
-    '- faccio io: solo se l’utente lo chiede (il messaggio inizia con /fai) o se l’implementatore',
-    '  non è disponibile. Fai la modifica ed esegui i test.',
-    'Il messaggio può iniziare con /delega o /chiedi: è la via che l’utente vuole.',
-    '- Brief dalla web app (il messaggio inizia con "Brief dalla chat di ragionamento"): è già',
-    '  ragionato. Non rigenerarlo: il runtime lo inoltra così com’è. Nel blocco scrivi solo le tue',
-    '  note, una per riga: aggiunte, oppure correzioni mirate, che valgono sul testo del brief.',
-    '  Se non ce ne sono, scrivi "None".',
-    'Il blocco di delega è:',
+    'Non scrivi codice e non modifichi file: la tua sessione è in sola lettura. Puoi leggere il',
+    'repository ed eseguire comandi per cercare e controllare. Ogni modifica la fa l’implementatore;',
+    'per una modifica piccola suggerisci all’utente di scrivergli direttamente.',
     '',
-    `${DELEGATION_START} @${implementerId}`,
+    'Di norma rispondi: discuti, spiega, proponi alternative, chiedi ciò che serve per decidere.',
+    'Scrivi un blocco di delega solo quando l’utente ti chiede il prompt o il lavoro (per esempio',
+    '"genera il prompt", "procedi", "delega"); se ti sembra il momento, proponilo senza scriverlo.',
+    'Prima del blocco puoi scrivere una breve spiegazione per l’utente. UN SOLO blocco per risposta:',
+    '',
+    delegationStart(implementerId),
     '<il brief, oppure le note>',
     DELEGATION_END,
     '',
-    'Dopo una delega ricevi il rapporto dell’implementatore e i fatti verificati dal runtime,',
-    'subito oppure insieme al messaggio successivo dell’utente: valuta su quelli, senza rileggere',
-    'il codice, e riferisci all’utente se è andato tutto bene, cosa non torna e cosa converrebbe',
-    'modificare. Nello stesso modo ricevi i rapporti dei lavori che l’utente ha chiesto',
-    'direttamente all’implementatore.',
+    'Il brief è per un modello che non ha visto questa conversazione: autosufficiente, senza rimandi',
+    'a ciò che è stato detto prima. Testo libero, con queste parti quando servono:',
+    '- Obiettivo: cosa deve esistere alla fine, in una o due righe;',
+    '- Contesto: i file da leggere o toccare, come @percorso o @percorso#L10-20, ognuno con il',
+    '  motivo; non copiarne il contenuto;',
+    '- Decisioni: quelle prese con l’utente, ciascuna con il perché;',
+    '- Vincoli: cosa non toccare e cosa non aggiungere (dipendenze, interfacce pubbliche);',
+    '- Passi: solo se l’ordine conta;',
+    '- Criteri di accettazione: numerati C1, C2…, ciascuno verificabile con un test o un comando;',
+    '- Verifica: i comandi da eseguire;',
+    '- Fermati se: quando l’implementatore deve fermarsi e riportare invece di decidere;',
+    '- Margine: ciò che può decidere da solo.',
+    'Per il seguito di un lavoro appena fatto basta un brief breve e mirato: l’implementatore',
+    'riprende la sua sessione. Non esplorare il codice a fondo per preparare il brief:',
+    'l’esplorazione la fa l’implementatore.',
+    '',
+    'Brief dalla web app (il messaggio inizia con "Brief dalla chat di ragionamento"): è già',
+    'ragionato e l’utente l’ha già rivisto. Non riscriverlo: il runtime lo inoltra così com’è e parte',
+    'subito. Nel blocco scrivi solo le tue note, una per riga, per aggiornarlo al contesto attuale',
+    '(file spostati, decisioni prese dopo, vincoli del repository); se non ce ne sono, "None".',
+    '',
+    'Dopo una delega ricevi il rapporto dell’implementatore e i fatti verificati dal runtime: valuta',
+    'su quelli, senza rileggere il codice, e riferisci all’utente. Nello stesso modo ricevi, con il',
+    'messaggio successivo dell’utente, i rapporti dei lavori chiesti direttamente all’implementatore.',
+    'Nel testo per l’utente indica i file come @percorso.',
     '',
     'Sotto-agenti: usali per leggere ed esplorare il codice, mai per scriverlo.',
     PROACTIVE_SUBAGENT_RULE,
@@ -709,7 +747,8 @@ export function leaderResultPrompt(implementer: string, report: string, facts: s
     'Valuta il rapporto sui fatti, senza rileggere il codice: apri un file solo se un fatto',
     'contraddice il rapporto, e solo quel file. Poi rispondi all’utente in breve: se è andato tutto',
     'bene, l’esito di ogni criterio, cosa non torna o converrebbe modificare, e le decisioni prese',
-    'senza che le chiedesse.',
+    'senza che le chiedesse. Non scrivere un nuovo blocco di delega: se serve un altro passaggio,',
+    'proponilo all’utente.',
   ].join('\n');
 }
 
@@ -1099,10 +1138,15 @@ export function runLoop(options: LoopOptions): Loop {
     }
   }
 
-  async function intercept(message: InterceptedMessage): Promise<string | undefined> {
+  /**
+   * A message between agents. `pass`: it goes on without the user, logged and
+   * shown as `auto_approve` like the autoApprove runs (a leader's reports, a
+   * brief the user already reviewed in the web app, ADR 0018).
+   */
+  async function intercept(message: InterceptedMessage, pass = false): Promise<string | undefined> {
     checkStopped();
     await emit({ type: 'intercepted', message });
-    if (options.autoApprove) {
+    if (options.autoApprove || pass) {
       await emit({ type: 'decision', kind: message.kind, action: 'auto_approve' });
       return message.text;
     }
@@ -1142,13 +1186,13 @@ export function runLoop(options: LoopOptions): Loop {
     if (recipient === null && question) {
       return {
         status: 'malformed',
-        errors: [`the start line must name the recipient: "${DELEGATION_START} @${workerId}"`],
+        errors: [`the start line must name the recipient: "${delegationStart(workerId)}"`],
       };
     }
     if (recipient !== null && recipient !== workerId.toLowerCase()) {
       return {
         status: 'malformed',
-        errors: [`unknown recipient "@${recipient}": the only agent is "@${workerId}"`],
+        errors: [`unknown recipient "#${recipient}": the only agent is "#${workerId}"`],
       };
     }
     return parsed;
@@ -1217,72 +1261,81 @@ export function runLoop(options: LoopOptions): Loop {
         ? options.request
         : requestPrompt(options.request);
     const first = leader && options.preface ? `${options.preface}\n\n${request}` : request;
-    let answer = (await turn(orchestrator, 'orchestrator', first)).text;
+    /** A draft the user approved: the implementer starts from it, with no leader turn first. */
+    let draft = leader ? options.delegation : undefined;
+    let answer = draft === undefined ? (await turn(orchestrator, 'orchestrator', first)).text : '';
+    const relay = (text: string) => options.relay?.(text) ?? text;
     let exchange = 0;
     let fixes = 0;
     for (;;) {
-      const parsed = check(answer, worker?.id);
-      if (parsed.status === 'absent' && gateway) {
-        return { status: 'clarification', questions: answer };
-      }
-      // The leader answered by itself: a question, or a request for clarification.
-      if (parsed.status === 'absent' && leader) {
-        return { status: 'completed', conclusion: answer, exchanges: 0 };
-      }
-      if (parsed.status === 'absent' && question) {
-        throw new Error('The orchestrator answered without asking the worker a question');
-      }
-      if (parsed.status === 'absent') {
-        await concluded(orchestrator, worker, answer, exchange);
-        return { status: 'completed', conclusion: answer, exchanges: exchange };
-      }
-      if (exchange >= max) {
-        await concluded(orchestrator, worker, answer, exchange);
-        return { status: 'limit_reached', conclusion: answer, exchanges: exchange };
-      }
       let delegation: string;
-      if (parsed.status === 'malformed') {
-        await emit({ type: 'delegation_invalid', errors: parsed.errors });
-        const canAskOrchestrator = !question || fixes < 1;
-        const decision: MalformedDecision = options.autoApprove
-          ? canAskOrchestrator
-            ? { action: 'ask_orchestrator' }
-            : { action: 'cancel' }
-          : await abortable(
-              options.onMalformedDelegation(
-                { answer, errors: parsed.errors, exchange: exchange + 1, canAskOrchestrator },
-                controller.signal,
-              ),
-              controller.signal,
-            );
-        if (options.autoApprove && decision.action === 'cancel') {
-          throw new Error(
-            'The delegation block is still malformed after the one automatic correction',
-          );
-        }
-        checkStopped();
-        await emit({
-          type: 'decision',
-          kind: 'malformed',
-          action: options.autoApprove ? 'auto_fix' : decision.action,
-          ...(decision.action === 'edit' ? { text: decision.text } : {}),
-        });
-        if (decision.action === 'cancel') return { status: 'cancelled', at: 'malformed' };
-        if (decision.action === 'ask_orchestrator') {
-          if (!canAskOrchestrator) {
-            throw new Error('The delegation block is still malformed after the one correction');
-          }
-          fixes++;
-          answer = (await turn(orchestrator, 'orchestrator', fixPrompt(parsed.errors))).text;
-          continue;
-        }
-        delegation = decision.text;
-      } else if (brief && options.light) {
-        delegation = lightDelegation(brief, parsed.delegation.sections['Notes'] ?? '');
-      } else if (brief && leader) {
-        delegation = lightDelegation(brief, parsed.delegation.text);
+      const fromDraft = draft !== undefined;
+      if (draft !== undefined) {
+        delegation = draft;
+        draft = undefined;
       } else {
-        delegation = parsed.delegation.text;
+        const parsed = check(answer, worker?.id);
+        if (parsed.status === 'absent' && gateway) {
+          return { status: 'clarification', questions: answer };
+        }
+        // The leader answered by itself: a question, or a request for clarification.
+        if (parsed.status === 'absent' && leader) {
+          return { status: 'completed', conclusion: answer, exchanges: 0 };
+        }
+        if (parsed.status === 'absent' && question) {
+          throw new Error('The orchestrator answered without asking the worker a question');
+        }
+        if (parsed.status === 'absent') {
+          await concluded(orchestrator, worker, answer, exchange);
+          return { status: 'completed', conclusion: answer, exchanges: exchange };
+        }
+        if (exchange >= max) {
+          await concluded(orchestrator, worker, answer, exchange);
+          return { status: 'limit_reached', conclusion: answer, exchanges: exchange };
+        }
+        if (parsed.status === 'malformed') {
+          await emit({ type: 'delegation_invalid', errors: parsed.errors });
+          const canAskOrchestrator = !question || fixes < 1;
+          const decision: MalformedDecision = options.autoApprove
+            ? canAskOrchestrator
+              ? { action: 'ask_orchestrator' }
+              : { action: 'cancel' }
+            : await abortable(
+                options.onMalformedDelegation(
+                  { answer, errors: parsed.errors, exchange: exchange + 1, canAskOrchestrator },
+                  controller.signal,
+                ),
+                controller.signal,
+              );
+          if (options.autoApprove && decision.action === 'cancel') {
+            throw new Error(
+              'The delegation block is still malformed after the one automatic correction',
+            );
+          }
+          checkStopped();
+          await emit({
+            type: 'decision',
+            kind: 'malformed',
+            action: options.autoApprove ? 'auto_fix' : decision.action,
+            ...(decision.action === 'edit' ? { text: decision.text } : {}),
+          });
+          if (decision.action === 'cancel') return { status: 'cancelled', at: 'malformed' };
+          if (decision.action === 'ask_orchestrator') {
+            if (!canAskOrchestrator) {
+              throw new Error('The delegation block is still malformed after the one correction');
+            }
+            fixes++;
+            answer = (await turn(orchestrator, 'orchestrator', fixPrompt(parsed.errors))).text;
+            continue;
+          }
+          delegation = decision.text;
+        } else if (brief && options.light) {
+          delegation = lightDelegation(brief, parsed.delegation.sections['Notes'] ?? '');
+        } else if (brief && leader) {
+          delegation = lightDelegation(brief, parsed.delegation.text);
+        } else {
+          delegation = parsed.delegation.text;
+        }
       }
 
       exchange++;
@@ -1290,50 +1343,63 @@ export function runLoop(options: LoopOptions): Loop {
         sessionOptions(WORKER_INSTRUCTIONS, options.subagents?.worker),
       );
       if (!sessions.includes(worker) && worker !== options.workerSession) sessions.push(worker);
-      const approved = await intercept({
-        kind: 'delegation',
-        from: orchestrator.name,
-        to: worker.name,
-        text: delegation,
-        exchange,
-      });
+      // A brief from the web app is reviewed there already: it goes on (ADR 0018).
+      const approved = fromDraft
+        ? delegation
+        : await intercept(
+            {
+              kind: 'delegation',
+              from: orchestrator.name,
+              to: worker.name,
+              text: delegation,
+              exchange,
+            },
+            leader && brief !== undefined,
+          );
+      if (fromDraft) await options.log.append('draft_delegation', { text: delegation });
       if (approved === undefined) return { status: 'cancelled', at: 'delegation' };
 
-      const result = await turn(worker, 'worker', approved);
+      const result = await turn(worker, 'worker', relay(approved));
       if (leader && options.review === 'deferred') {
         const facts = (await options.facts?.()) ?? '';
         return { status: 'delegated', spec: approved, report: result.text, facts };
       }
       if (leader && !brief) {
         const facts = (await options.facts?.()) ?? '';
-        const review = await intercept({
-          kind: 'review',
-          from: worker.name,
-          to: orchestrator.name,
-          text: leaderResultPrompt(worker.name, result.text, facts),
-          exchange,
-        });
+        const review = await intercept(
+          {
+            kind: 'review',
+            from: worker.name,
+            to: orchestrator.name,
+            text: leaderResultPrompt(worker.name, result.text, facts),
+            exchange,
+          },
+          true,
+        );
         if (review === undefined) return { status: 'cancelled', at: 'review' };
-        const final = (await turn(orchestrator, 'orchestrator', review)).text;
+        const final = (await turn(orchestrator, 'orchestrator', relay(review))).text;
         return { status: 'completed', conclusion: final, exchanges: exchange };
       }
       if (brief) {
         const facts = (await options.facts?.()) ?? '';
-        const review = await intercept({
-          kind: 'review',
-          from: worker.name,
-          to: orchestrator.name,
-          text: resultPrompt(
-            worker.name,
-            result.text,
-            facts,
-            brief,
-            options.light === true || leader,
-          ),
-          exchange,
-        });
+        const review = await intercept(
+          {
+            kind: 'review',
+            from: worker.name,
+            to: orchestrator.name,
+            text: resultPrompt(
+              worker.name,
+              result.text,
+              facts,
+              brief,
+              options.light === true || leader,
+            ),
+            exchange,
+          },
+          leader,
+        );
         if (review === undefined) return { status: 'cancelled', at: 'review' };
-        const final = (await turn(orchestrator, 'orchestrator', review)).text;
+        const final = (await turn(orchestrator, 'orchestrator', relay(review))).text;
         const block = extractResult(final);
         return {
           status: 'result',

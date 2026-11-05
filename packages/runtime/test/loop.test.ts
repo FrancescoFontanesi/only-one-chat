@@ -395,7 +395,7 @@ describe('question mode', () => {
     });
     expect(harness.intercepted).toHaveLength(1);
     expect(codex.prompts).toHaveLength(1); // no review turn
-    expect(codex.instructions[0]).toMatch(/<<<DELEGA @claude/);
+    expect(codex.instructions[0]).toMatch(/<<<DELEGA #claude/);
     expect(codex.instructions[0]).toMatch(/non rispondi tu/);
     const messages = harness.events.filter((e) => e.type === 'message');
     expect(messages.map((m) => m.label)).toEqual([
@@ -878,9 +878,12 @@ describe('leader mode: one chat across requests', () => {
     expect(codex.instructions[0]).toMatch(
       /per leggere ed esplorare il codice, non per modificarlo/,
     );
-    // The leader knows its collaborator is external, and states the route it takes.
+    // The leader knows its collaborator is external, never writes code, and delegates on request (ADR 0018).
     expect(codex.instructions[0]).toMatch(/non un tuo sotto-agente/);
-    expect(codex.instructions[0]).toMatch(/Via: <rispondo \| chiedo \| faccio io \| delego>/);
+    expect(codex.instructions[0]).toMatch(/Non scrivi codice e non modifichi file/);
+    expect(codex.instructions[0]).toMatch(/solo quando l’utente ti chiede il prompt o il lavoro/);
+    expect(codex.instructions[0]).toContain('<<<DELEGA #claude');
+    expect(codex.instructions[0]).not.toMatch(/Via:|faccio io|\/fai/);
   });
 
   it('delegates a free request with its own brief, headings included, and answers on the facts', async () => {
@@ -994,6 +997,102 @@ describe('leader mode: one chat across requests', () => {
     );
     expect(codex.prompts[0]).toMatch(/^Brief dalla chat di ragionamento/);
     expect(codex.prompts[1]).toMatch(/senza rileggere il codice/);
+  });
+});
+
+describe('leader mode: the delegation cycle (ADR 0018)', () => {
+  const own = '<<<DELEGA #claude\nAggiungi round in @calc.py.\nDELEGA>>>';
+
+  it('with manual delivery holds only its delegation: the report reaches the leader as it is', async () => {
+    const codex = fakeAgent('Codex', [{ answer: own }, { answer: 'Fatto.' }]);
+    const claude = fakeAgent('Claude', [{ answer: '## Status\ndone' }]);
+    const leaderSession = await codex.factory({ instructions: leaderInstructions('claude') });
+    const { running, harness } = await loop(codex, claude, [], [], {
+      request: 'Genera il prompt e procedi.',
+      mode: 'leader',
+      leaderSession,
+    });
+    expect(await running.done).toMatchObject({ status: 'completed', exchanges: 1 });
+    expect(harness.intercepted.map((m) => m.kind)).toEqual(['delegation']);
+    expect(codex.prompts[1]).toContain('## Status\ndone');
+    expect(codex.prompts[1]).toMatch(/Non scrivere un nuovo blocco di delega/);
+  });
+
+  it('sends a brief from the web app at once, also with manual delivery', async () => {
+    const brief = '<<<OOC-BRIEF v1 project=calc track=ans\n## Goal\nans.\nOOC-BRIEF>>>';
+    const codex = fakeAgent('Codex', [
+      { answer: '<<<DELEGA #claude\nNone\nDELEGA>>>' },
+      { answer: '<<<OOC-RESULT v1 project=calc track=ans\n## Outcome\nok\nOOC-RESULT>>>' },
+    ]);
+    const claude = fakeAgent('Claude', [{ answer: 'rapporto' }]);
+    const leaderSession = await codex.factory({ instructions: leaderInstructions('claude') });
+    const { running, harness } = await loop(codex, claude, [], [], {
+      request: brief,
+      mode: 'leader',
+      leaderSession,
+    });
+    expect(await running.done).toMatchObject({ status: 'result' });
+    expect(harness.intercepted).toEqual([]);
+    const decisions = harness.events.filter((e) => e.type === 'decision');
+    expect(decisions).toEqual([
+      { type: 'decision', kind: 'delegation', action: 'auto_approve' },
+      { type: 'decision', kind: 'review', action: 'auto_approve' },
+    ]);
+  });
+
+  it('sends an approved draft with no leader turn first, then the leader reviews it', async () => {
+    const codex = fakeAgent('Codex', [{ answer: 'Visto: tutto bene.' }]);
+    const claude = fakeAgent('Claude', [{ answer: 'rapporto' }]);
+    const leaderSession = await codex.factory({ instructions: leaderInstructions('claude') });
+    const { running, harness } = await loop(codex, claude, [], [], {
+      request: '',
+      mode: 'leader',
+      leaderSession,
+      delegation: 'Aggiungi round.',
+    });
+    expect(await running.done).toEqual({
+      status: 'completed',
+      conclusion: 'Visto: tutto bene.',
+      exchanges: 1,
+    });
+    expect(claude.prompts).toEqual(['Aggiungi round.']);
+    expect(codex.prompts).toHaveLength(1);
+    expect(codex.prompts[0]).toContain(WORKER_ANSWER_START);
+    expect(harness.intercepted).toEqual([]);
+  });
+
+  it('relays the messages between the agents, the delegation and the report', async () => {
+    const codex = fakeAgent('Codex', [{ answer: own }, { answer: 'Fatto.' }]);
+    const claude = fakeAgent('Claude', [{ answer: 'Cambiato @calc.py.' }]);
+    const leaderSession = await codex.factory({ instructions: leaderInstructions('claude') });
+    const { running } = await loop(codex, claude, [], [], {
+      request: 'Procedi.',
+      mode: 'leader',
+      leaderSession,
+      autoApprove: true,
+      relay: (text) => text.replaceAll('@calc.py', 'calc.py'),
+    });
+    await running.done;
+    expect(claude.prompts).toEqual(['Aggiungi round in calc.py.']);
+    expect(codex.prompts[1]).toContain('Cambiato calc.py.');
+    expect(codex.prompts[1]).not.toContain('@calc.py');
+  });
+
+  it('still reads the older start line with @, for resumed sessions', async () => {
+    const codex = fakeAgent('Codex', [
+      { answer: '<<<DELEGA @claude\nx\nDELEGA>>>' },
+      { answer: 'ok' },
+    ]);
+    const claude = fakeAgent('Claude', [{ answer: 'r' }]);
+    const leaderSession = await codex.factory({ instructions: leaderInstructions('claude') });
+    const { running } = await loop(codex, claude, [], [], {
+      request: 'Procedi.',
+      mode: 'leader',
+      leaderSession,
+      autoApprove: true,
+    });
+    expect(await running.done).toMatchObject({ status: 'completed', exchanges: 1 });
+    expect(claude.prompts).toEqual(['x']);
   });
 });
 

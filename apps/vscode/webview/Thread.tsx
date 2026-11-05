@@ -7,14 +7,22 @@
 import type { ComponentChildren } from 'preact';
 import { useRef, useState } from 'preact/hooks';
 import type { SessionInfo } from '../src/webview/protocol.js';
+import { refTokens } from '../src/webview/refs.js';
 import { Progress, Reveal } from './motion.js';
 import type { ThreadItem } from './state.js';
-import { isFacts, opsSummary, readFacts, readOp, readUserMessage, type Op } from './threadModel.js';
+import {
+  isFacts,
+  opsSummary,
+  readFacts,
+  readOp,
+  readUserMessage,
+  withoutDelegation,
+  type Op,
+} from './threadModel.js';
 import { duration, kilo, post } from './ui.js';
 
 type Item<K extends ThreadItem['kind']> = Extract<ThreadItem, { kind: K }>;
 
-const ROUTE_LABEL = { fai: 'FAI TU', delega: 'DELEGA', chiedi: 'CHIEDI PRIMA' } as const;
 const STATUS = { running: 'IN CORSO', done: '■ CONCLUSO', failed: '× INTERROTTO' } as const;
 
 function Copy({ text }: { text: string }) {
@@ -32,6 +40,43 @@ function Copy({ text }: { text: string }) {
   );
 }
 
+/**
+ * A text with its `@` paths as links (ADR 0018): only those the host found in
+ * the folder; a click opens the file at its lines.
+ */
+function Linked({ text, refs }: { text: string; refs: readonly string[] | undefined }) {
+  if (!refs || refs.length === 0) return <>{text}</>;
+  const parts: ComponentChildren[] = [];
+  let at = 0;
+  for (const token of refTokens(text)) {
+    if (!refs.includes(token.path)) continue;
+    parts.push(text.slice(at, token.start));
+    const { path, lines } = token;
+    parts.push(
+      <button
+        key={token.start}
+        class="ref"
+        type="button"
+        title={
+          lines ? `Apri ${path}, righe ${String(lines.from)}-${String(lines.to)}` : `Apri ${path}`
+        }
+        onClick={() => {
+          post({
+            type: 'openFile',
+            path,
+            ...(lines ? { from: lines.from, to: lines.to } : {}),
+          });
+        }}
+      >
+        {text.slice(token.start, token.end)}
+      </button>,
+    );
+    at = token.end;
+  }
+  parts.push(text.slice(at));
+  return <>{parts}</>;
+}
+
 function User({ item, index, busy }: { item: Item<'user'>; index: number; busy: boolean }) {
   const message = readUserMessage(item.text, item.attachments, item.to);
   return (
@@ -40,9 +85,6 @@ function User({ item, index, busy }: { item: Item<'user'>; index: number; busy: 
         <span>{String(index).padStart(2, '0')}/</span>
         <b>TU</b>
         <span>→ {message.to === 'leader' ? 'LEADER' : 'IMPLEMENTATORE'}</span>
-        {message.to === 'leader' && (
-          <span>VIA · {message.route ? ROUTE_LABEL[message.route] : 'DECIDE LUI'}</span>
-        )}
         <span class="who__acts">
           <Copy text={message.text} />
           {item.checkpoint && (
@@ -62,7 +104,9 @@ function User({ item, index, busy }: { item: Item<'user'>; index: number; busy: 
         </span>
       </div>
       <div class="tb">
-        <p class="t-body txt">{message.text}</p>
+        <p class="t-body txt">
+          <Linked text={message.text} refs={item.refs} />
+        </p>
         {item.attachments && item.attachments.length > 0 && (
           <div class="atts">
             {item.attachments.map((a) => (
@@ -155,10 +199,11 @@ function ToolLog({ item, ops }: { item: Item<'turn'>; ops: readonly { line: stri
 
 function Turn({ item }: { item: Item<'turn'> }) {
   const ops = item.activity.map((line) => ({ line, op: readOp(line) }));
+  // A leader's route line of older chats is left out; its delegation block is in its card (ADR 0018).
   const [first = '', ...rest] = item.text.split('\n');
-  const via = item.role === 'leader' && /^via:/i.test(first.trim()) ? first.trim() : null;
-  const viaMatch = via ? /^via:\s*([^—-]+?)\s*(?:[—-]\s*(.*))?$/i.exec(via) : null;
-  const body = via ? rest.join('\n').trimStart() : item.text;
+  const leader = item.role === 'leader';
+  const text = leader && /^via:/i.test(first.trim()) ? rest.join('\n').trimStart() : item.text;
+  const { text: body, writing } = leader ? withoutDelegation(text) : { text, writing: false };
   const [provider, model] = identity(item);
   const usage = item.usage;
   const running = item.status === 'running';
@@ -176,17 +221,15 @@ function Turn({ item }: { item: Item<'turn'> }) {
         <span class="who__acts">{body !== '' && !running && <Copy text={body} />}</span>
       </div>
       <div class="tb">
-        {viaMatch && (
-          <p class="via">
-            VIA: {viaMatch[1]?.toUpperCase()} {viaMatch[2] && <span>— {viaMatch[2]}</span>}
-          </p>
-        )}
         {(ops.length > 0 || item.subagents.length > 0) && <ToolLog item={item} ops={ops} />}
         {body !== '' ? (
-          <p class={running ? 't-body txt cn-cursor' : 't-body txt'}>{body}</p>
+          <p class={running && !writing ? 't-body txt cn-cursor' : 't-body txt'}>
+            <Linked text={body} refs={item.refs} />
+          </p>
         ) : (
-          running && <Progress label="LAVORA" />
+          running && !writing && <Progress label="LAVORA" />
         )}
+        {running && writing && <Progress label="SCRIVE IL BRIEF" />}
         {usage && (
           <div class="tfoot">
             <span>CONTESTO {kilo(usage.context)}</span>
@@ -203,17 +246,26 @@ function Turn({ item }: { item: Item<'turn'> }) {
 }
 
 const DECIDED: Record<string, string> = {
-  approve: '■ APPROVATA',
-  edit: '■ APPROVATA MODIFICATA',
+  approve: '■ INVIATA',
+  edit: '■ INVIATA MODIFICATA',
+  sent: '■ INVIATA · AUTO',
   cancel: '× ANNULLATA',
   interrupted: '× INTERROTTA',
+};
+
+/** A report of older chats, approved before it reached the leader. */
+const REPORT_DECIDED: Record<string, string> = {
+  approve: '■ APPROVATO',
+  edit: '■ APPROVATO MODIFICATO',
+  cancel: '× ANNULLATO',
+  interrupted: '× INTERROTTO',
 };
 
 /** A message between agents, once decided: a record, its text one click away. */
 function Hand({ item, number }: { item: Item<'approval'>; number: string }) {
   const [open, setOpen] = useState(false);
   const delegation = item.approval === 'delegation';
-  const decided = DECIDED[item.closed ?? ''] ?? item.closed ?? '';
+  const decided = (delegation ? DECIDED : REPORT_DECIDED)[item.closed ?? ''] ?? item.closed ?? '';
   return (
     <div class="hand">
       <div class="hand__l">
@@ -224,14 +276,7 @@ function Hand({ item, number }: { item: Item<'approval'>; number: string }) {
           </b>{' '}
           {delegation ? 'DELEGA' : 'RAPPORTO'} · {item.from} → {item.to}
         </span>
-        <span class="cn-tag">
-          {delegation
-            ? decided
-            : decided
-                .replace('APPROVATA', 'APPROVATO')
-                .replace('ANNULLATA', 'ANNULLATO')
-                .replace('INTERROTTA', 'INTERROTTO')}
-        </span>
+        <span class="cn-tag">{decided}</span>
       </div>
       <button
         class="cn-btn cn-btn--text"
@@ -243,7 +288,11 @@ function Hand({ item, number }: { item: Item<'approval'>; number: string }) {
       >
         <span class="cn-btn__label">{delegation ? 'BRIEF' : 'APRI'}</span>
       </button>
-      {open && <pre class="opn">{item.text}</pre>}
+      {open && (
+        <pre class="opn">
+          <Linked text={item.text} refs={item.refs} />
+        </pre>
+      )}
     </div>
   );
 }

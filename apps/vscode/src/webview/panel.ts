@@ -7,7 +7,7 @@ import type { ChatRoles, RoleSettings, Roles } from '../roles.js';
 import { ChatSession } from '../session/chat.js';
 import { CheckpointStore } from '../session/checkpoints.js';
 import { SKIPPED } from '../session/facts.js';
-import { expandMentions } from '../session/mentions.js';
+import { expandMentions, inside, withRefs } from '../session/mentions.js';
 import { ChatHistory, forReplay, newChatId, type ChatRecord } from '../session/history.js';
 import { checkpointUri, checkpointsRoot } from './checkpointContent.js';
 import type { ModelCatalog } from '../session/catalog.js';
@@ -378,11 +378,22 @@ export class OnlyOneChatPanel {
     }
   }
 
-  /** Redraws the shown chat in the webview, as it was left. */
+  /**
+   * Redraws the shown chat in the webview, as it was left: a delegation kept
+   * with the chat (ADR 0018) waits again for the user, its card shown anew if
+   * the thread no longer holds it.
+   */
   private async replay(): Promise<void> {
     await this.post({ type: 'reset' });
-    for (const update of forReplay(this.record.updates)) {
+    const draft = this.record.draft ?? undefined;
+    const updates = forReplay(this.record.updates, draft?.id);
+    for (const update of updates) {
       await this.post({ type: 'thread', update });
+    }
+    if (draft && !updates.some((u) => u.type === 'approval' && u.id === draft.id)) {
+      const cwd = workspaceFolder();
+      const card: ThreadUpdate = { type: 'approval', kind: 'delegation', ...draft };
+      await this.post({ type: 'thread', update: cwd ? withRefs(card, cwd) : card });
     }
   }
 
@@ -439,16 +450,13 @@ export class OnlyOneChatPanel {
         if (!(await this.saveBeforeSend())) break;
         const chat = await this.ensureChat();
         if (!chat) break;
-        // The composer's recipient and route, written as the commands the chat reads.
         // `@` is for files only: the recipient comes from the composer's control.
         const to = message.to ?? 'leader';
-        const typed = /^\/(fai|delega|chiedi)\b/i.test(message.text);
-        const prefix = to === 'leader' && !typed && message.route ? `/${message.route} ` : '';
         // Files named with `@` reach the agents as paths (ADR 0015).
         const cwd = workspaceFolder();
         const expanded = cwd ? expandMentions(message.text, cwd) : undefined;
         await chat.send(
-          `${prefix}${message.text}`,
+          message.text,
           expanded && expanded.mentions.length > 0
             ? {
                 text: expanded.attachments,
@@ -462,8 +470,15 @@ export class OnlyOneChatPanel {
         );
         break;
       }
-      case 'decide':
-        this.chat?.decide(message.id, message.action, message.text);
+      case 'decide': {
+        // A delegation kept with a reopened chat starts the chat's agents (ADR 0018).
+        const chat =
+          this.chat ?? (this.record.draft?.id === message.id ? await this.ensureChat() : undefined);
+        chat?.decide(message.id, message.action, message.text);
+        break;
+      }
+      case 'openFile':
+        await this.openFile(message.path, message.from, message.to);
         break;
       case 'permit':
         this.chat?.permit(message.id, message.decision);
@@ -606,6 +621,7 @@ export class OnlyOneChatPanel {
         // A reopened chat continues the CLIs' own sessions; Codex keeps its threads.
         resume: { ...record.sessions },
         unseen: record.unseen ?? [],
+        ...(record.draft ? { draft: record.draft } : {}),
         checkpoints: new CheckpointStore(checkpointsRoot(this.context, record.id), cwd),
         fileNotes: record.fileNotes ?? {},
         persistent: true,
@@ -617,8 +633,10 @@ export class OnlyOneChatPanel {
         logPath: path.join(logDir, `chat-${stamp}.jsonl`),
       },
       {
-        update: (update) => {
+        update: (raw) => {
           if (record !== this.record) return;
+          // The paths its text names, for the thread's links (ADR 0018).
+          const update = withRefs(raw, cwd);
           this.remember(update);
           this.services.monitor.apply(update);
           if (update.type === 'permission' || update.type === 'approval') {
@@ -648,6 +666,10 @@ export class OnlyOneChatPanel {
         },
         unseen: (reports) => {
           record.unseen = [...reports];
+          this.keep(record);
+        },
+        draft: (draft) => {
+          record.draft = draft;
           this.keep(record);
         },
         busy: (busy) => {
@@ -715,6 +737,32 @@ export class OnlyOneChatPanel {
       implementer: [...(notes?.implementer ?? []), note],
     };
     this.keep(this.record);
+  }
+
+  /**
+   * A path the thread links (ADR 0018), at its lines: only inside the folder,
+   * after its links are resolved; a folder is shown in the explorer.
+   */
+  private async openFile(file: string, from?: number, to?: number): Promise<void> {
+    const cwd = workspaceFolder();
+    const found = cwd ? inside(cwd, file.replace(/\/+$/, '')) : undefined;
+    if (!found) {
+      this.notice('warn', `${file} non è un percorso della cartella aperta.`);
+      return;
+    }
+    const uri = vscode.Uri.file(found.full);
+    if (found.folder) {
+      await vscode.commands.executeCommand('revealInExplorer', uri);
+      return;
+    }
+    const start = from !== undefined ? from - 1 : undefined;
+    const end = to !== undefined ? to - 1 : start;
+    await vscode.window.showTextDocument(uri, {
+      preview: true,
+      ...(start !== undefined && end !== undefined
+        ? { selection: new vscode.Range(start, 0, end, Number.MAX_SAFE_INTEGER) }
+        : {}),
+    });
   }
 
   /**

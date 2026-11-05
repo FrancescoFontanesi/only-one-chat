@@ -24,11 +24,11 @@ const SECTIONS: readonly { title: string; items: readonly Definition[] }[] = [
     items: [
       {
         key: 'approvalMode',
-        label: 'Messaggi fra gli agenti',
+        label: 'Consegna delle deleghe',
         kind: 'enum',
         options: [
-          { value: 'manual', label: 'approvo io' },
-          { value: 'auto', label: 'automatici' },
+          { value: 'manual', label: 'manuale' },
+          { value: 'auto', label: 'automatica' },
         ],
       },
       {

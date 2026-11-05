@@ -114,7 +114,7 @@ Stato: Accettata (iterazione 3). Sostituisce le viste laterali dell'ADR 0012.
     regola il reasoning: i suoi archi sono i livelli del modello, dal basso verso l'alto
     (trascinamento o clic su un segmento, rotella, frecce); la lettura sta sopra il divisore di
     mezzo (RSN, livello, posizione), sotto il nome e il provider con lo stato. Sotto il divisore:
-    il modello, poi per il leader la via su un rullo (la scelta al centro, la precedente e la
+    il modello, poi per il leader la via su un rullo (sostituita dalla consegna, ADR 0018) (la scelta al centro, la precedente e la
     successiva attenuate sopra e sotto; la rotella lo fa scorrere, un clic su una vicina la
     sceglie, frecce; al cambio scorre di una riga a scatti; il suo modello resta quello della
     chat), per l'implementatore il modello (↕ passa

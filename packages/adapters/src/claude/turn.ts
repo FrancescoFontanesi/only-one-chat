@@ -196,6 +196,14 @@ export interface ClaudeTurnOptions {
    */
   readonly sandbox?: { readonly commands: readonly string[] };
   /**
+   * A read-only role that still runs commands (ADR 0018: the leader). Bash
+   * joins the read tools with no rule that allows a command, so only the
+   * commands Claude Code itself counts as read-only run (ls, cat, git status,
+   * a search); any other would ask, and is denied by --permission-prompts
+   * none. Never with `sandbox`, which allows writing.
+   */
+  readonly readOnlyShell?: boolean;
+  /**
    * Interactive permissions (R9): what would ask goes to the user through a
    * PermissionRequest hook and its bridge (permission.ts), instead of being
    * denied. With `askAll`, nothing is allowed in advance: every edit and
@@ -286,11 +294,16 @@ export function claudeTurnArgs(options: ClaudeTurnOptions): string[] {
     '--tools',
     [
       ...READ_ONLY_TOOLS,
-      ...(options.sandbox ? SANDBOX_TOOLS : []),
+      ...(options.sandbox ? SANDBOX_TOOLS : options.readOnlyShell ? ['Bash'] : []),
       ...(options.subagents ? [SUBAGENT_TOOL] : []),
     ].join(','),
     '--disallowedTools',
-    (options.sandbox ? SANDBOX_DENIED_TOOLS : DENIED_TOOLS).join(','),
+    (options.sandbox
+      ? SANDBOX_DENIED_TOOLS
+      : options.readOnlyShell
+        ? DENIED_TOOLS.filter((tool) => tool !== 'Bash')
+        : DENIED_TOOLS
+    ).join(','),
     ...(options.sandbox && options.permissionHook?.askAll !== true
       ? ['--allowedTools', sandboxAllowedTools(options.sandbox.commands).join(',')]
       : []),

@@ -7,7 +7,7 @@
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PendingReport } from '@only-one-chat/runtime';
-import type { AgentChoice, FileNotes } from './chat.js';
+import type { AgentChoice, DraftDelegation, FileNotes } from './chat.js';
 import type { ContextInfo, ThreadUpdate, TurnRole } from '../webview/protocol.js';
 
 export interface ChatRecord {
@@ -26,6 +26,8 @@ export interface ChatRecord {
   context?: Partial<Record<TurnRole, ContextInfo>>;
   /** Implementer work the leader has not seen yet; absent in older records. */
   unseen?: PendingReport[];
+  /** A delegation waiting for the user when the chat was closed (ADR 0018). */
+  draft?: DraftDelegation | null;
   updates: ThreadUpdate[];
 }
 
@@ -55,6 +57,20 @@ function pendingReports(value: unknown): PendingReport[] {
       typeof r.facts === 'string'
     );
   });
+}
+
+/** The draft of a record read from disk, if it has the right shape. */
+function draftOf(value: unknown): DraftDelegation | null {
+  const d = value as Partial<Record<keyof DraftDelegation, unknown>> | null;
+  return typeof d === 'object' &&
+    d !== null &&
+    typeof d.id === 'string' &&
+    ID.test(d.id) &&
+    typeof d.text === 'string' &&
+    typeof d.from === 'string' &&
+    typeof d.to === 'string'
+    ? { id: d.id, text: d.text, from: d.from, to: d.to }
+    : null;
 }
 
 /** The file notes of a record read from disk; anything but strings is dropped. */
@@ -129,9 +145,10 @@ export function compact(updates: readonly ThreadUpdate[]): ThreadUpdate[] {
 
 /**
  * The thread as it is redrawn later: what was still running or waiting when
- * the chat was closed is shown as interrupted, never as still pending.
+ * the chat was closed is shown as interrupted, never as still pending; except
+ * `open`, the card of a delegation kept with the chat, which still waits.
  */
-export function forReplay(updates: readonly ThreadUpdate[]): ThreadUpdate[] {
+export function forReplay(updates: readonly ThreadUpdate[], open?: string): ThreadUpdate[] {
   const out = compact(updates);
   const ended = new Set<string>();
   const closed = new Set<string>();
@@ -144,7 +161,7 @@ export function forReplay(updates: readonly ThreadUpdate[]): ThreadUpdate[] {
     if (u.type === 'turn' && u.status === 'running' && !ended.has(u.id)) {
       ended.add(u.id);
       tail.push({ type: 'turn', id: u.id, role: u.role, agent: u.agent, status: 'failed' });
-    } else if (u.type === 'approval' && !closed.has(u.id)) {
+    } else if (u.type === 'approval' && !closed.has(u.id) && u.id !== open) {
       tail.push({ type: 'approval_closed', id: u.id, action: 'interrupted' });
     } else if (u.type === 'permission' && !closed.has(u.id)) {
       tail.push({ type: 'permission_closed', id: u.id, decision: 'interrupted' });
@@ -175,6 +192,7 @@ export class ChatHistory {
             roles: chatRoles(record.roles),
             context: contextOf(record.context),
             fileNotes: fileNotesOf(record.fileNotes),
+            draft: draftOf(record.draft),
           }
         : undefined;
     } catch {

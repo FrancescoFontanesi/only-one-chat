@@ -5,22 +5,26 @@ works with an **implementer** on another subscription (ADR 0010 in the repositor
 
 ## How it works
 
-You talk to the leader. For each request it states the route it takes in the first line of
-its answer:
+You reason and plan with the leader (ADR 0018). It never writes code: its session is read-only,
+though it reads the repository and runs commands to search and check. Every change goes to the
+implementer.
 
-- **rispondo**: it answers. To read the code it uses its own sub-agents, which never write.
-- **chiedo**: a decision is missing, and it asks you for it.
-- **delego**: any change to the code, small ones included.
-  - It explains what it hands over, writes a brief (or a short targeted message for a
-    follow-up), and the implementer receives it directly.
-  - The implementer keeps its session for the whole chat, so a follow-up costs it little.
-  - Afterwards the leader reads the implementer's report and the facts the extension verified
-    (changed files, tests run again), then tells you whether everything went well and what does
-    not add up.
-  - With `onlyOneChat.leaderReview` set to `deferred` it reads them with your next message
-    instead, one leader turn less.
-- **faccio io**: only when you start with `/fai`, or when no implementer is available. In our
-  tests a leader making a one-line change itself cost more than delegating it.
+- **The leader answers, explains and asks** what it needs to decide.
+- **When you ask for the prompt or the work** ("genera il prompt", "procedi"), it writes a brief
+  for the implementer: goal, context with `@path`, decisions and why, constraints, numbered
+  acceptance criteria, verification commands, when to stop, latitude.
+- **How the brief reaches the implementer** is the delivery, in the leader's dial (CONSEGNA) or
+  in the box:
+  - **AUTO:** it goes at once;
+  - **MANUALE:** it waits for you in place of the box, editable as free text, and the chat waits
+    with it until you send or cancel it. A brief still waiting when the chat closes is kept with
+    it and waits again when you reopen it.
+- **The implementer's report reaches the leader as it is**, never edited, with the facts the
+  extension verified (changed files, tests run again). The leader then tells you whether
+  everything went well and what does not add up. With `onlyOneChat.leaderReview` set to
+  `deferred` it reads them with your next message instead, one leader turn less.
+- **For a small change, write to the implementer directly:** it is the cheapest way, and the
+  leader reads that report with your next message.
 
 ## The chat
 
@@ -32,33 +36,34 @@ The chat opens in an editor tab, which you can move and resize; the layout follo
   model, and its state, and COPIA (and ↺ RIPRISTINA QUI on yours) at hand. An agent's tools
   (commands, files read and changed, sub-agents) show as a terminal log inside its turn: the
   latest ones while it works, all of them with "+ N AZIONI"; its context, output, time and, for
-  Claude, nominal cost close it. Delegations (D01, D02) and reports are one line, their text one
-  click away; then the facts the extension verified and the changes to review.
+  Claude, nominal cost close it. Delegations (D01, D02) are one line, their brief one click away; the
+  leader's text leaves the brief out. A `@path` that exists in the folder opens the file; then
+  the facts the extension verified and the changes to review.
 - **The dock, at the bottom:** what waits for you takes its place — a permission (keys 1, 2, 3;
-  Esc denies), a delegation or a report to approve, editable — else the box you write in. It
+  Esc denies), a brief held by the manual delivery, editable — else the box you write in. It
   grows with the text up to about a third of the panel, then scrolls. Under the text, one line:
   each choice shows only what is chosen, with one square per option (point at a square to see
   that option, click it to choose, or click the name to move to the next).
   - **A — LEADER / IMPLEMENTATORE:** who receives it, one per message. Writing to the implementer
     directly is the cheapest way when you already know what to ask; the leader reads that report
     with your next message;
-  - the route you ask of the leader: DECIDE LUI, DELEGA, FAI TU, CHIEDI (its squares open above
-    the name under the pointer);
-  - **DELEGHE:** whether you approve each message between the agents or they pass on their own;
+  - **CONSEGNA:** for the leader, whether its briefs go at once (AUTO) or wait for you
+    (MANUALE), when the dials are not shown;
   - **CTX:** how full the session of the agent you write to is, after its latest turn;
   - `@` in the text attaches a file or a folder (see below); `/` at the start of the text lists
-    the commands: `/delega`, `/fai`, `/chiedi`, `/impl`, `/leader`, `/allega`, `/nuova` (or
+    the commands: `/impl`, `/leader`, `/allega`, `/nuova` (or
     `/ferma` while it works), `/squad`, `/impostazioni`.
 - **On a wide panel,** two dials sit beside the box. On the left, who you talk to: click LDR or
   IMP, or the outer ring. Its sight sets the reasoning (drag, click a segment or use the wheel);
-  the level reads above the middle line. Under it, for the leader the route, on a drum you roll with the wheel or click; for the implementer
+  the level reads above the middle line. Under it, for the leader the delivery, AUTO or MANUALE; for the implementer
   its model (↕ moves to the next one) and **HANDOFF**, a new session of the same model that starts
   from a handoff the current one writes. On the right the usage of the provider of who you talk
   to: 5 hours and weekly, and when the window resets.
 - **Enter** sends, **Shift+Enter** starts a new line (the other way round in the settings).
 
 A brief written in the ChatGPT web app (it starts with `<<<OOC-BRIEF`) can be pasted into the
-chat. The leader does not rewrite it: it forwards it with targeted notes or corrections only.
+chat. The leader does not rewrite it: it adds notes that bring it up to date, and it goes to
+the implementer at once, also with the manual delivery, since you reviewed it in ChatGPT.
 
 ## The Squad panel
 
@@ -150,8 +155,9 @@ sub-agents, permissions and unsaved files, the composer, notifications, the CLIs
 - The first request asks for your consent.
 - Claude may run only the programs in `onlyOneChat.allowedCommands`; Codex writes inside the
   folder, without network.
-- **Permission levels per role**, set in `onlyOneChat.leader.permission` and
-  `onlyOneChat.implementer.permission`:
+- **The leader is read-only** (ADR 0018): Codex in its read-only sandbox, never asking to leave
+  it; Claude with its read tools and only the commands Claude Code counts as read-only.
+- **The implementer's permission level**, set in `onlyOneChat.implementer.permission`:
   - `read-only`: no file changes, no commands that write;
   - `ask`: asks you before acting. Codex asks before any command it does not know to be safe,
     Claude before every edit and command;

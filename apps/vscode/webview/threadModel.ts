@@ -128,7 +128,7 @@ export function readFacts(text: string): Facts {
 
 export interface UserMessage {
   readonly to: 'leader' | 'implementer';
-  /** The route asked of the leader, if any. */
+  /** The route older chats asked of the leader with `/fai`, `/delega`, `/chiedi`; no longer shown (ADR 0018). */
   readonly route: 'fai' | 'delega' | 'chiedi' | null;
   readonly text: string;
 }
@@ -181,4 +181,23 @@ export function wordAt(
   if (!match) return null;
   const query = match[2] ?? '';
   return { start: caret - query.length - 1, query };
+}
+
+/**
+ * A leader's text without its delegation block (ADR 0018), which its card in
+ * the thread shows: the text before and after it; `writing` while the block
+ * is still streaming, unclosed. Older `<<<DELEGA @id` blocks count too.
+ */
+export function withoutDelegation(text: string): { text: string; writing: boolean } {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const start = lines.findIndex((line) => /^<<<DELEGA(?:\s+[#@][\w.-]+)?$/.test(line.trim()));
+  if (start < 0) return { text, writing: false };
+  const end = lines.findIndex((line, at) => at > start && line.trim() === 'DELEGA>>>');
+  const before = lines.slice(0, start).join('\n').trimEnd();
+  if (end < 0) return { text: before, writing: true };
+  const after = lines
+    .slice(end + 1)
+    .join('\n')
+    .trim();
+  return { text: after === '' ? before : `${before}\n\n${after}`.trim(), writing: false };
 }

@@ -160,6 +160,8 @@ export type ThreadUpdate =
       readonly checkpoint?: string;
       /** Files and folders named with `@`, as the agents received them (ADR 0015). */
       readonly attachments?: readonly string[];
+      /** The `@` paths of the text that exist in the folder, as written (ADR 0018). */
+      readonly refs?: readonly string[];
     }
   | {
       readonly type: 'turn';
@@ -171,6 +173,8 @@ export type ThreadUpdate =
       readonly label?: string;
       readonly text?: string;
       readonly usage?: TurnUsageSummary;
+      /** The `@` paths of the text that exist in the folder, once the turn is done. */
+      readonly refs?: readonly string[];
     }
   | { readonly type: 'chunk'; readonly turnId: string; readonly text: string }
   | { readonly type: 'activity'; readonly turnId: string; readonly text: string }
@@ -182,14 +186,21 @@ export type ThreadUpdate =
       readonly status: string;
     }
   | {
-      /** A message between agents waiting for the user (manual mode). */
+      /**
+       * A message between agents: waiting for the user (manual delivery), or,
+       * closed at once with `sent`, a delegation that went on by itself (ADR 0018).
+       */
       readonly type: 'approval';
       readonly id: string;
       readonly kind: 'delegation' | 'review';
       readonly from: string;
       readonly to: string;
       readonly text: string;
+      readonly refs?: readonly string[];
+      /** `@` paths that look like files and do not exist: pointed out, not blocking. */
+      readonly missing?: readonly string[];
     }
+  /** approve, edit, cancel; `sent`, without the user; `interrupted`, a chat closed before. */
   | { readonly type: 'approval_closed'; readonly id: string; readonly action: string }
   | {
       /** An agent asks before acting (a command, a file change): the user answers (R9). */
@@ -296,9 +307,6 @@ export type ApprovalAction = 'approve' | 'edit' | 'cancel';
 /** The answer to an agent's permission request; "for the session" as the CLI scopes it. */
 export type PermitDecision = 'accept' | 'acceptForSession' | 'decline';
 
-/** The route the user asks of the leader, as the `/fai`, `/delega`, `/chiedi` commands do. */
-export type Route = 'fai' | 'delega' | 'chiedi';
-
 export type WebviewToHostMessage =
   | { readonly type: 'ready' }
   | { readonly type: 'ping'; readonly id: number }
@@ -307,7 +315,6 @@ export type WebviewToHostMessage =
       readonly text: string;
       /** Default: the leader. */
       readonly to?: RoleName;
-      readonly route?: Route;
     }
   | {
       readonly type: 'decide';
@@ -356,7 +363,14 @@ export type WebviewToHostMessage =
   | { readonly type: 'restoreCheckpoint'; readonly checkpoint: string }
   /** The implementer's work to a new session of the same model (ADR 0017). */
   | { readonly type: 'handoff' }
-  | { readonly type: 'listFiles' };
+  | { readonly type: 'listFiles' }
+  /** A path the thread links (ADR 0018), opened at its lines; the host checks it is in the folder. */
+  | {
+      readonly type: 'openFile';
+      readonly path: string;
+      readonly from?: number;
+      readonly to?: number;
+    };
 
 /** Longest text the webview may send: a large brief fits, a pasted log does not. */
 export const MAX_TEXT_LENGTH = 50_000;
@@ -396,17 +410,8 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
       const body = text(msg['text']);
       if (body === undefined || body.trim() === '') return undefined;
       const to = msg['to'];
-      const route = msg['route'];
       if (to !== undefined && !isRole(to)) return undefined;
-      if (route !== undefined && route !== 'fai' && route !== 'delega' && route !== 'chiedi') {
-        return undefined;
-      }
-      return {
-        type: 'send',
-        text: body,
-        ...(to ? { to } : {}),
-        ...(route ? { route } : {}),
-      };
+      return { type: 'send', text: body, ...(to ? { to } : {}) };
     }
     case 'decide': {
       const id = msg['id'];
@@ -481,6 +486,23 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
     }
     case 'handoff':
       return { type: 'handoff' };
+    case 'openFile': {
+      const path = msg['path'];
+      const line = (value: unknown) =>
+        value === undefined ||
+        (typeof value === 'number' && Number.isSafeInteger(value) && value >= 1);
+      if (typeof path !== 'string' || path === '' || path.length > 1024 || path.includes('\0'))
+        return undefined;
+      if (!line(msg['from']) || !line(msg['to'])) return undefined;
+      const from = msg['from'] as number | undefined;
+      const to = msg['to'] as number | undefined;
+      return {
+        type: 'openFile',
+        path,
+        ...(from !== undefined ? { from } : {}),
+        ...(to !== undefined ? { to } : {}),
+      };
+    }
     case 'showChat':
       return { type: 'showChat' };
     case 'manageTrust':

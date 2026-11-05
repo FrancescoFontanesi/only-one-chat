@@ -7,6 +7,7 @@ import {
   readFacts,
   readOp,
   readUserMessage,
+  withoutDelegation,
   wordAt,
 } from '../../webview/threadModel.js';
 
@@ -101,5 +102,28 @@ describe('the chat thread as the Chat board reads it (ADR 0016)', () => {
     expect(wordAt('/del', 4, '/')).toEqual({ start: 0, query: 'del' });
     expect(wordAt('vedi src/a', 10, '/')).toBeNull();
     expect(wordAt('/delega x', 9, '/')).toBeNull();
+  });
+});
+
+describe('a leader text without its delegation block (ADR 0018)', () => {
+  it('keeps the text before and after the block, which its card shows', () => {
+    expect(
+      withoutDelegation('Ecco il brief.\n<<<DELEGA #claude\nfai x\nDELEGA>>>\nPoi ne parliamo.'),
+    ).toEqual({
+      text: 'Ecco il brief.\n\nPoi ne parliamo.',
+      writing: false,
+    });
+    expect(withoutDelegation('Prima.\n<<<DELEGA @claude\nx\nDELEGA>>>')).toEqual({
+      text: 'Prima.',
+      writing: false,
+    });
+  });
+
+  it('while the block streams, shows the text before it and says it is being written', () => {
+    expect(withoutDelegation('Ecco.\n<<<DELEGA #claude\nfai')).toEqual({
+      text: 'Ecco.',
+      writing: true,
+    });
+    expect(withoutDelegation('Solo testo.')).toEqual({ text: 'Solo testo.', writing: false });
   });
 });

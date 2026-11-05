@@ -1,7 +1,9 @@
-// One chat with the leader (ADR 0010, 0011), as the panel drives it. The
-// leader's and the implementer's sessions live as long as the chat. A user
-// message is one leader-mode loop of the runtime (answer, ask, delegate), or,
-// with `@impl`, a turn of the implementer alone. Work the leader has not seen
+// One chat with the leader (ADR 0010, 0011, 0018), as the panel drives it. The
+// leader's and the implementer's sessions live as long as the chat; the
+// leader's is read-only. A user message is one leader-mode loop of the runtime
+// (an answer, or a delegation and its review), or a turn of the implementer
+// alone. A delegation held for the user (manual delivery) is kept with the
+// chat until decided. Work the leader has not seen
 // yet (a deferred review, a direct message) reaches it with the user's next
 // message. Runtime events become thread updates for the webview. Node only,
 // no `vscode`: the panel passes the configuration in, so the session can be
@@ -46,6 +48,7 @@ import type {
 } from '../webview/protocol.js';
 import type { Checkpoint, CheckpointStore } from './checkpoints.js';
 import { changes, snapshot, verifiedFacts } from './facts.js';
+import { plainRefs } from './mentions.js';
 
 export interface AgentChoice {
   readonly cli: 'codex' | 'claude';
@@ -86,6 +89,8 @@ export interface ChatConfig {
   readonly instructions?: Partial<Record<TurnRole, string>>;
   /** Implementer work of a reopened chat the leader has not seen yet (R5). */
   readonly unseen?: readonly PendingReport[];
+  /** A delegation of a reopened chat still waiting for the user (ADR 0018). */
+  readonly draft?: DraftDelegation;
   /** Notes on files the user put back, not received yet by each role (ADR 0014). */
   readonly fileNotes?: Partial<FileNotes>;
   /** Codex threads kept in Codex's history, so the chat can be reopened (R5). */
@@ -119,6 +124,18 @@ const HANDOFF_REQUEST = [
 const HANDOFF_PREFACE =
   'Continui il lavoro di una sessione precedente di questo ruolo. Il suo passaggio di consegne:';
 
+/** A delegation held for the user, kept with the chat until decided (ADR 0018). */
+export interface DraftDelegation {
+  /** The id of its card in the thread. */
+  readonly id: string;
+  readonly text: string;
+  readonly from: string;
+  readonly to: string;
+}
+
+/** The leader never writes (ADR 0018): whatever the settings say, its session is read-only. */
+const readOnly = (choice: AgentChoice): AgentChoice => ({ ...choice, permission: 'read-only' });
+
 /** Notes on files the user put back (ADR 0014), per role, until each receives them. */
 export type FileNotes = Readonly<Record<TurnRole, readonly string[]>>;
 
@@ -131,6 +148,8 @@ export interface ChatEvents {
   unseen?(reports: readonly PendingReport[]): void;
   /** The notes on files put back that each role has not received yet changed. */
   fileNotes?(notes: FileNotes): void;
+  /** A delegation now waits for the user, or no longer does: to keep it with the chat. */
+  draft?(draft: DraftDelegation | null): void;
   /** A role's session context after a turn: how full it is. */
   context?(role: TurnRole, context: ContextUsage): void;
   /** A turn ended: its CLI, what it used, and the usage windows it reported, if any. */
@@ -186,13 +205,22 @@ export class ChatSession {
   private readonly reopen = new Set<TurnRole>();
   /** The roles as configured, with the effort the user chose during the chat. */
   private readonly roles: { leader: AgentChoice; implementer: AgentChoice };
+  /** The delegation of a reopened chat still waiting for the user; sent from here. */
+  private restored: DraftDelegation | undefined;
+  /** The message held for the user now, as the loop showed it. */
+  private held: DraftDelegation | undefined;
+  /** The chat is being closed: what waits for the user stays kept with it. */
+  private closing = false;
+  /** The latest message between agents the loop showed, for the card of one that went on by itself. */
+  private lastIntercepted: { from: string; to: string; text: string } | undefined;
 
   constructor(
     private readonly config: ChatConfig,
     private readonly events: ChatEvents,
   ) {
     this.mode = config.mode;
-    this.roles = { leader: config.leader, implementer: config.implementer };
+    this.roles = { leader: readOnly(config.leader), implementer: config.implementer };
+    this.restored = config.draft;
     this.unseen = [...(config.unseen ?? [])];
     this.fileNotes = {
       leader: [...(config.fileNotes?.leader ?? [])],
@@ -214,6 +242,7 @@ export class ChatSession {
    * Returns false when the choice was not applied in full.
    */
   setRole(role: TurnRole, choice: AgentChoice): boolean {
+    if (role === 'leader') choice = readOnly(choice);
     const before = this.roles[role];
     if (choice.cli !== before.cli) return false;
     const locked = role === 'leader' && choice.model !== before.model;
@@ -273,11 +302,18 @@ export class ChatSession {
    * A role's sessions, with its permission level (ADR 0011): `read-only`
    * writes nothing; `auto` acts inside the folder and asks to go beyond it;
    * `ask` asks before acting (Codex: before any command it does not know to
-   * be safe).
+   * be safe). The leader is read-only and still runs commands to search and
+   * check (ADR 0018): Codex in its read-only sandbox, never asking to leave
+   * it; Claude with the commands it counts as read-only.
    */
-  private factory(choice: AgentChoice, bridge: PermissionBridge | undefined): AgentFactory {
+  private factory(
+    role: TurnRole,
+    choice: AgentChoice,
+    bridge: PermissionBridge | undefined,
+  ): AgentFactory {
     const { config } = this;
-    const writable = choice.permission !== 'read-only';
+    const leader = role === 'leader';
+    const writable = !leader && choice.permission !== 'read-only';
     return choice.cli === 'codex'
       ? createCodexAgentFactory({
           executable: config.codexExecutable,
@@ -287,7 +323,11 @@ export class ChatSession {
           effort: choice.effort,
           requestTimeoutMs: 120_000,
           writable,
-          approvalPolicy: choice.permission === 'ask' ? 'untrusted' : 'on-request',
+          approvalPolicy: leader
+            ? 'never'
+            : choice.permission === 'ask'
+              ? 'untrusted'
+              : 'on-request',
           persistent: config.persistent === true,
         })
       : createClaudeAgentFactory({
@@ -297,6 +337,7 @@ export class ChatSession {
           model: choice.model,
           effort: choice.effort,
           ...(writable ? { sandbox: { commands: config.allowedCommands } } : {}),
+          ...(leader ? { readOnlyShell: true } : {}),
           ...(bridge
             ? {
                 permissionHook: {
@@ -365,6 +406,7 @@ export class ChatSession {
       this.handoffBrief = undefined;
       const instructions = this.withUserInstructions('implementer', LIGHT_IMPLEMENTER_INSTRUCTIONS);
       this.implementerSession = await this.factory(
+        'implementer',
         this.roles.implementer,
         await this.bridgeFor('implementer'),
       )({
@@ -589,6 +631,14 @@ export class ChatSession {
       });
       return;
     }
+    if (this.restored) {
+      this.events.update({
+        type: 'notice',
+        level: 'warn',
+        text: 'Una delega aspetta la tua decisione: inviala o annullala.',
+      });
+      return;
+    }
     const checkpoint = this.checkpoint();
     this.events.update({
       type: 'user',
@@ -598,6 +648,36 @@ export class ChatSession {
       ...(checkpoint ? { checkpoint: checkpoint.id } : {}),
       ...(attached && attached.paths.length > 0 ? { attachments: attached.paths } : {}),
     });
+    // The files the user named reach the agent after the text; the thread shows the text.
+    const prompt = attachments === '' ? text : `${text}\n\n${attachments}`;
+    await this.run(checkpoint, (baseline, shown) =>
+      direct ? this.toImplementer(prompt, baseline, shown) : this.toLeader(prompt, baseline, shown),
+    );
+  }
+
+  /**
+   * The delegation of a reopened chat, decided (ADR 0018): sent to the
+   * implementer as it is or as the user edited it, with no leader turn first,
+   * then reviewed by the leader as usual; or cancelled.
+   */
+  private async sendDraft(action: ApprovalAction, text?: string): Promise<void> {
+    const draft = this.restored;
+    if (!draft || this.running) return;
+    this.restored = undefined;
+    this.events.update({ type: 'approval_closed', id: draft.id, action });
+    this.events.draft?.(null);
+    if (action === 'cancel') return;
+    const delegation = action === 'edit' && text !== undefined ? text : draft.text;
+    await this.run(this.checkpoint(), (baseline, shown) =>
+      this.toLeader('', baseline, shown, delegation),
+    );
+  }
+
+  /** One message at a time: the agents' work, then the review of what changed. */
+  private async run(
+    checkpoint: Checkpoint | null,
+    work: (baseline: ReturnType<typeof snapshot>, shown: { facts: boolean }) => Promise<void>,
+  ): Promise<void> {
     this.running = true;
     this.events.busy(true);
     const baseline = snapshot(this.config.cwd);
@@ -606,11 +686,7 @@ export class ChatSession {
     try {
       this.log ??= await openEventLog(this.config.logPath, this.config.cwd);
       await this.applyRoleChanges();
-      // The files the user named reach the agent after the text; the thread shows the text.
-      const prompt = attachments === '' ? text : `${text}\n\n${attachments}`;
-      if (direct) {
-        await this.toImplementer(prompt, baseline, shown);
-      } else await this.toLeader(prompt, baseline, shown);
+      await work(baseline, shown);
     } catch (error) {
       this.events.update({
         type: 'notice',
@@ -659,15 +735,18 @@ export class ChatSession {
     });
   }
 
+  /** A message to the leader; with `draft`, a delegation already approved goes straight on. */
   private async toLeader(
     text: string,
     baseline: ReturnType<typeof snapshot>,
     shown: { facts: boolean },
+    draft?: string,
   ): Promise<void> {
     const { config } = this;
     const leaderPolicy = { ...this.policy(this.roles.leader), proactive: true };
-    // Writable: on /fai, or with no implementer, it makes the change itself.
+    // Read-only (ADR 0018): it reasons, searches and delegates; it never writes.
     this.leaderSession ??= await this.factory(
+      'leader',
       this.roles.leader,
       await this.bridgeFor('leader'),
     )({
@@ -677,8 +756,9 @@ export class ChatSession {
       ),
       ...this.resumeOf('leader'),
     });
-    const unseen = this.unseen;
-    this.unseen = [];
+    // A draft sent later has no message of the user: what the leader has not seen waits for one.
+    const unseen = draft === undefined ? this.unseen : [];
+    if (draft === undefined) this.unseen = [];
     const preface = [
       this.takeNotes('leader') ?? '',
       unseen.length > 0 ? pendingReportsPreface(unseen) : '',
@@ -689,6 +769,9 @@ export class ChatSession {
     const loop = runLoop({
       request: text,
       ...(preface !== '' ? { preface } : {}),
+      ...(draft !== undefined ? { delegation: draft } : {}),
+      // `@path` reaches the other agent as a plain path (ADR 0018).
+      relay: (message) => plainRefs(message, config.cwd),
       log: this.log ?? (await openEventLog(config.logPath, config.cwd)),
       onEvent: (event) => {
         this.onEvent(event);
@@ -713,8 +796,13 @@ export class ChatSession {
         new Promise<InterceptDecision>((resolve, reject) => {
           const id = this.id('a');
           this.pending.set(id, resolve);
+          const held = { id, text: message.text, from: message.from, to: message.to };
+          this.held = held;
           signal.addEventListener('abort', () => {
             this.pending.delete(id);
+            if (this.held === held) this.held = undefined;
+            // Closing the chat keeps the delegation with it; stopping drops it.
+            if (!this.closing) this.events.draft?.(null);
             reject(new Error('stopped'));
           });
           this.events.update({
@@ -725,6 +813,7 @@ export class ChatSession {
             to: message.to,
             text: message.text,
           });
+          if (message.kind === 'delegation') this.events.draft?.(held);
         }),
       // A malformed block: the leader rewrites it once, then the loop stops.
       onMalformedDelegation: (problem) =>
@@ -780,11 +869,18 @@ export class ChatSession {
     this.events.update({ type: 'permission_closed', id, decision });
   }
 
-  /** The user's decision on a message between agents (manual mode). */
+  /** The user's decision on a message between agents (manual delivery), or on a kept draft. */
   decide(id: string, action: ApprovalAction, text?: string): void {
     const resolve = this.pending.get(id);
-    if (!resolve) return;
+    if (!resolve) {
+      if (this.restored?.id === id) void this.sendDraft(action, text);
+      return;
+    }
     this.pending.delete(id);
+    if (this.held?.id === id) {
+      this.held = undefined;
+      this.events.draft?.(null);
+    }
     resolve(
       action === 'edit' && text !== undefined
         ? { action: 'edit', text }
@@ -812,7 +908,9 @@ export class ChatSession {
     this.currentTurn.clear();
   }
 
+  /** The chat is closed or another is shown: a delegation waiting for the user stays with it. */
   async dispose(): Promise<void> {
+    this.closing = true;
     await this.reset();
   }
 
@@ -894,6 +992,25 @@ export class ChatSession {
           text: `Richiesta di ${event.agent} rifiutata: ${event.request.summary}`,
         });
         break;
+      case 'intercepted':
+        this.lastIntercepted = event.message;
+        break;
+      case 'decision': {
+        // A delegation that went on by itself still has its card, closed at once (ADR 0018).
+        const message = this.lastIntercepted;
+        if (event.action !== 'auto_approve' || event.kind !== 'delegation' || !message) break;
+        const id = this.id('a');
+        update({
+          type: 'approval',
+          id,
+          kind: 'delegation',
+          from: message.from,
+          to: message.to,
+          text: message.text,
+        });
+        update({ type: 'approval_closed', id, action: 'sent' });
+        break;
+      }
       case 'delegation_invalid':
         update({
           type: 'notice',

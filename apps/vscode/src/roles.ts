@@ -1,5 +1,6 @@
 // The roles as the user assigns them in the roles view (ADR 0012): kept in the
-// settings (onlyOneChat.<role>.cli/model/effort/permission), checked against
+// settings (onlyOneChat.<role>.cli/model/effort, and the implementer's
+// permission: the leader is read-only, ADR 0018), checked against
 // the models the CLIs offer, and announced once a change is written in full.
 
 import * as vscode from 'vscode';
@@ -33,9 +34,12 @@ function choiceOf(settings: vscode.WorkspaceConfiguration, role: RoleName): Agen
     cli: cli === 'claude' ? 'claude' : 'codex',
     model: settings.get<string>(`${role}.model`) ?? '',
     effort: settings.get<string>(`${role}.effort`) ?? 'low',
-    permission: (permission === 'read-only' || permission === 'ask'
-      ? permission
-      : 'auto') satisfies PermissionLevel,
+    // The leader never writes (ADR 0018): read-only, not a setting.
+    permission: (role === 'leader'
+      ? 'read-only'
+      : permission === 'read-only' || permission === 'ask'
+        ? permission
+        : 'auto') satisfies PermissionLevel,
   };
 }
 
@@ -117,6 +121,7 @@ export class RoleSettings implements vscode.Disposable {
     this.writing++;
     try {
       for (const key of KEYS) {
+        if (role === 'leader' && key === 'permission') continue;
         const name = `${role}.${key}`;
         const where = settings.inspect(name);
         const target =

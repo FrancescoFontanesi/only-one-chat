@@ -70,8 +70,34 @@ describe('parseWebviewMessage: the chat', () => {
   });
 });
 
+describe('parseWebviewMessage: a linked path (ADR 0018)', () => {
+  it('accepts a path and its lines', () => {
+    expect(parseWebviewMessage({ type: 'openFile', path: 'src/a.ts', from: 3, to: 9 })).toEqual({
+      type: 'openFile',
+      path: 'src/a.ts',
+      from: 3,
+      to: 9,
+    });
+    expect(parseWebviewMessage({ type: 'openFile', path: 'src/' })).toEqual({
+      type: 'openFile',
+      path: 'src/',
+    });
+  });
+
+  it.each([
+    { type: 'openFile' },
+    { type: 'openFile', path: '' },
+    { type: 'openFile', path: 'a\0b' },
+    { type: 'openFile', path: 'a', from: 0 },
+    { type: 'openFile', path: 'a', to: 1.5 },
+    { type: 'openFile', path: 'x'.repeat(1025) },
+  ])('rejects %j', (value) => {
+    expect(parseWebviewMessage(value)).toBeUndefined();
+  });
+});
+
 describe('parseWebviewMessage: composer and roles (ADR 0012)', () => {
-  it('accepts the recipient and route of a message, and a role', () => {
+  it('accepts the recipient of a message, and a role; a route is no longer read (ADR 0018)', () => {
     expect(parseWebviewMessage({ type: 'send', text: 'x', to: 'implementer' })).toEqual({
       type: 'send',
       text: 'x',
@@ -80,7 +106,6 @@ describe('parseWebviewMessage: composer and roles (ADR 0012)', () => {
     expect(parseWebviewMessage({ type: 'send', text: 'x', route: 'delega' })).toEqual({
       type: 'send',
       text: 'x',
-      route: 'delega',
     });
     const role = {
       type: 'setRole',
@@ -96,7 +121,6 @@ describe('parseWebviewMessage: composer and roles (ADR 0012)', () => {
 
   it.each([
     { type: 'send', text: 'x', to: 'gateway' },
-    { type: 'send', text: 'x', route: 'rm' },
     { type: 'setRole', role: 'boss', cli: 'codex', model: 'm', effort: 'low', permission: 'auto' },
     {
       type: 'setRole',

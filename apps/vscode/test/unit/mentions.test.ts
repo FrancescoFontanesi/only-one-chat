@@ -2,7 +2,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { MAX_EXCERPT_LINES, expandMentions } from '../../src/session/mentions.js';
+import {
+  MAX_EXCERPT_LINES,
+  expandMentions,
+  plainRefs,
+  resolveRefs,
+  withRefs,
+} from '../../src/session/mentions.js';
+import { refTokens } from '../../src/webview/refs.js';
+import type { ThreadUpdate } from '../../src/webview/protocol.js';
 import { matchPaths, mentionAt, pickMention } from '../../webview/mentions.js';
 
 let root: string;
@@ -75,5 +83,77 @@ describe('the composer’s @ list', () => {
       text: '@src/',
       caret: 5,
     });
+  });
+});
+
+describe('@ paths in any text (ADR 0018)', () => {
+  it('finds the tokens outside code, with their lines, and a closing full stop left out', () => {
+    const text = [
+      'Vedi @src/calc.py#L2-3 e @src/.',
+      '`@param` resta testo, come in',
+      '```ts',
+      '@Component()',
+      '```',
+      'e una mail a@b.it.',
+    ].join('\n');
+    expect(refTokens(text).map((t) => [t.path, t.lines ?? null])).toEqual([
+      ['src/calc.py', { from: 2, to: 3 }],
+      ['src/', null],
+    ]);
+  });
+
+  it('links what exists in the folder; a missing file is pointed out, a scoped package is not', () => {
+    expect(
+      resolveRefs('@src/calc.py, @src/nuovo.ts, @only-one-chat/runtime e @../secret.txt', cwd),
+    ).toEqual({ found: ['src/calc.py'], missing: ['src/nuovo.ts'] });
+  });
+
+  it('turns the paths into plain paths between agents, and leaves the rest as written', () => {
+    expect(
+      plainRefs(
+        'Cambia @src/calc.py#L2-3 e @src/calc.py#L4, non @src/nuovo.ts né `@src/calc.py`.',
+        cwd,
+      ),
+    ).toBe(
+      'Cambia src/calc.py (righe 2-3) e src/calc.py (riga 4), non @src/nuovo.ts né `@src/calc.py`.',
+    );
+  });
+
+  it('annotates a done turn and a delegation; a running turn is left as it is', () => {
+    expect(
+      withRefs(
+        {
+          type: 'turn',
+          id: 't',
+          role: 'leader',
+          agent: 'C',
+          status: 'done',
+          text: 'Vedi @src/calc.py',
+        },
+        cwd,
+      ),
+    ).toMatchObject({ refs: ['src/calc.py'] });
+    const running: ThreadUpdate = {
+      type: 'turn',
+      id: 't',
+      role: 'leader',
+      agent: 'C',
+      status: 'running',
+      text: '@src/calc.py',
+    };
+    expect(withRefs(running, cwd)).toBe(running);
+    expect(
+      withRefs(
+        {
+          type: 'approval',
+          id: 'a',
+          kind: 'delegation',
+          from: 'L',
+          to: 'I',
+          text: '@src/calc.py e @src/x.ts',
+        },
+        cwd,
+      ),
+    ).toMatchObject({ refs: ['src/calc.py'], missing: ['src/x.ts'] });
   });
 });

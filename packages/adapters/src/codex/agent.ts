@@ -62,9 +62,11 @@ export interface CodexAgentConfig extends Omit<
   readonly withoutUserHooks?: boolean;
   /**
    * When Codex asks before acting: `on-request` (default) only to leave the
-   * sandbox; `untrusted` before any command it does not know to be safe.
+   * sandbox; `untrusted` before any command it does not know to be safe;
+   * `never` never asks: what the sandbox does not allow fails (ADR 0018: the
+   * leader, read-only).
    */
-  readonly approvalPolicy?: 'on-request' | 'untrusted';
+  readonly approvalPolicy?: 'on-request' | 'untrusted' | 'never';
   /**
    * Threads Codex keeps on disk, in its own history, so a reopened chat can
    * resume them (R5); default ephemeral (benchmarks, checks).

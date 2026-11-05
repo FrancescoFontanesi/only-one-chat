@@ -98,21 +98,6 @@
           "default": "low",
           "description": "Reasoning effort of the leader, among those its model supports."
         },
-        "onlyOneChat.leader.permission": {
-          "type": "string",
-          "enum": [
-            "read-only",
-            "ask",
-            "auto"
-          ],
-          "enumDescriptions": [
-            "Reads only: no file changes, no commands that write.",
-            "Asks you before acting: Codex before any command it does not know to be safe; Claude before any edit or command not allowed.",
-            "Acts inside the folder; asks you to go beyond it."
-          ],
-          "default": "auto",
-          "description": "What the leader may do without asking. Changed in the Ruoli view, it applies from the role's next turn, in the same session."
-        },
         "onlyOneChat.implementer.permission": {
           "type": "string",
           "enum": [
@@ -169,7 +154,7 @@
             "auto"
           ],
           "default": "manual",
-          "description": "manual: you approve each message between agents; auto: they pass, logged."
+          "description": "How a delegation the leader writes reaches the implementer (ADR 0018). manual: it waits for you, editable, and the chat pauses until you send or cancel it; auto: it goes at once. Reports always reach the leader as they are, and a brief from the web app always goes at once."
         },
         "onlyOneChat.leaderReview": {
           "type": "string",

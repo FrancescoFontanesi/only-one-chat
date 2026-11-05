@@ -16,10 +16,11 @@ Il flusso principale è quello dell'[ADR 0010](decisions/0010-leader-chat-adapti
 
 - **Una sola chat con il leader** (R1, R2). Il leader è scelto in configurazione e ragiona con
   l'utente.
-- **Per ogni richiesta il leader sceglie la via più economica:**
+- **Il leader ragiona e pianifica, e non scrive codice** ([ADR 0018](decisions/0018-delegation-cycle.md)):
   - risponde lui, facendo esplorare il codice ai sotto-agenti;
-  - fa da sé le modifiche piccole;
-  - delega le grandi all'implementatore su un'altra subscription.
+  - quando l'utente chiede il prompt o il lavoro, scrive un brief per l'implementatore su
+    un'altra subscription, che parte subito o aspetta l'utente secondo la consegna;
+  - le modifiche piccole l'utente le chiede direttamente all'implementatore.
 - **Il brief è il contratto unico** (R4). ChatGPT web è una fonte opzionale di brief, che
   passano dagli appunti ([ADR 0009](decisions/0009-chatgpt-web-and-three-turn-layer.md)):
   così il ragionamento lungo resta fuori dalle quote.

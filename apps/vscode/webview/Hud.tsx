@@ -8,8 +8,8 @@
 // On the left, who you talk to: the dial's marks are the roles, chosen on
 // their label (LDR, IMP) or on the outer ring. The sight sets the reasoning:
 // drag or click a segment, wheel, arrows; its reading sits above the middle
-// line. For the leader the route on a drum (its model stays the chat's); for the
-// implementer its model (↕ to the next one, in the same session) and HANDOFF:
+// line. For the leader how its delegations are delivered, automatic or manual
+// (ADR 0018; its model stays the chat's); for the implementer its model (↕ to the next one, in the same session) and HANDOFF:
 // a new session of the same model that starts from a handoff of this one (ADR
 // 0017). On the right each provider's usage: the 5-hour window as a solid arc
 // and its number (or why there is none), the weekly one dashed and in cells,
@@ -18,11 +18,11 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type {
+  ApprovalMode,
   MonitorState,
   ProviderUsage,
   RoleName,
   RolesState,
-  Route,
 } from '../src/webview/protocol.js';
 import {
   bezel,
@@ -216,11 +216,10 @@ const EFFORT_SHORT: Record<string, string> = {
 };
 
 /**
- * A drum of choices: the chosen one in the middle, the one before above it and
- * the one after below it, dimmed. The wheel rolls it, a click on a neighbour
- * or the arrows move to it; on a change it rolls one line, in steps.
+ * Two choices side by side under their key: the chosen one bright, the other dim;
+ * a click on the other, the wheel or the arrows switch.
  */
-function Drum<T extends string>({
+function Switch<T extends string>({
   label,
   value,
   options,
@@ -231,73 +230,58 @@ function Drum<T extends string>({
   options: readonly { value: T; label: string; title: string }[];
   onChange: (value: T) => void;
 }) {
-  const n = options.length;
-  const at = Math.max(
-    0,
-    options.findIndex((o) => o.value === value),
-  );
-  const last = useRef(at);
-  const dir = at === last.current ? '' : (at - last.current + n) % n === 1 ? 'down' : 'up';
-  last.current = at;
-  const wheelAt = useRef(0);
-  const move = (step: number) => {
-    const next = options[(at + step + n) % n];
+  const other = () => {
+    const next = options.find((o) => o.value !== value);
     if (next) onChange(next.value);
   };
-  const near = (step: number) => options[(at + step + n) % n];
-  const current = options[at];
   return (
     <div
-      class="drum"
-      role="spinbutton"
+      class="sw"
+      role="radiogroup"
       tabIndex={0}
       aria-label={label}
-      aria-valuenow={at + 1}
-      aria-valuemin={1}
-      aria-valuemax={n}
-      aria-valuetext={current?.label ?? ''}
-      title={current ? `${current.label}: ${current.title}` : undefined}
       onWheel={(event: WheelEvent) => {
         event.preventDefault();
-        const now = Date.now();
-        if (now - wheelAt.current < 160) return;
-        wheelAt.current = now;
-        move(event.deltaY > 0 ? 1 : -1);
+        other();
       }}
       onKeyDown={(event: KeyboardEvent) => {
-        if (event.key === 'ArrowDown') move(1);
-        else if (event.key === 'ArrowUp') move(-1);
-        else return;
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
         event.preventDefault();
+        other();
       }}
     >
-      <span class="hud__k drum__k">{label}</span>
-      <span key={value} class={dir ? `drum__win drum__win--${dir}` : 'drum__win'}>
-        <button
-          class="drum__o"
-          type="button"
-          tabIndex={-1}
-          onClick={() => {
-            move(-1);
-          }}
-        >
-          {near(-1)?.label}
-        </button>
-        <span class="drum__o drum__o--on">{current?.label}</span>
-        <button
-          class="drum__o"
-          type="button"
-          tabIndex={-1}
-          onClick={() => {
-            move(1);
-          }}
-        >
-          {near(1)?.label}
-        </button>
+      <span class="hud__k">{label}</span>
+      <span class="sw__opts">
+        {options.map((o) => (
+          <button
+            key={o.value}
+            class={o.value === value ? 'sw__o sw__o--on' : 'sw__o'}
+            type="button"
+            role="radio"
+            tabIndex={-1}
+            aria-checked={o.value === value}
+            title={o.title}
+            onClick={() => {
+              if (o.value !== value) onChange(o.value);
+            }}
+          >
+            {o.label}
+          </button>
+        ))}
       </span>
     </div>
   );
 }
+
+/** How the leader's delegations reach the implementer (ADR 0018). */
+const DELIVERY: readonly { value: ApprovalMode; label: string; title: string }[] = [
+  { value: 'auto', label: 'Auto', title: 'Il brief parte subito per l’implementatore' },
+  {
+    value: 'manual',
+    label: 'Manuale',
+    title: 'Il brief aspetta te, modificabile; la chat si ferma finché non lo invii o annulli',
+  },
+];
 
 /** The reasoning step under a point of the sight: its segments run from the bottom up. */
 function stepAt(y: number, count: number): number {
@@ -308,7 +292,7 @@ function stepAt(y: number, count: number): number {
 }
 
 /**
- * Who you talk to; its reasoning on the sight, and the leader's route or the
+ * Who you talk to; its reasoning on the sight, and the leader's delivery or the
  * implementer's model and handoff. The sight sets the reasoning (drag, click
  * on a segment, wheel, arrows); the role is chosen on its label or on the
  * outer ring (click, wheel).
@@ -318,18 +302,17 @@ export function RoleHud({
   monitor,
   to,
   setTo,
-  route,
-  setRoute,
-  routes,
+  mode,
+  setMode,
   busy,
 }: {
   roles: RolesState | undefined;
   monitor: MonitorState;
   to: RoleName;
   setTo: (to: RoleName) => void;
-  route: Route | 'auto';
-  setRoute: (route: Route | 'auto') => void;
-  routes: readonly { value: Route | 'auto'; label: string; title: string }[];
+  /** How the leader's delegations are delivered. */
+  mode: ApprovalMode;
+  setMode: (mode: ApprovalMode) => void;
   /** A message is running: no handoff now. */
   busy: boolean;
 }) {
@@ -478,7 +461,7 @@ export function RoleHud({
       </button>
       <div class="hud__act">
         {isLeader ? (
-          <Drum label="Via" value={route} options={routes} onChange={setRoute} />
+          <Switch label="Consegna" value={mode} options={DELIVERY} onChange={setMode} />
         ) : (
           <button
             class="cn-btn cn-btn--outline cn-btn--sm hud__handoff"

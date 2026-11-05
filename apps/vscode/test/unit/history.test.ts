@@ -118,3 +118,27 @@ describe('chat history (R5)', () => {
     ]);
   });
 });
+
+describe('a delegation kept with the chat (ADR 0018)', () => {
+  it('stays waiting when redrawn, while the other cards are interrupted', () => {
+    const updates: ThreadUpdate[] = [
+      { type: 'approval', id: 'a-1', kind: 'delegation', from: 'L', to: 'I', text: 'vecchia' },
+      { type: 'approval', id: 'a-2', kind: 'delegation', from: 'L', to: 'I', text: 'in attesa' },
+    ];
+    expect(forReplay(updates, 'a-2').slice(2)).toEqual([
+      { type: 'approval_closed', id: 'a-1', action: 'interrupted' },
+    ]);
+  });
+
+  it('is saved and read back; one of the wrong shape is dropped', () => {
+    const history = new ChatHistory(join(dir, 'chats'));
+    const draft = { id: 'a-2', text: 'brief', from: 'Codex', to: 'Claude' };
+    history.save({ ...record('chat-a', 1, [{ type: 'notice', level: 'info', text: 'x' }]), draft });
+    expect(history.load('chat-a')?.draft).toEqual(draft);
+    history.save({
+      ...record('chat-b', 2, [{ type: 'notice', level: 'info', text: 'x' }]),
+      draft: { id: 'A B', text: 1 } as unknown as typeof draft,
+    });
+    expect(history.load('chat-b')?.draft).toBeNull();
+  });
+});

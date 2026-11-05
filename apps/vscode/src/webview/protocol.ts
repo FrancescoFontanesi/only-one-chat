@@ -148,6 +148,18 @@ export interface TurnUsageSummary {
   readonly durationMs: number;
 }
 
+/** One question of an agent (ADR 0019); `options` null: a free answer only. */
+export interface QuestionItem {
+  readonly id: string;
+  readonly header: string;
+  readonly question: string;
+  readonly options: readonly { readonly label: string; readonly description: string }[] | null;
+  /** A free answer besides the choices. */
+  readonly other: boolean;
+  /** The answer is not shown in clear nor kept. */
+  readonly secret: boolean;
+}
+
 /** One entry of the chat thread, or a change to one. */
 export type ThreadUpdate =
   | {
@@ -204,6 +216,21 @@ export type ThreadUpdate =
     }
   /** approve, edit, cancel; `sent`, without the user; `interrupted`, a chat closed before. */
   | { readonly type: 'approval_closed'; readonly id: string; readonly action: string }
+  | {
+      /** The leader asks while its turn waits (ADR 0019): the dock shows the questions. */
+      readonly type: 'question';
+      readonly id: string;
+      readonly role: TurnRole;
+      readonly agent: string;
+      readonly questions: readonly QuestionItem[];
+    }
+  | {
+      /** `answered`, with the answers (a secret one masked); `declined`; `interrupted`. */
+      readonly type: 'question_closed';
+      readonly id: string;
+      readonly outcome: 'answered' | 'declined' | 'interrupted';
+      readonly answers?: Readonly<Record<string, readonly string[]>>;
+    }
   | {
       /** An agent asks before acting (a command, a file change): the user answers (R9). */
       readonly type: 'permission';
@@ -336,6 +363,12 @@ export type WebviewToHostMessage =
     }
   | { readonly type: 'stop' }
   | { readonly type: 'permit'; readonly id: string; readonly decision: PermitDecision }
+  /** The user's answers to an agent's questions, by question id (ADR 0019). */
+  | {
+      readonly type: 'answer';
+      readonly id: string;
+      readonly answers: Readonly<Record<string, readonly string[]>>;
+    }
   | { readonly type: 'setMode'; readonly mode: ApprovalMode }
   | {
       readonly type: 'setRole';
@@ -503,6 +536,22 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
     }
     case 'listFiles':
       return { type: 'listFiles' };
+    case 'answer': {
+      const id = msg['id'];
+      const raw = asRecord(msg['answers']);
+      if (typeof id !== 'string' || !ID_PATTERN.test(id) || !raw) return undefined;
+      const entries = Object.entries(raw);
+      if (entries.length === 0 || entries.length > 10) return undefined;
+      const answers: Record<string, string[]> = {};
+      for (const [key, value] of entries) {
+        if (!/^[\w.-]{1,64}$/.test(key) || !Array.isArray(value) || value.length > 10)
+          return undefined;
+        const texts = value.map(text);
+        if (texts.some((t) => t === undefined)) return undefined;
+        answers[key] = texts as string[];
+      }
+      return { type: 'answer', id, answers };
+    }
     case 'listSkills': {
       const cli = msg['cli'];
       if (cli !== 'codex' && cli !== 'claude') return undefined;

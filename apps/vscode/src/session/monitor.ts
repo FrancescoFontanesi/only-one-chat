@@ -158,6 +158,21 @@ export class MonitorStore {
           this.log('info', `Permesso ${PERMIT[update.decision] ?? update.decision}`);
         }
         break;
+      case 'question':
+        this.waiting.set(update.id, update.role);
+        this.log(
+          'warn',
+          `${ROLE[update.role]} ti fa una domanda: ${oneLine(update.questions[0]?.question ?? '')}`,
+        );
+        break;
+      case 'question_closed':
+        if (this.waiting.delete(update.id)) {
+          this.log(
+            'info',
+            update.outcome === 'answered' ? 'Domanda: hai risposto' : 'Domanda senza risposta',
+          );
+        }
+        break;
       case 'notice':
         this.log(update.level, oneLine(update.text.split('\n')[0] ?? ''));
         break;

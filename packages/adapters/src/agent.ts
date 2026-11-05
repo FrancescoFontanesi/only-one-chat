@@ -37,6 +37,23 @@ export type AgentSubagentEvent =
       readonly status: 'completed' | 'interrupted' | 'failed';
     };
 
+/**
+ * A question the agent asks the user while it works (ADR 0019): the turn
+ * waits for the answer. `options` null: a free answer only; `other`: a free
+ * answer besides the choices; `secret`: never shown in clear nor kept.
+ */
+export interface AgentUserQuestion {
+  readonly id: string;
+  readonly header: string;
+  readonly question: string;
+  readonly options: readonly { readonly label: string; readonly description: string }[] | null;
+  readonly other: boolean;
+  readonly secret: boolean;
+}
+
+/** The user's answers by question id; null when the user did not answer. */
+export type AgentQuestionAnswers = Readonly<Record<string, readonly string[]>> | null;
+
 export interface AgentTurnHandlers {
   onText(text: string): void;
   /** `acceptForSession` as the CLI scopes it; see the runtime's ApprovalDecision. */
@@ -45,6 +62,7 @@ export interface AgentTurnHandlers {
   ): Promise<'accept' | 'acceptForSession' | 'decline'>;
   onActivity?(activity: { readonly kind: string; readonly detail: string }): void;
   onSubagent?(event: AgentSubagentEvent): void;
+  onQuestion?(questions: readonly AgentUserQuestion[]): Promise<AgentQuestionAnswers>;
 }
 
 /** Who answered, as observed on the wire: the runtime writes the label from it. */

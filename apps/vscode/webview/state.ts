@@ -3,6 +3,7 @@
 
 import type {
   ChangedFile,
+  QuestionItem,
   RoleName,
   ThreadUpdate,
   TurnRole,
@@ -53,6 +54,16 @@ export type ThreadItem =
       readonly missing?: readonly string[];
       /** The user's decision, once taken; `sent` when it went on by itself. */
       readonly closed?: string;
+    }
+  | {
+      /** An agent's questions while its turn waits (ADR 0019). */
+      readonly kind: 'question';
+      readonly id: string;
+      readonly role: TurnRole;
+      readonly agent: string;
+      readonly questions: readonly QuestionItem[];
+      readonly closed?: 'answered' | 'declined' | 'interrupted';
+      readonly answers?: Readonly<Record<string, readonly string[]>>;
     }
   | {
       readonly kind: 'permission';
@@ -176,6 +187,27 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
       return items.map((item) =>
         item.kind === 'approval' && item.id === update.id
           ? { ...item, closed: update.action }
+          : item,
+      );
+    case 'question':
+      return [
+        ...items,
+        {
+          kind: 'question',
+          id: update.id,
+          role: update.role,
+          agent: update.agent,
+          questions: update.questions,
+        },
+      ];
+    case 'question_closed':
+      return items.map((item) =>
+        item.kind === 'question' && item.id === update.id
+          ? {
+              ...item,
+              closed: update.outcome,
+              ...(update.answers ? { answers: update.answers } : {}),
+            }
           : item,
       );
     case 'permission':

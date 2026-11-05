@@ -4,6 +4,7 @@
 
 import type {
   AgentFactory,
+  AgentQuestion,
   AgentSession,
   AgentSessionOptions,
   AgentTurn,
@@ -16,6 +17,8 @@ import type {
 export type Step =
   | { readonly answer: string; readonly subagents?: readonly SubagentEvent[] }
   | { readonly approval: string; readonly answer: string }
+  /** Asks the user (ADR 0019); `answer` then carries the answers given, as JSON, after it. */
+  | { readonly ask: readonly AgentQuestion[]; readonly answer: string }
   | { readonly hang: true; readonly subagents?: readonly SubagentEvent[] };
 
 export interface FakeAgent {
@@ -83,11 +86,15 @@ export function fakeAgent(
           await handlers.onApprovalRequest({ kind: 'command', summary: step.approval }),
         );
       }
-      const half = Math.ceil(step.answer.length / 2);
-      handlers.onText(step.answer.slice(0, half));
-      handlers.onText(step.answer.slice(half));
+      const answer =
+        'ask' in step
+          ? `${step.answer} ${JSON.stringify((await handlers.onQuestion?.(step.ask)) ?? 'no-handler')}`
+          : step.answer;
+      const half = Math.ceil(answer.length / 2);
+      handlers.onText(answer.slice(0, half));
+      handlers.onText(answer.slice(half));
       return {
-        text: step.answer,
+        text: answer,
         identity: { provider: name, model: 'fake-model', effort: 'low', sessionId: `${id}-1` },
       };
     })();

@@ -19,7 +19,9 @@ import {
   type AgentSubagentEvent,
   type AgentSession,
   type AgentTurnHandlers,
+  codexAnswers,
   codexInput,
+  codexQuestions,
 } from '../src/index.js';
 import { testEnv } from './env.js';
 
@@ -783,5 +785,81 @@ describe('a Codex turn’s input (ADR 0019)', () => {
       { type: 'text', text: 'ciao' },
     ]);
     expect(codexInput('ciao', { name: 'tdd' })).toEqual([{ type: 'text', text: '$tdd ciao' }]);
+  });
+});
+
+describe('a Codex leader’s questions (ADR 0019)', () => {
+  it('asks only when the session allows it, and hands the answers back in the same turn', async () => {
+    const received = join(dir, 'received.jsonl');
+    const session = await codex('chatgpt', {
+      questions: true,
+      launcherArgs: [FAKE_CODEX, '--account=chatgpt', `--log=${received}`],
+    });
+    const asked: unknown[] = [];
+    const h = handlers();
+    const result = await session.runTurn('[question] decidi tu', {
+      ...h.value,
+      onQuestion: (questions) => {
+        asked.push(questions);
+        return Promise.resolve({ storage: ['In memoria'], name: ['ooc'] });
+      },
+    }).done;
+    expect(asked).toEqual([
+      [
+        {
+          id: 'storage',
+          header: 'Bozze',
+          question: 'Dove salviamo le bozze?',
+          options: [
+            { label: 'Con la chat (Recommended)', description: 'Sopravvive alla riapertura' },
+            { label: 'In memoria', description: 'Più semplice' },
+          ],
+          other: true,
+          secret: false,
+        },
+        {
+          id: 'name',
+          header: 'Nome',
+          question: 'Come chiamiamo il comando?',
+          options: null,
+          other: false,
+          secret: false,
+        },
+      ],
+    ]);
+    expect(result.text).toBe(
+      'risposte={"answers":{"storage":{"answers":["In memoria"]},"name":{"answers":["ooc"]}}}',
+    );
+    const start = readFileSync(received, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map(
+        (line) =>
+          JSON.parse(line) as { method?: string; params?: { config?: Record<string, unknown> } },
+      )
+      .find((m) => m.method === 'thread/start');
+    expect(start?.params?.config?.['features.default_mode_request_user_input']).toBe(true);
+  });
+
+  it('cannot ask without it, and a question left unanswered fails its request', async () => {
+    const plain = await codex();
+    expect((await plain.runTurn('[question] x', handlers().value).done).text).toBe(
+      'Non posso chiedere: rispondo a parole.',
+    );
+    const asking = await codex('chatgpt', { questions: true });
+    const result = await asking.runTurn('[question] x', {
+      ...handlers().value,
+      onQuestion: () => Promise.resolve(null),
+    }).done;
+    expect(result.text).toBe('nessuna risposta: The user did not answer');
+  });
+
+  it('reads the questions and writes the answers in Codex’s shapes', () => {
+    expect(
+      codexQuestions({ questions: [{ id: 'a', question: 'Q?', options: [] }, { nope: 1 }] }),
+    ).toEqual([
+      { id: 'a', header: '', question: 'Q?', options: null, other: false, secret: false },
+    ]);
+    expect(codexAnswers({ a: ['x'] })).toEqual({ answers: { a: { answers: ['x'] } } });
   });
 });

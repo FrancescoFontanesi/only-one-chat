@@ -745,3 +745,44 @@ describe('chat session: skills (ADR 0019)', () => {
     });
   });
 });
+
+describe('chat session: the leader’s questions (ADR 0019)', () => {
+  it('shows the Codex leader’s questions and hands the answers back in the same turn', async () => {
+    const { chat, updates } = session('auto');
+    try {
+      const sent = chat.send('[question] decidi tu');
+      await expect.poll(() => updates.find((u) => u.type === 'question')).toBeTruthy();
+      const asked = updates.find((u) => u.type === 'question');
+      if (asked?.type !== 'question') throw new Error('no question');
+      expect(asked.role).toBe('leader');
+      expect(asked.questions.map((q) => q.id)).toEqual(['storage', 'name']);
+      chat.answer(asked.id, { storage: ['Con la chat (Recommended)'], name: ['ooc'] });
+      await sent;
+      expect(updates).toContainEqual({
+        type: 'question_closed',
+        id: asked.id,
+        outcome: 'answered',
+        answers: { storage: ['Con la chat (Recommended)'], name: ['ooc'] },
+      });
+    } finally {
+      await chat.dispose();
+    }
+    const leader = doneTurns(updates).find((t) => t.role === 'leader');
+    expect(leader?.text).toContain('"storage":{"answers":["Con la chat (Recommended)"]}');
+  });
+
+  it('stopping leaves the questions unanswered', async () => {
+    const { chat, updates } = session('auto');
+    try {
+      const sent = chat.send('[question] decidi tu');
+      await expect.poll(() => updates.find((u) => u.type === 'question')).toBeTruthy();
+      await chat.stop();
+      await sent;
+    } finally {
+      await chat.dispose();
+    }
+    expect(updates).toContainEqual(
+      expect.objectContaining({ type: 'question_closed', outcome: 'declined' }),
+    );
+  });
+});

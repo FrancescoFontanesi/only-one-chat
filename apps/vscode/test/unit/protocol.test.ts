@@ -70,6 +70,24 @@ describe('parseWebviewMessage: the chat', () => {
   });
 });
 
+describe('parseWebviewMessage: answers to questions (ADR 0019)', () => {
+  it('accepts the answers by question id', () => {
+    expect(
+      parseWebviewMessage({ type: 'answer', id: 'q-1', answers: { storage: ['In memoria'] } }),
+    ).toEqual({ type: 'answer', id: 'q-1', answers: { storage: ['In memoria'] } });
+  });
+
+  it.each([
+    { type: 'answer', id: 'q-1', answers: {} },
+    { type: 'answer', id: 'Q 1', answers: { a: ['x'] } },
+    { type: 'answer', id: 'q-1', answers: { a: 'x' } },
+    { type: 'answer', id: 'q-1', answers: { 'a b': ['x'] } },
+    { type: 'answer', id: 'q-1', answers: { a: [3] } },
+  ])('rejects %j', (value) => {
+    expect(parseWebviewMessage(value)).toBeUndefined();
+  });
+});
+
 describe('parseWebviewMessage: skills (ADR 0019)', () => {
   it('accepts a skill named for a message and a request for a CLI’s skills', () => {
     expect(parseWebviewMessage({ type: 'send', text: 'x', skill: 'oleafly-latex-build' })).toEqual({

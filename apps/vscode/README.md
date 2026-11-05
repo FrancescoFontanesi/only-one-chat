@@ -23,6 +23,10 @@ implementer.
   extension verified (changed files, tests run again). The leader then tells you whether
   everything went well and what does not add up. With `onlyOneChat.leaderReview` set to
   `deferred` it reads them with your next message instead, one leader turn less.
+- **While it works, a Codex leader may ask you questions** (ADR 0019): they take the box's
+  place, one at a time, as a choice among its options (with "Altro" for your own words) or as a
+  free answer, and its turn goes on with your answers. The implementer does not ask: a decision
+  missing from its brief stops it, and it says so in its report.
 - **For a small change, write to the implementer directly:** it is the cheapest way, and the
   leader reads that report with your next message.
 

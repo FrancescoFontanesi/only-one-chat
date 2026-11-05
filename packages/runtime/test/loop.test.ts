@@ -1125,3 +1125,56 @@ describe('leader mode: a skill named by the user (ADR 0019)', () => {
     expect(claude.skills).toEqual([undefined]);
   });
 });
+
+describe('leader mode: questions while the leader works (ADR 0019)', () => {
+  const question = {
+    id: 'q1',
+    header: 'Scelta',
+    question: 'Python o Go?',
+    options: [
+      { label: 'Python', description: '' },
+      { label: 'Go', description: '' },
+    ],
+    other: true,
+    secret: false,
+  };
+
+  it('hands the questions to the caller and the answers back in the same turn', async () => {
+    const codex = fakeAgent('Codex', [{ ask: [question], answer: 'Ok:' }]);
+    const leaderSession = await codex.factory({ instructions: leaderInstructions('claude') });
+    const seen: unknown[] = [];
+    const { running } = await loop(codex, fakeAgent('Claude', []), [], [], {
+      request: 'Scegli tu.',
+      mode: 'leader',
+      leaderSession,
+      autoApprove: true,
+      onQuestion: (request) => {
+        seen.push(request);
+        return Promise.resolve({ q1: ['Go'] });
+      },
+    });
+    expect(await running.done).toMatchObject({ conclusion: 'Ok: {"q1":["Go"]}' });
+    expect(seen).toEqual([{ role: 'orchestrator', agent: 'Codex', questions: [question] }]);
+    expect(codex.prompts).toHaveLength(1);
+  });
+
+  it('answers null when the loop is stopped while a question waits', async () => {
+    const codex = fakeAgent('Codex', [{ ask: [question], answer: 'Fermato:' }]);
+    const leaderSession = await codex.factory({ instructions: leaderInstructions('claude') });
+    let asked: () => void = () => undefined;
+    const waiting = new Promise<void>((resolve) => (asked = resolve));
+    const { running } = await loop(codex, fakeAgent('Claude', []), [], [], {
+      request: 'Scegli tu.',
+      mode: 'leader',
+      leaderSession,
+      autoApprove: true,
+      onQuestion: () => {
+        asked();
+        return new Promise(() => undefined);
+      },
+    });
+    await waiting;
+    await running.stop();
+    expect(await running.done).toEqual({ status: 'stopped' });
+  });
+});

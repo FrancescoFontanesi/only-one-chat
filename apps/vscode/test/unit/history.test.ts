@@ -142,3 +142,16 @@ describe('a delegation kept with the chat (ADR 0018)', () => {
     expect(history.load('chat-b')?.draft).toBeNull();
   });
 });
+
+describe('a question left open (ADR 0019)', () => {
+  it('is redrawn as interrupted', () => {
+    const updates: ThreadUpdate[] = [
+      { type: 'question', id: 'q-1', role: 'leader', agent: 'Codex', questions: [] },
+    ];
+    expect(forReplay(updates).at(-1)).toEqual({
+      type: 'question_closed',
+      id: 'q-1',
+      outcome: 'interrupted',
+    });
+  });
+});

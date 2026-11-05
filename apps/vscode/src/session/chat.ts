@@ -30,6 +30,8 @@ import {
   type AgentSession,
   type EventLog,
   type InterceptDecision,
+  type AgentQuestion,
+  type QuestionAnswers,
   type PendingReport,
   type ContextUsage,
   type QuotaSnapshot,
@@ -194,6 +196,11 @@ export class ChatSession {
   private readonly bridges = new Map<TurnRole, PermissionBridge>();
   /** Agents' permission requests waiting for the user (R9). */
   private readonly permissions = new Map<string, (decision: PermitDecision) => void>();
+  /** The leader's questions waiting for the user (ADR 0019), with their secret ids. */
+  private readonly questions = new Map<
+    string,
+    { resolve: (answers: QuestionAnswers) => void; secret: ReadonlySet<string> }
+  >();
   /** Implementer work the leader has not seen yet. */
   private unseen: PendingReport[] = [];
   /** Sessions of a reopened chat not resumed yet. */
@@ -324,6 +331,8 @@ export class ChatSession {
           effort: choice.effort,
           requestTimeoutMs: 120_000,
           writable,
+          // The leader asks the user while it works (ADR 0019); the implementer does not.
+          questions: leader,
           approvalPolicy: leader
             ? 'never'
             : choice.permission === 'ask'
@@ -810,6 +819,8 @@ export class ChatSession {
       subagents: { orchestrator: leaderPolicy, worker: this.policy(this.roles.implementer) },
       onApproval: ({ role, agent, request }, signal) =>
         this.askPermission(roleOf(role), agent, request.summary, signal),
+      onQuestion: ({ role, agent, questions }, signal) =>
+        this.ask(roleOf(role), agent, questions, signal),
       facts: async () => {
         const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand);
         shown.facts = true;
@@ -884,6 +895,52 @@ export class ChatSession {
     });
   }
 
+  /**
+   * An agent's questions, shown in the dock while its turn waits (ADR 0019);
+   * stopping leaves them unanswered.
+   */
+  private ask(
+    role: TurnRole,
+    agent: string,
+    questions: readonly AgentQuestion[],
+    signal?: AbortSignal,
+  ): Promise<QuestionAnswers> {
+    return new Promise((resolve) => {
+      const id = this.id('q');
+      this.questions.set(id, {
+        resolve,
+        secret: new Set(questions.filter((q) => q.secret).map((q) => q.id)),
+      });
+      signal?.addEventListener('abort', () => {
+        this.decline(id, 'declined');
+      });
+      this.events.update({ type: 'question', id, role, agent, questions });
+    });
+  }
+
+  /** The user's answers to an agent's questions; a secret answer is never kept. */
+  answer(id: string, answers: Readonly<Record<string, readonly string[]>>): void {
+    const pending = this.questions.get(id);
+    if (!pending) return;
+    this.questions.delete(id);
+    pending.resolve(answers);
+    const shown = Object.fromEntries(
+      Object.entries(answers).map(([key, values]) => [
+        key,
+        pending.secret.has(key) ? values.map(() => '••••') : values,
+      ]),
+    );
+    this.events.update({ type: 'question_closed', id, outcome: 'answered', answers: shown });
+  }
+
+  private decline(id: string, outcome: 'declined' | 'interrupted'): void {
+    const pending = this.questions.get(id);
+    if (!pending) return;
+    this.questions.delete(id);
+    pending.resolve(null);
+    this.events.update({ type: 'question_closed', id, outcome });
+  }
+
   /** The user's answer to a permission request. */
   permit(id: string, decision: PermitDecision): void {
     const resolve = this.permissions.get(id);
@@ -916,6 +973,7 @@ export class ChatSession {
   async stop(): Promise<void> {
     // Whatever is still waiting for the user is declined.
     for (const id of [...this.permissions.keys()]) this.permit(id, 'decline');
+    for (const id of [...this.questions.keys()]) this.decline(id, 'declined');
     await this.stopRunning?.();
   }
 

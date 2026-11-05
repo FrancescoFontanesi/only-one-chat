@@ -154,7 +154,13 @@ export function forReplay(updates: readonly ThreadUpdate[], open?: string): Thre
   const closed = new Set<string>();
   for (const u of out) {
     if (u.type === 'turn' && u.status !== 'running') ended.add(u.id);
-    if (u.type === 'approval_closed' || u.type === 'permission_closed') closed.add(u.id);
+    if (
+      u.type === 'approval_closed' ||
+      u.type === 'permission_closed' ||
+      u.type === 'question_closed'
+    ) {
+      closed.add(u.id);
+    }
   }
   const tail: ThreadUpdate[] = [];
   for (const u of out) {
@@ -163,6 +169,8 @@ export function forReplay(updates: readonly ThreadUpdate[], open?: string): Thre
       tail.push({ type: 'turn', id: u.id, role: u.role, agent: u.agent, status: 'failed' });
     } else if (u.type === 'approval' && !closed.has(u.id) && u.id !== open) {
       tail.push({ type: 'approval_closed', id: u.id, action: 'interrupted' });
+    } else if (u.type === 'question' && !closed.has(u.id)) {
+      tail.push({ type: 'question_closed', id: u.id, outcome: 'interrupted' });
     } else if (u.type === 'permission' && !closed.has(u.id)) {
       tail.push({ type: 'permission_closed', id: u.id, decision: 'interrupted' });
     }

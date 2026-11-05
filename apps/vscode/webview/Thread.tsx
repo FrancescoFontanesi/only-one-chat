@@ -4,7 +4,7 @@
 // reports as records; the facts, the changes and the notices in the same
 // rhythm. A block that arrives while the chat is open enters with Construct.
 
-import type { ComponentChildren } from 'preact';
+import { Fragment, type ComponentChildren } from 'preact';
 import { useRef, useState } from 'preact/hooks';
 import type { SessionInfo } from '../src/webview/protocol.js';
 import { refTokens } from '../src/webview/refs.js';
@@ -298,6 +298,34 @@ function Hand({ item, number }: { item: Item<'approval'>; number: string }) {
   );
 }
 
+const ASKED: Record<string, string> = {
+  answered: '■ RISPOSTA',
+  declined: '× SENZA RISPOSTA',
+  interrupted: '× INTERROTTA',
+};
+
+/** An agent's questions, once closed: each question and the answer given (ADR 0019). */
+function Asked({ item }: { item: Item<'question'> }) {
+  return (
+    <div class="hand asked">
+      <div class="hand__l">
+        <span class="cn-tag">
+          <b>▲ DOMANDA</b> · {item.role === 'leader' ? 'LEADER' : 'IMPLEMENTATORE'}
+        </span>
+        <span class="cn-tag">{ASKED[item.closed ?? ''] ?? item.closed}</span>
+      </div>
+      <dl class="asked__l">
+        {item.questions.map((q) => (
+          <Fragment key={q.id}>
+            <dt>{q.question}</dt>
+            <dd>{item.answers?.[q.id]?.join(', ') ?? '—'}</dd>
+          </Fragment>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 const PERMIT: Record<string, string> = {
   accept: 'CONSENTITO',
   acceptForSession: 'PER LA SESSIONE',
@@ -551,6 +579,9 @@ export function Thread({
               : null;
           case 'permission':
             return item.closed ? <Permission key={item.id} item={item} /> : null;
+          case 'question':
+            // Waiting: it is in the dock, in place of the composer.
+            return item.closed ? enter(item.id, <Asked key={item.id} item={item} />) : null;
           case 'changes':
             return enter(
               item.id,

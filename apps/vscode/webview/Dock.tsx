@@ -105,6 +105,177 @@ function PermissionSlab({ item, theme }: { item: Item<'permission'>; theme: 'dar
   );
 }
 
+/** The free answer of a question with choices, as the choice that opens it. */
+const OTHER = '\u0000other';
+
+/**
+ * The leader's questions while its turn waits (ADR 0019), one at a time: a
+ * single choice among the options, "Altro" for a free answer when the model
+ * allows it, or a free answer only. Invia hands every answer back to the
+ * model in the same turn; Ferma stops the turn.
+ */
+function QuestionFrame({ item }: { item: Item<'question'> }) {
+  const [step, setStep] = useState(0);
+  const [picked, setPicked] = useState<Readonly<Record<string, string>>>({});
+  const [free, setFree] = useState<Readonly<Record<string, string>>>({});
+  const total = item.questions.length;
+  const q = item.questions[Math.min(step, total - 1)];
+  const answerOf = (question: (typeof item.questions)[number]): string => {
+    const choice = picked[question.id];
+    if (question.options && choice !== OTHER) return choice ?? '';
+    return (free[question.id] ?? '').trim();
+  };
+  const ready = item.questions.every((question) => answerOf(question) !== '');
+  const last = step >= total - 1;
+  const submit = () => {
+    if (!ready) return;
+    post({
+      type: 'answer',
+      id: item.id,
+      answers: Object.fromEntries(
+        item.questions.map((question) => [question.id, [answerOf(question)]]),
+      ),
+    });
+  };
+  const forward = () => {
+    if (last) submit();
+    else setStep(step + 1);
+  };
+  const choose = (value: string) => {
+    if (!q) return;
+    setPicked({ ...picked, [q.id]: value });
+  };
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const typing = (event.target as HTMLElement | null)?.closest('textarea, input');
+      if (typing || !q?.options) return;
+      const index = Number(event.key) - 1;
+      const option = q.options[index];
+      if (option) choose(option.label);
+      else if (q.other && index === q.options.length) choose(OTHER);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+    };
+  });
+  if (!q) return null;
+  const freeOpen = !q.options || picked[q.id] === OTHER;
+  return (
+    <section class="cn-frame cn-frame--ink apr qst" aria-label="Domanda del leader">
+      <header class="cn-frame__head cn-accent">
+        <span class="cn-tag">
+          <b>▲ DOMANDA</b> · {item.role === 'leader' ? 'LEADER' : 'IMPLEMENTATORE'} · {item.agent}
+        </span>
+        {total > 1 && (
+          <span class="cn-tag">
+            {String(step + 1)}/{String(total)}
+          </span>
+        )}
+      </header>
+      <div class="cn-frame__body">
+        {q.header && <span class="cn-tag">{q.header.toUpperCase()}</span>}
+        <h2 class="t-title qst__q">{q.question}</h2>
+        {q.options && (
+          <div class="qst__opts" role="radiogroup" aria-label={q.question}>
+            {q.options.map((option, index) => (
+              <button
+                key={option.label}
+                type="button"
+                role="radio"
+                aria-checked={picked[q.id] === option.label}
+                class="qst__o"
+                onClick={() => {
+                  choose(option.label);
+                }}
+              >
+                <span class="qst__k">{String(index + 1)}</span>
+                <span class="qst__l">{option.label}</span>
+                {option.description && <span class="qst__d">{option.description}</span>}
+              </button>
+            ))}
+            {q.other && (
+              <button
+                type="button"
+                role="radio"
+                aria-checked={picked[q.id] === OTHER}
+                class="qst__o"
+                onClick={() => {
+                  choose(OTHER);
+                }}
+              >
+                <span class="qst__k">{String(q.options.length + 1)}</span>
+                <span class="qst__l">Altro…</span>
+                <span class="qst__d">Rispondi con parole tue</span>
+              </button>
+            )}
+          </div>
+        )}
+        {freeOpen && (
+          <div class="box box--mono qst__free">
+            <div class="box__row">
+              {q.secret ? (
+                <input
+                  type="password"
+                  aria-label="Risposta"
+                  value={free[q.id] ?? ''}
+                  onInput={(event) => {
+                    setFree({ ...free, [q.id]: (event.target as HTMLInputElement).value });
+                  }}
+                />
+              ) : (
+                <textarea
+                  aria-label="Risposta"
+                  rows={2}
+                  value={free[q.id] ?? ''}
+                  onInput={(event) => {
+                    setFree({ ...free, [q.id]: (event.target as HTMLTextAreaElement).value });
+                  }}
+                />
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+      <footer class="cn-frame__foot">
+        <span class="hint">IL TURNO ASPETTA LA TUA RISPOSTA</span>
+        <div class="ctl__g">
+          <button
+            class="cn-btn cn-btn--text"
+            type="button"
+            title="Ferma il turno: la domanda resta senza risposta"
+            onClick={() => {
+              post({ type: 'stop' });
+            }}
+          >
+            <span class="cn-btn__label">FERMA</span>
+          </button>
+          {step > 0 && (
+            <button
+              class="cn-btn cn-btn--outline cn-btn--sm"
+              type="button"
+              onClick={() => {
+                setStep(step - 1);
+              }}
+            >
+              <span class="cn-btn__label">INDIETRO</span>
+            </button>
+          )}
+          <button
+            class="cn-btn cn-btn--sm"
+            type="button"
+            disabled={last ? !ready : answerOf(q) === ''}
+            onClick={forward}
+          >
+            <span class="cn-btn__label">{last ? 'INVIA' : 'AVANTI'}</span>
+            <span class="cn-btn__icon">→</span>
+          </button>
+        </div>
+      </footer>
+    </section>
+  );
+}
+
 /**
  * A delegation the manual delivery holds (ADR 0018): the brief as free text,
  * editable, sent as it is or as edited, or cancelled. The chat waits for it.
@@ -747,6 +918,7 @@ export function Dock({
     (i): i is Item<'permission'> => i.kind === 'permission' && !i.closed,
   );
   const approval = items.find((i): i is Item<'approval'> => i.kind === 'approval' && !i.closed);
+  const question = items.find((i): i is Item<'question'> => i.kind === 'question' && !i.closed);
   const [to, setTo] = useState<RoleName>('leader');
   const recipient = roles ? (roles.chat?.[to] ?? roles.roles[to]) : undefined;
   return (
@@ -785,6 +957,8 @@ export function Dock({
                 </button>
               </div>
             </>
+          ) : question ? (
+            <QuestionFrame key={question.id} item={question} />
           ) : approval ? (
             <ApprovalFrame
               key={approval.id}

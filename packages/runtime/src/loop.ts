@@ -12,6 +12,7 @@
 
 import type {
   AgentFactory,
+  AgentQuestion,
   AgentIdentity,
   AgentSession,
   AgentSessionOptions,
@@ -21,6 +22,7 @@ import type {
   ApprovalDecision,
   ContextUsage,
   QuotaSnapshot,
+  QuestionAnswers,
   SkillRef,
   SubagentEvent,
   SubagentPolicy,
@@ -276,6 +278,18 @@ export interface LoopOptions {
    * does, e.g. `@path` mentions as plain paths. Default: unchanged.
    */
   relay?(text: string): string;
+  /**
+   * An agent asks the user while its turn waits (ADR 0019); only agents whose
+   * session allows it ask. A stopped loop answers null.
+   */
+  onQuestion?(
+    request: {
+      readonly role: Role;
+      readonly agent: string;
+      readonly questions: readonly AgentQuestion[];
+    },
+    signal: AbortSignal,
+  ): Promise<QuestionAnswers>;
   /** `leader` mode: a skill the user named for the leader's first turn (ADR 0019). */
   readonly skill?: SkillRef;
   /** Policies for the agents' own sub-agents (D13), per role. */
@@ -1093,6 +1107,18 @@ export function runLoop(options: LoopOptions): Loop {
           void emit({ type: 'activity', role, ...activity });
         },
         onSubagent,
+        ...(options.onQuestion
+          ? {
+              onQuestion: async (questions: readonly AgentQuestion[]) => {
+                if (!options.onQuestion || stopped) return null;
+                await options.log.append('question', { role, count: questions.length });
+                return abortable(
+                  options.onQuestion({ role, agent: session.name, questions }, controller.signal),
+                  controller.signal,
+                ).catch(() => null);
+              },
+            }
+          : {}),
       },
       skill ? { skill } : undefined,
     );

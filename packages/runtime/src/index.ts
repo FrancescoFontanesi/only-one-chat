@@ -22,6 +22,7 @@ export function getRuntimeInfo(): RuntimeInfo {
 
 export type {
   AgentFactory,
+  AgentQuestion,
   AgentIdentity,
   AgentSession,
   AgentSessionOptions,
@@ -32,6 +33,7 @@ export type {
   ApprovalRequest,
   ContextUsage,
   QuotaSnapshot,
+  QuestionAnswers,
   SkillRef,
   TurnOptions,
   SubagentEvent,

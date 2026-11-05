@@ -353,6 +353,51 @@ const handlers = {
       const start = text.split('\n').find((line) => line.startsWith('<<<OOC-RESULT v1'));
       if (start) answer = [start, '## Outcome', 'done', 'OOC-RESULT>>>'].join('\n');
     }
+    // ADR 0019: a question in a normal turn, only when the thread allows it.
+    const asks =
+      threads.get(threadId)?.config?.['features.default_mode_request_user_input'] === true;
+    if (text.includes('[question]') && asks) {
+      const serverId = nextServerRequestId++;
+      const reply = new Promise((resolve) => awaitingClient.set(serverId, resolve));
+      send({
+        id: serverId,
+        method: 'item/tool/requestUserInput',
+        params: {
+          threadId,
+          turnId,
+          itemId: 'call-q',
+          questions: [
+            {
+              id: 'storage',
+              header: 'Bozze',
+              question: 'Dove salviamo le bozze?',
+              isOther: true,
+              isSecret: false,
+              options: [
+                { label: 'Con la chat (Recommended)', description: 'Sopravvive alla riapertura' },
+                { label: 'In memoria', description: 'Più semplice' },
+              ],
+            },
+            {
+              id: 'name',
+              header: 'Nome',
+              question: 'Come chiamiamo il comando?',
+              isOther: false,
+              isSecret: false,
+              options: null,
+            },
+          ],
+          isBlocking: false,
+          autoResolutionMs: null,
+        },
+      });
+      const settled = await reply;
+      answer = settled.error
+        ? `nessuna risposta: ${settled.error.message}`
+        : `risposte=${JSON.stringify(settled.result)}`;
+    } else if (text.includes('[question]')) {
+      answer = 'Non posso chiedere: rispondo a parole.';
+    }
     if (text.includes('[approval]')) {
       const serverId = nextServerRequestId++;
       const reply = new Promise((resolve) => awaitingClient.set(serverId, resolve));

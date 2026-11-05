@@ -496,6 +496,9 @@ export class OnlyOneChatPanel {
       case 'permit':
         this.chat?.permit(message.id, message.decision);
         break;
+      case 'answer':
+        this.chat?.answer(message.id, message.answers);
+        break;
       case 'stop':
         await this.chat?.stop();
         break;
@@ -655,6 +658,9 @@ export class OnlyOneChatPanel {
           const update = withRefs(raw, cwd);
           this.remember(update);
           this.services.monitor.apply(update);
+          if (update.type === 'question') {
+            this.notifyIfAway('waiting', 'Il leader ti fa una domanda.');
+          }
           if (update.type === 'permission' || update.type === 'approval') {
             this.notifyIfAway(
               'waiting',

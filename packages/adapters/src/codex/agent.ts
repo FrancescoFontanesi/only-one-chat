@@ -21,6 +21,7 @@ import type {
   AgentTurn,
   AgentTurnHandlers,
   AgentSkillRef,
+  AgentUserQuestion,
 } from '../agent.js';
 import { CodexAuthError, isUsable } from './auth.js';
 import {
@@ -68,6 +69,12 @@ export interface CodexAgentConfig extends Omit<
    * leader, read-only).
    */
   readonly approvalPolicy?: 'on-request' | 'untrusted' | 'never';
+  /**
+   * The model may ask the user questions in a normal turn (ADR 0019: the
+   * leader), through `item/tool/requestUserInput`, which the turn's
+   * onQuestion answers. Default: it cannot.
+   */
+  readonly questions?: boolean;
   /**
    * Threads Codex keeps on disk, in its own history, so a reopened chat can
    * resume them (R5); default ephemeral (benchmarks, checks).
@@ -144,7 +151,6 @@ function stringOrNull(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
 
-/** Answer that declines what an approval request asks for, per request method. */
 /**
  * A turn's input (ADR 0019): a skill the user named goes first, as Codex's own
  * skill input with its file; without a file it is named in the text, as `$name`.
@@ -158,6 +164,43 @@ export function codexInput(prompt: string, skill?: AgentSkillRef): Record<string
   ];
 }
 
+/** The questions of an `item/tool/requestUserInput` request, as the runtime takes them. */
+export function codexQuestions(params: unknown): AgentUserQuestion[] {
+  const list = isRecord(params) && Array.isArray(params['questions']) ? params['questions'] : [];
+  return list.flatMap((q): AgentUserQuestion[] => {
+    if (!isRecord(q) || typeof q['id'] !== 'string' || typeof q['question'] !== 'string') {
+      return [];
+    }
+    const options = Array.isArray(q['options'])
+      ? q['options'].flatMap((o) =>
+          isRecord(o) && typeof o['label'] === 'string'
+            ? [{ label: o['label'], description: stringOrNull(o['description']) ?? '' }]
+            : [],
+        )
+      : null;
+    return [
+      {
+        id: q['id'],
+        header: stringOrNull(q['header']) ?? '',
+        question: q['question'],
+        options: options && options.length > 0 ? options : null,
+        other: q['isOther'] === true,
+        secret: q['isSecret'] === true,
+      },
+    ];
+  });
+}
+
+/** The user's answers as Codex takes them: `{ answers: { [id]: { answers: [...] } } }`. */
+export function codexAnswers(answers: Readonly<Record<string, readonly string[]>>): unknown {
+  return {
+    answers: Object.fromEntries(
+      Object.entries(answers).map(([id, values]) => [id, { answers: [...values] }]),
+    ),
+  };
+}
+
+/** Answer that declines what an approval request asks for, per request method. */
 export function declineResponse(method: string): unknown {
   switch (method) {
     case 'item/commandExecution/requestApproval':
@@ -263,6 +306,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
       withoutUserHooks = false,
       approvalPolicy = 'on-request',
       persistent = false,
+      questions = false,
       ...sessionOptions
     } = config;
     let current: RunningTurn | undefined;
@@ -422,6 +466,16 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         }
       },
       async onServerRequest(method, params) {
+        if (method === 'item/tool/requestUserInput') {
+          // Only a turn that can ask gets an answer; otherwise the request fails.
+          const turnHandlers = current?.handlers;
+          if (!turnHandlers?.onQuestion) {
+            throw new Error(`${method} is not supported by this client`);
+          }
+          const answers = await turnHandlers.onQuestion(codexQuestions(params));
+          if (answers === null) throw new Error('The user did not answer');
+          return codexAnswers(answers);
+        }
         const summary = summarize(method, params);
         // Without a turn there is nobody to ask: declined.
         const decision = current
@@ -441,6 +495,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         ...(subagents ? subagentThreadConfig(subagents) : {}),
         ...(writable ? writableThreadConfig(process.platform) : {}),
         ...(withoutUserHooks ? { 'features.hooks': false } : {}),
+        ...(questions ? { 'features.default_mode_request_user_input': true } : {}),
       };
       const threadParams = {
         cwd,

@@ -50,6 +50,23 @@ export type SubagentEvent =
       readonly status: 'completed' | 'interrupted' | 'failed';
     };
 
+/**
+ * A question the agent asks the user while it works (ADR 0019): the turn
+ * waits for the answer. `options` null: a free answer only; `other`: a free
+ * answer besides the choices; `secret`: never shown in clear nor kept.
+ */
+export interface AgentQuestion {
+  readonly id: string;
+  readonly header: string;
+  readonly question: string;
+  readonly options: readonly { readonly label: string; readonly description: string }[] | null;
+  readonly other: boolean;
+  readonly secret: boolean;
+}
+
+/** The user's answers by question id; null when the user did not answer. */
+export type QuestionAnswers = Readonly<Record<string, readonly string[]>> | null;
+
 export interface AgentTurnHandlers {
   /** Text as it streams (deltas or whole messages, depending on the agent). */
   onText(text: string): void;
@@ -59,6 +76,8 @@ export interface AgentTurnHandlers {
   onActivity?(activity: { readonly kind: string; readonly detail: string }): void;
   /** The agent's own sub-agents: visible, not approved (D13). */
   onSubagent?(event: SubagentEvent): void;
+  /** The agent asks the user while the turn waits (ADR 0019). Absent: it cannot ask. */
+  onQuestion?(questions: readonly AgentQuestion[]): Promise<QuestionAnswers>;
 }
 
 /**

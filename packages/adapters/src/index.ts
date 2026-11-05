@@ -48,8 +48,10 @@ export type {
   AgentIdentity,
   AgentSubagentEvent,
   AgentSubagentOptions,
+  AgentQuestionAnswers,
   AgentSession,
   AgentSkillRef,
+  AgentUserQuestion,
   AgentTurn,
   AgentTurnHandlers,
 } from './agent.js';
@@ -60,7 +62,9 @@ export {
   createCodexAgentFactory,
   declineResponse,
   approvalResponse,
+  codexAnswers,
   codexInput,
+  codexQuestions,
   type CodexAgentConfig,
 } from './codex/agent.js';
 export { createClaudeAgentFactory, type ClaudeAgentConfig } from './claude/agent.js';

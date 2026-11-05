@@ -47,6 +47,7 @@ describe('parseWebviewMessage: the chat', () => {
       parseWebviewMessage({ type: 'decide', id: 'a-2', action: 'edit', text: 'nuovo brief' }),
     ).toEqual({ type: 'decide', id: 'a-2', action: 'edit', text: 'nuovo brief' });
     expect(parseWebviewMessage({ type: 'stop' })).toEqual({ type: 'stop' });
+    expect(parseWebviewMessage({ type: 'handoff' })).toEqual({ type: 'handoff' });
     expect(parseWebviewMessage({ type: 'setMode', mode: 'auto' })).toEqual({
       type: 'setMode',
       mode: 'auto',

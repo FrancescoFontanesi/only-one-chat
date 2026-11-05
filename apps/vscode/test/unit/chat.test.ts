@@ -334,6 +334,40 @@ describe('chat session: roles changed during the chat (ADR 0012)', () => {
   });
 });
 
+describe('chat session: handoff of the implementer (ADR 0017)', () => {
+  it('asks for a handoff, then opens a new session of the same model that starts from it', async () => {
+    const { chat, updates, sessionIds } = session('auto');
+    try {
+      await chat.send('@impl primo');
+      await chat.handoff();
+      await chat.send('@impl secondo');
+    } finally {
+      await chat.dispose();
+    }
+    const runs = claudeRuns();
+    // The handoff turn runs in the old session; the next message in a new one.
+    expect(runs[1]).toContain('--resume');
+    expect(runs[2]).not.toContain('--resume');
+    expect(runs[2]?.[runs[2].indexOf('--model') + 1]).toBe('sonnet');
+    const prompt = runs[2]?.[runs[2].indexOf('--append-system-prompt') + 1] ?? '';
+    // The fake echoes its prompt: the handoff it wrote is the request it got.
+    expect(prompt).toContain('Il suo passaggio di consegne:\nECHO: Passaggio di consegne.');
+    expect(sessionIds).toContainEqual(['implementer', '']);
+    expect(doneTurns(updates)).toHaveLength(3);
+  });
+
+  it('does nothing before the implementer has a session', async () => {
+    const { chat, updates } = session('auto');
+    try {
+      await chat.handoff();
+    } finally {
+      await chat.dispose();
+    }
+    expect(updates).toEqual([expect.objectContaining({ type: 'notice', level: 'info' })]);
+    expect(doneTurns(updates)).toHaveLength(0);
+  });
+});
+
 describe('chat session: permissions (R9)', () => {
   it('shows an agent’s request and sends the user’s answer back to the CLI', async () => {
     const { chat, updates } = session('auto');

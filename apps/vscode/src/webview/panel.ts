@@ -512,6 +512,11 @@ export class OnlyOneChatPanel {
       case 'listFiles':
         await this.post({ type: 'files', paths: await folderPaths() });
         break;
+      case 'handoff':
+        if (this.chat) await this.chat.handoff();
+        else
+          this.notice('info', 'La chat non è ancora partita: l’implementatore parte già da zero.');
+        break;
       case 'restoreCheckpoint':
         await this.restoreCheckpoint(message.checkpoint);
         break;

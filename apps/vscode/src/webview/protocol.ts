@@ -354,6 +354,8 @@ export type WebviewToHostMessage =
       readonly action: 'diff' | 'accept' | 'reject';
     }
   | { readonly type: 'restoreCheckpoint'; readonly checkpoint: string }
+  /** The implementer's work to a new session of the same model (ADR 0017). */
+  | { readonly type: 'handoff' }
   | { readonly type: 'listFiles' };
 
 /** Longest text the webview may send: a large brief fits, a pasted log does not. */
@@ -477,6 +479,8 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
         ? { type: 'restoreCheckpoint', checkpoint }
         : undefined;
     }
+    case 'handoff':
+      return { type: 'handoff' };
     case 'showChat':
       return { type: 'showChat' };
     case 'manageTrust':

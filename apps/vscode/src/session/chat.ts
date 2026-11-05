@@ -103,6 +103,22 @@ export interface ChatConfig {
 /** A message for the implementer alone: `@impl` and the text. */
 const DIRECT = /^@impl\b\s*/i;
 
+/**
+ * What the implementer is asked for a handoff (ADR 0017): its session closes
+ * and a new one of the same model continues without seeing this conversation.
+ */
+const HANDOFF_REQUEST = [
+  'Passaggio di consegne. Questa sessione sta per chiudersi: il lavoro continua in una sessione nuova',
+  'dello stesso modello, che non vedrà questa conversazione. Scrivi per quella sessione un passaggio',
+  'di consegne completo ma conciso: obiettivo, stato attuale, file toccati e perché, decisioni prese,',
+  'problemi aperti, prossimi passi, comandi utili per verificare. Non modificare file e non eseguire',
+  'comandi: scrivi solo il testo.',
+].join('\n');
+
+/** How the new session receives the handoff, after its instructions. */
+const HANDOFF_PREFACE =
+  'Continui il lavoro di una sessione precedente di questo ruolo. Il suo passaggio di consegne:';
+
 /** Notes on files the user put back (ADR 0014), per role, until each receives them. */
 export type FileNotes = Readonly<Record<TurnRole, readonly string[]>>;
 
@@ -145,6 +161,8 @@ export class ChatSession {
   private leaderSession: AgentSession | undefined;
   /** Kept across delegations and direct messages: a follow-up costs it little (calc-small). */
   private implementerSession: AgentSession | undefined;
+  /** The handoff the implementer's next session starts from, until it is opened. */
+  private handoffBrief: string | undefined;
   /** Stops what is running now: a leader loop or a direct implementer turn. */
   private stopRunning: (() => Promise<void>) | undefined;
   private running = false;
@@ -337,19 +355,147 @@ export class ChatSession {
     return id ? { resume: id } : {};
   }
 
-  /** The implementer's session, opened once and continued (ADR 0011). */
+  /**
+   * The implementer's session, opened once and continued (ADR 0011); after a
+   * handoff, a new one that starts from it (ADR 0017).
+   */
   private async implementer(): Promise<AgentSession> {
-    this.implementerSession ??= await this.factory(
-      this.roles.implementer,
-      await this.bridgeFor('implementer'),
-    )({
-      ...agentSessionOptions(
-        this.withUserInstructions('implementer', LIGHT_IMPLEMENTER_INSTRUCTIONS),
-        this.policy(this.roles.implementer),
-      ),
-      ...this.resumeOf('implementer'),
-    });
+    if (!this.implementerSession) {
+      const brief = this.handoffBrief;
+      this.handoffBrief = undefined;
+      const instructions = this.withUserInstructions('implementer', LIGHT_IMPLEMENTER_INSTRUCTIONS);
+      this.implementerSession = await this.factory(
+        this.roles.implementer,
+        await this.bridgeFor('implementer'),
+      )({
+        ...agentSessionOptions(
+          brief ? `${instructions}\n\n${HANDOFF_PREFACE}\n${brief}` : instructions,
+          this.policy(this.roles.implementer),
+        ),
+        ...this.resumeOf('implementer'),
+      });
+    }
     return this.implementerSession;
+  }
+
+  /** Whether the implementer has a session to hand off: open, or one a reopened chat continues. */
+  private hasImplementerSession(): boolean {
+    return (
+      this.implementerSession !== undefined ||
+      this.resumable.has('implementer') ||
+      this.nativeSessions.has('implementer')
+    );
+  }
+
+  /**
+   * Hands the implementer's work to a new session of the same model (ADR
+   * 0017): its session writes a handoff in a turn shown in the thread, is
+   * closed and forgotten, and the next one starts with that handoff in its
+   * instructions. Not while a message runs, nor before its first turn.
+   */
+  async handoff(): Promise<void> {
+    if (this.running) {
+      this.events.update({
+        type: 'notice',
+        level: 'warn',
+        text: 'Un messaggio è in corso: l’handoff si fa quando finisce.',
+      });
+      return;
+    }
+    if (!this.hasImplementerSession()) {
+      this.events.update({
+        type: 'notice',
+        level: 'info',
+        text: 'L’implementatore non ha ancora una sessione da passare: parte già da zero.',
+      });
+      return;
+    }
+    this.running = true;
+    this.events.busy(true);
+    try {
+      await this.applyRoleChanges();
+      const session = await this.implementer();
+      const result = await this.implementerTurn(session, HANDOFF_REQUEST, false);
+      if (result.text.trim() === '') {
+        throw new Error(
+          'L’implementatore non ha scritto il passaggio di consegne: la sessione resta quella di prima.',
+        );
+      }
+      this.implementerSession = undefined;
+      await session.close();
+      await this.bridges.get('implementer')?.close();
+      this.bridges.delete('implementer');
+      this.nativeSessions.delete('implementer');
+      this.resumable.delete('implementer');
+      // A reopened chat must not resume the session that was handed off.
+      this.events.sessionId?.('implementer', '');
+      this.events.context?.('implementer', { used: 0, window: result.context?.window ?? null });
+      this.handoffBrief = result.text;
+      this.events.update({
+        type: 'notice',
+        level: 'info',
+        text: `Handoff: la prossima sessione dell’implementatore (${this.roles.implementer.model}) parte da questo passaggio di consegne.`,
+      });
+    } catch (error) {
+      this.events.update({
+        type: 'notice',
+        level: 'error',
+        text: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.running = false;
+      this.stopRunning = undefined;
+      this.closeRunningTurns('failed');
+      this.events.busy(false);
+    }
+  }
+
+  /**
+   * One turn of the implementer, shown in the thread as it runs; `keep` notes
+   * its session to resume (not for a handoff, whose session is closed).
+   */
+  private async implementerTurn(session: AgentSession, prompt: string, keep: boolean) {
+    const id = this.id('t');
+    this.currentTurn.set('implementer', id);
+    this.events.update({
+      type: 'turn',
+      id,
+      role: 'implementer',
+      agent: session.name,
+      status: 'running',
+    });
+    const turn = session.runTurn(prompt, {
+      onText: (chunk) => {
+        this.events.update({ type: 'chunk', turnId: id, text: chunk });
+      },
+      onApprovalRequest: (request) =>
+        this.askPermission('implementer', session.name, request.summary),
+      onActivity: ({ kind, detail }) => {
+        this.events.update({
+          type: 'activity',
+          turnId: id,
+          text: `${kind}: ${detail.slice(0, 240)}`,
+        });
+      },
+    });
+    this.stopRunning = () => turn.stop();
+    const result = await turn.done;
+    this.currentTurn.delete('implementer');
+    const usage = summarize(result.usage);
+    this.events.update({
+      type: 'turn',
+      id,
+      role: 'implementer',
+      agent: session.name,
+      status: 'done',
+      label: agentLabel(result.identity),
+      text: result.text,
+      ...(usage ? { usage } : {}),
+    });
+    this.events.turnUsage?.(result.identity.provider, usage, result.quota ?? null);
+    if (result.context) this.events.context?.('implementer', result.context);
+    if (keep) this.noteSession('implementer', result.identity.sessionId);
+    return result;
   }
 
   /**
@@ -499,47 +645,8 @@ export class ChatSession {
   ): Promise<void> {
     const { config } = this;
     const session = await this.implementer();
-    const id = this.id('t');
-    this.currentTurn.set('implementer', id);
-    this.events.update({
-      type: 'turn',
-      id,
-      role: 'implementer',
-      agent: session.name,
-      status: 'running',
-    });
     const notes = this.takeNotes('implementer');
-    const turn = session.runTurn(notes ? `${notes}\n\n${text}` : text, {
-      onText: (chunk) => {
-        this.events.update({ type: 'chunk', turnId: id, text: chunk });
-      },
-      onApprovalRequest: (request) =>
-        this.askPermission('implementer', session.name, request.summary),
-      onActivity: ({ kind, detail }) => {
-        this.events.update({
-          type: 'activity',
-          turnId: id,
-          text: `${kind}: ${detail.slice(0, 240)}`,
-        });
-      },
-    });
-    this.stopRunning = () => turn.stop();
-    const result = await turn.done;
-    this.currentTurn.delete('implementer');
-    const usage = summarize(result.usage);
-    this.events.update({
-      type: 'turn',
-      id,
-      role: 'implementer',
-      agent: session.name,
-      status: 'done',
-      label: agentLabel(result.identity),
-      text: result.text,
-      ...(usage ? { usage } : {}),
-    });
-    this.events.turnUsage?.(result.identity.provider, usage, result.quota ?? null);
-    if (result.context) this.events.context?.('implementer', result.context);
-    this.noteSession('implementer', result.identity.sessionId);
+    const result = await this.implementerTurn(session, notes ? `${notes}\n\n${text}` : text, true);
     const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand);
     shown.facts = true;
     this.events.update({ type: 'notice', level: 'info', text: facts });

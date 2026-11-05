@@ -1,23 +1,31 @@
 // The dock of the Chat board (ADR 0016): what waits for the user takes the
 // composer's place (a permission as the view's one Slab, a delegation or a
-// report to approve as an ink frame), else the composer: one frame with the
-// recipient and the route above the text, the tools below it (`@` attaches a
-// file, `/` lists the commands), the delegations and the send.
+// report to approve as an ink frame), else the composer: one lattice cell,
+// closed on its four sides with a + at each corner, the text and, under a
+// rule, one line with the recipient, the route and the delegations as picks,
+// the context and the send. `@` in the text attaches a file, `/` lists the
+// commands. On a wide panel, beside the composer, the two dials (Hud.tsx):
+// who you talk to, and the providers' usage.
 
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   parseHostMessage,
   type ApprovalMode,
+  type MonitorState,
+  type ProviderUsage,
+  type RolesState,
   type PermitDecision,
   type RoleName,
   type Route,
   type SessionInfo,
 } from '../src/webview/protocol.js';
 import { matchPaths } from './mentions.js';
-import { flash, Progress, useScramble } from './motion.js';
+import { Lattice } from './lattice.js';
+import { RoleHud, UsageHud } from './Hud.js';
+import { flash, Progress } from './motion.js';
 import type { ThreadItem } from './state.js';
 import { wordAt } from './threadModel.js';
-import { Meter, post, Seg } from './ui.js';
+import { Meter, Pick, post } from './ui.js';
 
 type Item<K extends ThreadItem['kind']> = Extract<ThreadItem, { kind: K }>;
 
@@ -197,7 +205,7 @@ function ApprovalFrame({ item, number }: { item: Item<'approval'>; number: strin
   );
 }
 
-const ROUTES: readonly { value: Route | 'auto'; label: string; title: string }[] = [
+export const ROUTES: readonly { value: Route | 'auto'; label: string; title: string }[] = [
   { value: 'auto', label: 'DECIDE LUI', title: 'Il leader sceglie: risponde, chiede o delega' },
   { value: 'delega', label: 'DELEGA', title: 'Il leader scrive un brief all’implementatore' },
   { value: 'fai', label: 'FAI TU', title: 'Il leader lavora da sé' },
@@ -220,22 +228,36 @@ interface Pop {
   query: string;
 }
 
+const RECIPIENTS: readonly { value: RoleName; label: string; title: string }[] = [
+  { value: 'leader', label: 'LEADER', title: 'Il leader risponde, chiede o delega' },
+  {
+    value: 'implementer',
+    label: 'IMPLEMENTATORE',
+    title: 'Diretto all’implementatore: il modo più economico quando sai già cosa chiedere',
+  },
+];
+
 function Composer({
   session,
   openSquad,
+  to,
+  setTo,
+  route,
+  setRoute,
 }: {
   session: SessionInfo | undefined;
   openSquad: () => void;
+  to: RoleName;
+  setTo: (to: RoleName) => void;
+  route: Route | 'auto';
+  setRoute: (route: Route | 'auto') => void;
 }) {
   const [text, setText] = useState('');
-  const [to, setTo] = useState<RoleName>('leader');
-  const [route, setRoute] = useState<Route | 'auto'>('auto');
   const [attachments, setAttachments] = useState<readonly string[]>([]);
   const [files, setFiles] = useState<readonly string[]>([]);
   const [pop, setPop] = useState<Pop | null>(null);
   const [choice, setChoice] = useState(0);
   const box = useRef<HTMLTextAreaElement>(null);
-  const sendButton = useScramble<HTMLButtonElement>();
   const busy = session?.busy ?? false;
   const ready = session !== undefined && session.workspace !== null && session.trusted;
   const canSend = ready && !busy && text.trim() !== '';
@@ -376,8 +398,6 @@ function Composer({
     setText('');
     setAttachments([]);
   };
-  const context = session?.context[to];
-  const percent = context?.window ? context.used / context.window : null;
   const option = (index: number) => ({
     class: index === choice ? 'pick pick--mono cn-accent' : 'pick pick--mono',
     type: 'button' as const,
@@ -389,8 +409,13 @@ function Composer({
     },
   });
 
+  const context = session?.context[to];
+  const percent = context?.window ? context.used / context.window : null;
   return (
-    <div class={ready ? 'cmp' : 'cmp cmp--off'}>
+    <Lattice
+      class={ready ? 'cmp' : 'cmp cmp--off'}
+      edges={{ top: true, bottom: true, left: true, right: true }}
+    >
       {pop && optionCount > 0 && (
         <section class="pop pop--up cn-frame cn-frame--ink" role="listbox">
           <div class="cn-frame__head pop__h">
@@ -415,207 +440,171 @@ function Composer({
           </div>
         </section>
       )}
-      <div class="cmp__head">
-        <Seg
-          small
-          label="Destinatario"
-          value={to}
-          disabled={!ready}
-          options={[
-            { value: 'leader', label: 'LEADER' },
-            {
-              value: 'implementer',
-              label: 'IMPLEMENTATORE',
-              title: 'Il modo più economico quando sai già cosa chiedere',
-            },
-          ]}
-          onChange={setTo}
-        />
-        {to === 'leader' && (
-          <span class="cmp__g">
-            <span class="cmp__k">VIA</span>
-            <Seg
-              small
-              label="Via"
-              value={route}
-              disabled={!ready}
-              options={ROUTES}
-              onChange={setRoute}
-            />
-          </span>
+      <div class="cn-cell cmp__cell">
+        {attachments.length > 0 && (
+          <div class="atts cmp__atts">
+            {attachments.map((a) => (
+              <span key={a} class="att">
+                @ {a}{' '}
+                <button
+                  type="button"
+                  aria-label={`Rimuovi ${a}`}
+                  onClick={() => {
+                    setAttachments((current) => current.filter((c) => c !== a));
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
         )}
-        <span
-          class="ctx"
-          title={
-            context
-              ? `Contesto della sessione dopo il suo ultimo turno: ${String(context.used)} token${context.window ? ` su ${String(context.window)}` : ''}.`
-              : 'Il contesto si conosce dopo il primo turno.'
-          }
-        >
-          CTX
-          {percent !== null ? (
-            <>
-              <Meter value={percent} />
-              <b>{Math.round(percent * 100)}%</b>
-            </>
-          ) : (
-            <b>—</b>
-          )}
-        </span>
-      </div>
-      {attachments.length > 0 && (
-        <div class="atts cmp__atts">
-          {attachments.map((a) => (
-            <span key={a} class="att">
-              @ {a}{' '}
-              <button
-                type="button"
-                aria-label={`Rimuovi ${a}`}
-                onClick={() => {
-                  setAttachments((current) => current.filter((c) => c !== a));
-                }}
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      <div class="cmp__in">
-        <label class="sr" for="msg">
-          Messaggio
-        </label>
-        <textarea
-          id="msg"
-          ref={box}
-          rows={1}
-          disabled={!ready}
-          value={text}
-          placeholder={
-            !ready
-              ? 'Invio non disponibile finché la chat non è pronta.'
-              : to === 'leader'
-                ? 'Scrivi al leader · @ allega un file · / comandi'
-                : 'Scrivi all’implementatore · il leader leggerà il rapporto dopo'
-          }
-          onInput={(event) => {
-            const area = event.target as HTMLTextAreaElement;
-            setText(area.value);
-            follow(area.value, area.selectionStart);
-          }}
-          onBlur={() => {
-            setPop(null);
-          }}
-          onKeyDown={(event) => {
-            if (pop && optionCount > 0) {
-              const move = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
-              if (move !== 0) {
-                event.preventDefault();
-                setChoice((choice + move + optionCount) % optionCount);
-                return;
-              }
-              if (event.key === 'Enter' || event.key === 'Tab') {
-                event.preventDefault();
-                pick(choice);
-                return;
-              }
+        <div class="cmp__in">
+          <label class="sr" for="msg">
+            Messaggio
+          </label>
+          <textarea
+            id="msg"
+            ref={box}
+            rows={1}
+            disabled={!ready}
+            value={text}
+            placeholder={
+              !ready
+                ? 'Invio non disponibile finché la chat non è pronta.'
+                : to === 'leader'
+                  ? 'Scrivi al leader · @ allega un file · / comandi'
+                  : 'Scrivi all’implementatore · il leader leggerà il rapporto dopo'
             }
-            if (pop && event.key === 'Escape') {
-              event.preventDefault();
+            onInput={(event) => {
+              const area = event.target as HTMLTextAreaElement;
+              setText(area.value);
+              follow(area.value, area.selectionStart);
+            }}
+            onBlur={() => {
               setPop(null);
-              return;
-            }
-            if (event.key !== 'Enter' || event.isComposing) return;
-            const sends = enterSends ? !event.shiftKey : event.ctrlKey || event.metaKey;
-            if (sends) {
-              event.preventDefault();
-              send();
-            }
-          }}
-        />
-      </div>
-      <div class="cmp__foot">
-        <button
-          class="tool"
-          type="button"
-          disabled={!ready}
-          title="Allega un file o una cartella"
-          aria-pressed={pop?.kind === 'file'}
-          onClick={() => {
-            openFiles(null, '');
-            box.current?.focus();
-          }}
-        >
-          <b>@</b> FILE
-        </button>
-        <button
-          class="tool"
-          type="button"
-          title="I comandi della chat"
-          aria-pressed={pop?.kind === 'command'}
-          onClick={() => {
-            setPop({ kind: 'command', start: null, query: '' });
-            setChoice(0);
-            box.current?.focus();
-          }}
-        >
-          <b>/</b> COMANDI
-        </button>
-        <span class="cmp__g">
-          <span class="cmp__k">DELEGHE</span>
-          <Seg
-            small
+            }}
+            onKeyDown={(event) => {
+              if (pop && optionCount > 0) {
+                const move = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+                if (move !== 0) {
+                  event.preventDefault();
+                  setChoice((choice + move + optionCount) % optionCount);
+                  return;
+                }
+                if (event.key === 'Enter' || event.key === 'Tab') {
+                  event.preventDefault();
+                  pick(choice);
+                  return;
+                }
+              }
+              if (pop && event.key === 'Escape') {
+                event.preventDefault();
+                setPop(null);
+                return;
+              }
+              if (event.key !== 'Enter' || event.isComposing) return;
+              const sends = enterSends ? !event.shiftKey : event.ctrlKey || event.metaKey;
+              if (sends) {
+                event.preventDefault();
+                send();
+              }
+            }}
+          />
+        </div>
+        <div class="cmp__foot">
+          {/* Who and how, here only when the dials beside the composer are not shown. */}
+          <span class="cmp__to">
+            <Pick
+              short="A"
+              label="Destinatario"
+              value={to}
+              options={RECIPIENTS}
+              disabled={!ready}
+              onChange={setTo}
+            />
+            {to === 'leader' ? (
+              <Pick
+                compact
+                label="Via"
+                value={route}
+                options={ROUTES}
+                disabled={!ready}
+                onChange={setRoute}
+              />
+            ) : (
+              <span class="pk pk--off pk--compact">
+                <span class="pk__v">DIRETTO</span>
+              </span>
+            )}
+          </span>
+          <Pick
+            short="DELEGHE"
             label="Deleghe"
             value={session?.mode ?? 'manual'}
             options={[
-              { value: 'manual', label: 'APPROVO IO' },
-              { value: 'auto', label: 'AUTO' },
+              { value: 'manual', label: 'APPROVO IO', title: 'Ogni delega e rapporto aspetta te' },
+              { value: 'auto', label: 'AUTO', title: 'Deleghe e rapporti passano da soli' },
             ]}
             onChange={(mode: ApprovalMode) => {
               post({ type: 'setMode', mode });
             }}
           />
-        </span>
-        <span class="cmp__send">
-          {busy ? (
-            <>
-              <Progress label="IN CORSO" cells={8} />
+          <span
+            class="ctx cmp__ctx"
+            title={
+              context
+                ? `Contesto della sessione dopo il suo ultimo turno: ${String(context.used)} token${context.window ? ` su ${String(context.window)}` : ''}.`
+                : 'Il contesto si conosce dopo il primo turno.'
+            }
+          >
+            CTX
+            {percent !== null ? (
+              <>
+                <Meter value={percent} />
+                <b>{Math.round(percent * 100)}%</b>
+              </>
+            ) : (
+              <b>—</b>
+            )}
+          </span>
+          <span class="cmp__send">
+            {busy ? (
+              <>
+                <Progress label="IN CORSO" cells={8} />
+                <button
+                  class="cn-btn cn-btn--sm"
+                  type="button"
+                  aria-label="Ferma tutto e nega le richieste in attesa"
+                  onClick={() => {
+                    post({ type: 'stop' });
+                  }}
+                >
+                  <span class="cn-btn__label">FERMA</span>
+                  <span class="cn-btn__icon">■</span>
+                </button>
+              </>
+            ) : (
               <button
-                class="cn-btn cn-btn--sm"
-                type="button"
-                aria-label="Ferma tutto e nega le richieste in attesa"
-                onClick={() => {
-                  post({ type: 'stop' });
-                }}
-              >
-                <span class="cn-btn__label">FERMA</span>
-                <span class="cn-btn__icon">■</span>
-              </button>
-            </>
-          ) : (
-            <>
-              <span class="hint hide-m">
-                {enterSends ? 'INVIO · MAIUSC+INVIO A CAPO' : 'CTRL+INVIO · INVIO A CAPO'}
-              </span>
-              <button
-                ref={sendButton}
-                class="cn-btn cn-btn--sm"
+                class="cn-btn cn-btn--outline cn-btn--sm"
                 type="button"
                 disabled={!canSend}
+                title={enterSends ? 'Invio · Maiusc+Invio a capo' : 'Ctrl+Invio · Invio a capo'}
                 onClick={send}
               >
                 <span class="cn-btn__label">INVIA</span>
                 <span class="cn-btn__icon">↗</span>
               </button>
-            </>
-          )}
-        </span>
+            )}
+          </span>
+        </div>
       </div>
-    </div>
+    </Lattice>
   );
 }
 
-function NotReady({ session }: { session: SessionInfo }) {
+/** Why the chat cannot run: no folder, or one not trusted; it sits at the top of the thread. */
+export function NotReady({ session }: { session: SessionInfo }) {
   const noFolder = session.workspace === null;
   return (
     <div class="note">
@@ -644,56 +633,88 @@ export function Dock({
   items,
   numbers,
   theme,
+  roles,
+  monitor,
+  usage,
   openSquad,
 }: {
   session: SessionInfo | undefined;
   items: readonly ThreadItem[];
   numbers: ReadonlyMap<string, string>;
   theme: 'dark' | 'light';
+  roles: RolesState | undefined;
+  monitor: MonitorState;
+  usage: readonly ProviderUsage[];
   openSquad: () => void;
 }) {
   const permission = items.find(
     (i): i is Item<'permission'> => i.kind === 'permission' && !i.closed,
   );
   const approval = items.find((i): i is Item<'approval'> => i.kind === 'approval' && !i.closed);
+  const [to, setTo] = useState<RoleName>('leader');
+  const [route, setRoute] = useState<Route | 'auto'>('auto');
+  const recipient = roles ? (roles.chat?.[to] ?? roles.roles[to]) : undefined;
   return (
     <footer class="dock">
-      <div class="colw">
-        {permission ? (
-          <>
-            <PermissionSlab item={permission} theme={theme} />
-            <div class="below">
-              <span class="hint">
-                {permission.role === 'leader' ? 'IL LEADER' : 'L’IMPLEMENTATORE'} ASPETTA LA TUA
-                RISPOSTA · L’INVIO RIPRENDE DOPO
-              </span>
-              <button
-                class="cn-btn cn-btn--outline cn-btn--sm"
-                type="button"
-                aria-label="Ferma tutto e nega le richieste in attesa"
-                onClick={() => {
-                  post({ type: 'stop' });
-                }}
-              >
-                <span class="cn-btn__label">FERMA</span>
-                <span class="cn-btn__icon">■</span>
-              </button>
-            </div>
-          </>
-        ) : approval ? (
-          <ApprovalFrame
-            key={approval.id}
-            item={approval}
-            number={numbers.get(approval.id) ?? ''}
+      <div class="dock__in">
+        <aside class="dock__side" aria-label="Parli con">
+          <RoleHud
+            roles={roles}
+            monitor={monitor}
+            to={to}
+            setTo={setTo}
+            route={route}
+            setRoute={setRoute}
+            routes={ROUTES}
+            busy={session?.busy ?? false}
           />
-        ) : (
-          <>
-            {session && (session.workspace === null || !session.trusted) && (
-              <NotReady session={session} />
-            )}
-            <Composer session={session} openSquad={openSquad} />
-          </>
-        )}
+        </aside>
+        <div class="colw">
+          {permission ? (
+            <>
+              <PermissionSlab item={permission} theme={theme} />
+              <div class="below">
+                <span class="hint">
+                  {permission.role === 'leader' ? 'IL LEADER' : 'L’IMPLEMENTATORE'} ASPETTA LA TUA
+                  RISPOSTA · L’INVIO RIPRENDE DOPO
+                </span>
+                <button
+                  class="cn-btn cn-btn--outline cn-btn--sm"
+                  type="button"
+                  aria-label="Ferma tutto e nega le richieste in attesa"
+                  onClick={() => {
+                    post({ type: 'stop' });
+                  }}
+                >
+                  <span class="cn-btn__label">FERMA</span>
+                  <span class="cn-btn__icon">■</span>
+                </button>
+              </div>
+            </>
+          ) : approval ? (
+            <ApprovalFrame
+              key={approval.id}
+              item={approval}
+              number={numbers.get(approval.id) ?? ''}
+            />
+          ) : (
+            <Composer
+              session={session}
+              openSquad={openSquad}
+              to={to}
+              setTo={setTo}
+              route={route}
+              setRoute={setRoute}
+            />
+          )}
+        </div>
+        <aside class="dock__side" aria-label="Utilizzo">
+          <UsageHud
+            usage={usage}
+            threshold={session?.usageThreshold ?? 0}
+            active={recipient?.cli ?? 'codex'}
+          />
+        </aside>
       </div>
     </footer>
   );

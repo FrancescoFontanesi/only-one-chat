@@ -1,26 +1,32 @@
-// The Squad panel (ADR 0016): over the chat, veiled in 1-bit. Who works and
-// how the work flows, the roles with their state and context, what happened,
-// what waits, what changed, the models, the selected role's settings and the
-// usage windows. Data from the host's stores; settings written as the roles view did.
+// The Squad panel (ADR 0016): over the chat, veiled in 1-bit, as one Lattice
+// with no gaps: the bar, the board's head and port, the activity's tabs and
+// list, the selected role's head and fields, what waits for you, the foot;
+// shared lines, a + at each junction. The agents are panels framed by their
+// vertices on a board that can be moved and zoomed, linked by what passes
+// between them (today the backend's two roles; the board takes more). Data
+// from the host's stores; settings written as the roles view did.
 
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type {
   MonitorAgent,
   MonitorState,
-  ProviderUsage,
   RoleInfo,
   RoleName,
   RolesState,
   SessionInfo,
 } from '../src/webview/protocol.js';
+import { Board } from './board.js';
+import { Crossed, Lattice } from './lattice.js';
+import { Decode, flash, Progress, Reveal } from './motion.js';
 import type { ThreadItem } from './state.js';
-import { clock, kilo, Meter, PERMISSIONS, PROVIDER, ROLE, RoleFields } from './ui.js';
+import { clock, kilo, Meter, PERMISSIONS, PROVIDER, ROLE, RoleEditor } from './ui.js';
 
-const STATE = { working: '▶ Lavora', waiting: '▲ Aspetta te', idle: '○ Fermo' } as const;
-const STATE_TAG = { working: '▶ LAVORA', waiting: '▲ ASPETTA TE', idle: '○ FERMO' } as const;
+const STATE_TAG = { working: 'LAVORA', waiting: '▲ ASPETTA TE', idle: '○ FERMO' } as const;
 const LEVEL = { info: '■', warn: '▲', error: '×' } as const;
+const INDEX: Record<RoleName, string> = { leader: 'A', implementer: 'B' };
 
-type Tab = 'events' | 'waiting' | 'changes' | 'models';
+type Tab = 'events' | 'waiting' | 'changes';
+type Waiting = Extract<ThreadItem, { kind: 'permission' | 'approval' }>;
 
 function agentOf(monitor: MonitorState, role: RoleName): MonitorAgent | undefined {
   return monitor.agents.find((a) => a.role === role);
@@ -31,42 +37,11 @@ function percent(agent: MonitorAgent | undefined): number | null {
   return context?.window ? context.used / context.window : null;
 }
 
-function Node({
-  role,
-  info,
-  agent,
-  selected,
-  select,
-}: {
-  role: RoleName;
-  info: RoleInfo;
-  agent: MonitorAgent | undefined;
-  selected: boolean;
-  select: () => void;
-}) {
-  return (
-    <button
-      class={selected ? 'fn fn--sel' : 'fn'}
-      type="button"
-      aria-pressed={selected}
-      onClick={select}
-    >
-      <span class="fn__n">{ROLE[role]}</span>
-      <span class="fn__m">
-        {info.cli.toUpperCase()} · {info.modelName.toUpperCase()}
-        {info.effort ? ` · ${info.effort.toUpperCase()}` : ''}
-      </span>
-      <span class="fn__s">{STATE_TAG[agent?.status ?? 'idle']}</span>
-      {agent?.subagents.map((s, index) => (
-        <span key={index} class="fn__m">
-          └ {s.toUpperCase()} · ▶
-        </span>
-      ))}
-    </button>
-  );
-}
-
-function RoleRow({
+/**
+ * An agent: a panel framed by its vertices whose head selects it; model, how
+ * it is set, its context, what it does.
+ */
+function Agent({
   role,
   info,
   agent,
@@ -75,84 +50,145 @@ function RoleRow({
   select,
 }: {
   role: RoleName;
-  info: RoleInfo;
+  info: RoleInfo | undefined;
   agent: MonitorAgent | undefined;
   selected: boolean;
   locked: boolean;
   select: () => void;
 }) {
   const value = percent(agent);
+  const status = agent?.status ?? 'idle';
   return (
-    <>
-      <tr class={selected ? 'cn-accent' : ''} onClick={select}>
-        <td>
-          <span class="rn">{ROLE[role]}</span>
-          <span class="rs">{PROVIDER[info.cli].toUpperCase()}</span>
-        </td>
-        <td>
-          <span class="rv">{info.modelName}</span>
-          <span class="rs">
-            {(info.effort || 'nessun reasoning').toUpperCase()}
-            {locked ? ' · BLOCCATO' : ''}
+    <Crossed class={selected ? 'sq-agent sq-agent--on' : 'sq-agent'}>
+      <section class="sq-agent__in" aria-label={ROLE[role]} onClick={select}>
+        <button class="xf__h sq-agent__h" type="button" aria-pressed={selected} onClick={select}>
+          <span class="cn-tag">
+            <b class={selected ? 'cn-frame__idx cn-accent' : 'cn-frame__idx'}>{INDEX[role]}</b>{' '}
+            {ROLE[role]}
           </span>
-        </td>
-        <td>
-          <span class="rv">{PERMISSIONS.find((p) => p.value === info.permission)?.short}</span>
-        </td>
-        <td>
-          <span class="rv">{STATE[agent?.status ?? 'idle']}</span>
-          {agent?.activity && <span class="rs">{agent.activity}</span>}
-        </td>
-        <td>
-          {value !== null ? (
-            <span class="mrow">
-              <Meter value={value} />
-              <span class="rv">{Math.round(value * 100)}%</span>
-            </span>
-          ) : (
-            <span class="rv mut">—</span>
-          )}
-          {agent?.context && <span class="rs">{kilo(agent.context.used)} TOKEN</span>}
-        </td>
-      </tr>
-      {agent?.subagents.map((label, index) => (
-        <tr key={index} class="sub" onClick={select}>
-          <td>
-            <span class="rn">└ {label}</span>
-            <span class="rs" style={{ paddingLeft: '16px' }}>
-              SOTTO-AGENTE
-            </span>
-          </td>
-          <td>
-            <span class="rv mut">—</span>
-          </td>
-          <td>
-            <span class="rv">Lettura</span>
-          </td>
-          <td>
-            <span class="rv">▶ Lavora</span>
-          </td>
-          <td>
-            <span class="rv mut">—</span>
-          </td>
-        </tr>
-      ))}
-    </>
+          <span
+            class={
+              status === 'working'
+                ? 'cn-tag cn-tag--live cn-tag--ink'
+                : status === 'waiting'
+                  ? 'cn-tag cn-tag--ink'
+                  : 'cn-tag'
+            }
+          >
+            {STATE_TAG[status]}
+          </span>
+        </button>
+        <div class="xf__b sq-agent__b">
+          <Decode initial class="sq-agent__m" text={info?.modelName ?? '—'} />
+          <span class="t-data mut">
+            {info
+              ? [
+                  PROVIDER[info.cli],
+                  info.effort || 'nessun reasoning',
+                  PERMISSIONS.find((p) => p.value === info.permission)?.short ?? '',
+                  ...(locked ? ['bloccato'] : []),
+                ].join(' · ')
+              : 'ruolo non letto'}
+          </span>
+          <dl class="cn-spec sq-agent__s">
+            <dt>Contesto</dt>
+            <dd>
+              {value !== null ? (
+                <>
+                  <Meter value={value} />
+                  <span class="t-data">{Math.round(value * 100)}%</span>
+                </>
+              ) : (
+                <span class="t-data mut">—</span>
+              )}
+            </dd>
+            <dt>Ora</dt>
+            <dd>
+              <span class={status === 'working' ? 't-data cn-cursor sq-agent__a' : 't-data mut'}>
+                {agent?.activity ?? (status === 'working' ? 'in corso' : 'niente')}
+              </span>
+            </dd>
+            {agent && agent.subagents.length > 0 && (
+              <>
+                <dt>Sotto-agenti</dt>
+                <dd class="sq-agent__subs">
+                  {agent.subagents.map((label, index) => (
+                    <span key={index} class="t-data">
+                      └ {label} <Progress variant="spinner" />
+                    </span>
+                  ))}
+                </dd>
+              </>
+            )}
+          </dl>
+        </div>
+        <footer class="xf__f">
+          <span class="cn-tag">
+            {agent?.context ? `${kilo(agent.context.used)} token` : '— token'}
+          </span>
+        </footer>
+      </section>
+    </Crossed>
   );
 }
 
-function windowCell(provider: ProviderUsage, name: '5h' | 'weekly') {
-  const window = provider.windows.find((w) => w.name === name);
-  if (!window) {
-    return <td class="mut">{provider.provider === 'claude' ? 'DOPO UN TURNO' : '—'}</td>;
+/**
+ * What waits for you, as a cell of the panel: inverted (the view's one
+ * accent) when something waits, and it flashes when it comes; plain when not.
+ */
+function Alert({
+  waiting,
+  theme,
+  go,
+}: {
+  waiting: readonly Waiting[];
+  theme: string;
+  go: (id: string) => void;
+}) {
+  const ref = useRef<HTMLElement>(null);
+  const first = waiting[0];
+  useEffect(() => {
+    if (first && ref.current) flash(ref.current);
+  }, [first?.id]);
+  if (!first) {
+    return (
+      <section class="cn-cell sq-alert" aria-live="polite">
+        <span class="cn-tag">○ Niente aspetta te</span>
+        <p class="hint">Permessi, deleghe e rapporti da approvare compaiono qui.</p>
+      </section>
+    );
   }
   return (
-    <td>
-      <span class="mrow">
-        <Meter value={window.usedPercent / 100} />
-        {Math.round(window.usedPercent)}%
+    <section
+      ref={ref}
+      class="cn-cell cn-accent sq-alert"
+      data-theme={theme === 'dark' ? 'light' : 'dark'}
+      aria-live="polite"
+    >
+      <span class="cn-tag">
+        <b>▲</b> Aspetta te{waiting.length > 1 ? ` · ${String(waiting.length)}` : ''}
       </span>
-    </td>
+      <h3 class="t-title">
+        {first.kind === 'permission'
+          ? `Permesso · ${ROLE[first.role]}`
+          : `${first.approval === 'delegation' ? 'Delega' : 'Rapporto'} da approvare`}
+      </h3>
+      <p class="t-data mut">
+        {first.kind === 'permission' ? first.summary : `${first.from} → ${first.to}`}
+      </p>
+      <div class="sq-alert__a">
+        <button
+          class="cn-btn cn-btn--sm"
+          type="button"
+          onClick={() => {
+            go(first.id);
+          }}
+        >
+          <span class="cn-btn__label">Rispondi</span>
+          <span class="cn-btn__icon">→</span>
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -160,7 +196,6 @@ export function Squad({
   session,
   roles,
   monitor,
-  usage,
   items,
   theme,
   close,
@@ -169,7 +204,6 @@ export function Squad({
   session: SessionInfo | undefined;
   roles: RolesState | undefined;
   monitor: MonitorState;
-  usage: readonly ProviderUsage[];
   items: readonly ThreadItem[];
   theme: 'dark' | 'light';
   close: () => void;
@@ -192,11 +226,8 @@ export function Squad({
   // The chat's own roles once it has run, else those of the next chat.
   const shown = (role: RoleName): RoleInfo | undefined => roles?.chat?.[role] ?? roles?.roles[role];
   const started = roles?.chat !== null && roles?.chat !== undefined;
-  const leader = shown('leader');
-  const implementer = shown('implementer');
   const waiting = items.filter(
-    (i): i is Extract<ThreadItem, { kind: 'permission' | 'approval' }> =>
-      (i.kind === 'permission' || i.kind === 'approval') && !i.closed,
+    (i): i is Waiting => (i.kind === 'permission' || i.kind === 'approval') && !i.closed,
   );
   const changes = items.filter(
     (i): i is Extract<ThreadItem, { kind: 'changes' }> => i.kind === 'changes',
@@ -204,372 +235,215 @@ export function Squad({
   const open = changes.flatMap((c) =>
     c.files.filter((f) => !c.decisions[f.path]).map((f) => ({ card: c, file: f })),
   );
-  const counts = (status: MonitorAgent['status']) =>
-    monitor.agents.filter((a) => a.status === status).length;
-  const agent = agentOf(monitor, selected);
-  const info = shown(selected);
-  const next = roles?.roles[selected];
-  const catalog = roles?.catalog ?? [];
-  const firstWaiting =
-    waiting.find((i) => i.kind === 'permission' && i.role === selected) ??
-    (selected === 'leader' ? waiting.find((i) => i.kind === 'approval') : undefined);
-  const threshold = session?.usageThreshold ?? 0;
-  const past = usage.flatMap((p) =>
-    p.windows
-      .filter((w) => threshold > 0 && w.usedPercent >= threshold)
-      .map((w) => `${p.provider.toUpperCase()} ${w.name === '5h' ? '5H' : '1W'}`),
-  );
+  const working = monitor.agents.filter((a) => a.status === 'working');
+  const agentStatus = (role: RoleName) => agentOf(monitor, role)?.status ?? 'idle';
+  const waitingFor = (approval: 'delegation' | 'report') =>
+    waiting.some((w) => w.kind === 'approval' && w.approval === approval);
+  const agentBlock = (role: RoleName, x: number) => ({
+    id: role,
+    x,
+    y: 0,
+    width: 340,
+    children: (
+      <Reveal delay={role === 'leader' ? 0 : 150}>
+        <Agent
+          role={role}
+          info={shown(role)}
+          agent={agentOf(monitor, role)}
+          selected={selected === role}
+          locked={role === 'leader' && started}
+          select={() => {
+            setSelected(role);
+          }}
+        />
+      </Reveal>
+    ),
+  });
+  const tabs = [
+    ['events', 'Eventi', monitor.events.length],
+    ['waiting', 'In attesa', waiting.length],
+    ['changes', 'Modifiche', open.length],
+  ] as const;
 
   return (
     <div class="stage stage--layer" data-theme={theme}>
       <div class="veil veil--mezzatinta" onClick={close} />
-      <section class="sqw" role="dialog" aria-label="Pannello Squad">
-        <header class="sqw__h">
-          <h2 class="t-title">Squad</h2>
-          <span class="crumb">{(session?.title || 'Nuova chat').toUpperCase()}</span>
-          <div class="bar__r">
-            {counts('waiting') > 0 && (
-              <span class="cn-tag cn-tag--ink">▲ {counts('waiting')} ASPETTA TE</span>
-            )}
-            {counts('working') > 0 && (
-              <span class="cn-tag cn-tag--ink">▶ {counts('working')} LAVORA</span>
-            )}
-            {counts('idle') > 0 && <span class="cn-tag">○ {counts('idle')} FERMO</span>}
+      <Lattice class="sqw" edges={{ top: true, bottom: true, left: true, right: true }} dense={40}>
+        <header class="cn-cell cn-cell--row sq-bar" role="dialog" aria-label="Pannello Squad">
+          <span class="lt-mark">Squad</span>
+          <span class="crumb">
+            Chat / <b>{session?.title || 'Nuova chat'}</b>
+          </span>
+          <div class="sq-bar__end">
+            {roles?.fake && <span class="cn-tag cn-tag--ink">▲ CLI finti</span>}
+            <span class="cn-tag">
+              Deleghe · <b>{session?.mode === 'auto' ? 'automatiche' : 'approvo io'}</b>
+            </span>
             <button class="cn-btn cn-btn--outline cn-btn--sm" type="button" onClick={close}>
-              <span class="cn-btn__label">CHIUDI · ESC</span>
+              <span class="cn-btn__label">Chiudi · Esc</span>
               <span class="cn-btn__icon">×</span>
             </button>
           </div>
         </header>
 
-        <div class="sqw__m">
-          {leader && implementer && (
-            <section aria-label="Flusso della squadra">
-              <div class="sh">
-                <span class="cn-tag">
-                  <b>01/</b> FLUSSO
-                </span>
-                <span class="cn-tag">
-                  DELEGHE · <b>{session?.mode === 'auto' ? 'AUTOMATICHE' : 'APPROVO IO'}</b>
-                </span>
-              </div>
-              <div class="flow">
-                <div class="fn" role="presentation">
-                  <span class="fn__n">Tu</span>
-                  <span class="fn__m">INGRESSO</span>
-                </div>
-                <div class="fc">
-                  <span class="fc__t">MESSAGGIO →</span>
-                  <span class="fc__l" />
-                </div>
-                <Node
-                  role="leader"
-                  info={leader}
-                  agent={agentOf(monitor, 'leader')}
-                  selected={selected === 'leader'}
-                  select={() => {
-                    setSelected('leader');
-                  }}
-                />
-                <div class="fc">
-                  <span class="fc__t">
-                    <b>DELEGA →</b>
-                  </span>
-                  <span class="fc__l" />
-                  <span class="fc__l fc__l--d" />
-                  <span class="fc__t">← RAPPORTO</span>
-                </div>
-                <Node
-                  role="implementer"
-                  info={implementer}
-                  agent={agentOf(monitor, 'implementer')}
-                  selected={selected === 'implementer'}
-                  select={() => {
-                    setSelected('implementer');
-                  }}
-                />
-                <div class="fu">
-                  <span>DIRETTO → IMPLEMENTATORE</span>
-                </div>
-              </div>
-            </section>
-          )}
+        <Board
+          label="Lavagna degli agenti"
+          blocks={[agentBlock('leader', 0), agentBlock('implementer', 500)]}
+          links={[
+            {
+              id: 'delegation',
+              from: 'leader',
+              to: 'implementer',
+              label: waitingFor('delegation') ? '▲ Delega' : 'Delega',
+              lane: -16,
+              live: agentStatus('implementer') === 'working',
+              waiting: waitingFor('delegation'),
+            },
+            {
+              id: 'report',
+              from: 'implementer',
+              to: 'leader',
+              label: waitingFor('report') ? '▲ Rapporto' : 'Rapporto',
+              lane: 16,
+              waiting: waitingFor('report'),
+            },
+          ]}
+          legend={
+            <>
+              <span class="cn-tag">
+                <b>01/</b> Lavagna
+              </span>
+            </>
+          }
+        />
 
-          {leader && implementer && (
-            <section aria-label="Ruoli">
-              <div class="sh">
-                <span class="cn-tag">
-                  <b>02/</b> RUOLI
+        <header class="cn-cell cn-cell--row sq-acth">
+          <span class="sq-tabs" role="tablist">
+            {tabs.map(([id, label, count], index) => (
+              <button
+                key={id}
+                class="sq-tab"
+                type="button"
+                role="tab"
+                aria-selected={tab === id}
+                onClick={() => {
+                  setTab(id);
+                }}
+              >
+                <span class={tab === id ? 'cn-frame__idx cn-accent' : 'cn-frame__idx'}>
+                  0{index + 2}
                 </span>
-                <span class="cn-tag">{started ? 'DI QUESTA CHAT' : 'PER LA PROSSIMA CHAT'}</span>
-              </div>
-              <table class="ros">
-                <colgroup>
-                  <col style={{ width: '24%' }} />
-                  <col style={{ width: '22%' }} />
-                  <col style={{ width: '14%' }} />
-                  <col style={{ width: '24%' }} />
-                  <col style={{ width: '16%' }} />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th scope="col">RUOLO</th>
-                    <th scope="col">MODELLO</th>
-                    <th scope="col">PERMESSI</th>
-                    <th scope="col">STATO</th>
-                    <th scope="col">CONTESTO</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <RoleRow
-                    role="leader"
-                    info={leader}
-                    agent={agentOf(monitor, 'leader')}
-                    selected={selected === 'leader'}
-                    locked={started}
-                    select={() => {
-                      setSelected('leader');
-                    }}
-                  />
-                  <RoleRow
-                    role="implementer"
-                    info={implementer}
-                    agent={agentOf(monitor, 'implementer')}
-                    selected={selected === 'implementer'}
-                    locked={false}
-                    select={() => {
-                      setSelected('implementer');
-                    }}
-                  />
-                </tbody>
-              </table>
-            </section>
+                {label}
+                {count > 0 && <b>{count}</b>}
+              </button>
+            ))}
+          </span>
+        </header>
+        <div class="cn-cell sq-actb" role="tabpanel">
+          {tab === 'events' && (
+            <ol class="log">
+              <li>
+                <span>{clock(Date.now())}</span>
+                <span class="cn-cursor">
+                  {working.length > 0
+                    ? `${working.map((a) => ROLE[a.role]).join(' e ')} al lavoro`
+                    : 'In ascolto'}
+                </span>
+                <span class="mut">{working.length > 0 ? '▶' : '○'}</span>
+              </li>
+              {monitor.events.map((event, index) => (
+                <li key={`${String(event.at)}-${String(index)}`}>
+                  <span>{clock(event.at)}</span>
+                  <span>{event.text}</span>
+                  <span>{LEVEL[event.level]}</span>
+                </li>
+              ))}
+            </ol>
           )}
-
-          <section class="act" aria-label="Attività">
-            <div class="tabs" role="tablist">
-              {(
-                [
-                  ['events', 'EVENTI', null],
-                  ['waiting', 'IN ATTESA', waiting.length],
-                  ['changes', 'MODIFICHE', open.length],
-                  ['models', 'MODELLI', null],
-                ] as const
-              ).map(([id, label, count]) => (
-                <button
-                  key={id}
-                  class={tab === id ? 'tab cn-accent' : 'tab'}
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === id}
-                  onClick={() => {
-                    setTab(id);
-                  }}
-                >
-                  {label} {count !== null && count > 0 && <b>{count}</b>}
-                </button>
-              ))}
-            </div>
-            {tab === 'events' &&
-              (monitor.events.length === 0 ? (
-                <p class="hint">Nessun evento in questa chat.</p>
-              ) : (
-                <ol class="log">
-                  {monitor.events.map((event, index) => (
-                    <li key={`${String(event.at)}-${String(index)}`}>
-                      <span>{clock(event.at)}</span>
-                      <span>{event.text}</span>
-                      <span>{LEVEL[event.level]}</span>
-                    </li>
-                  ))}
-                </ol>
-              ))}
-            {tab === 'waiting' &&
-              (waiting.length === 0 ? (
-                <p class="hint">Nessuna richiesta aperta.</p>
-              ) : (
-                <div class="ilist">
-                  {waiting.map((i) => (
-                    <div key={i.id}>
-                      <span>
-                        {i.kind === 'permission'
-                          ? `▲ Permesso · ${ROLE[i.role].toLowerCase()} · ${i.summary}`
-                          : `▲ ${i.approval === 'delegation' ? 'Delega' : 'Rapporto'} da approvare · ${i.from} → ${i.to}`}
-                      </span>
-                      <button
-                        class="cn-btn cn-btn--text"
-                        type="button"
-                        onClick={() => {
-                          go(i.id);
-                        }}
-                      >
-                        <span class="cn-btn__label">VAI ↗</span>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            {tab === 'changes' &&
-              (changes.length === 0 ? (
-                <p class="hint">Nessuna modifica in questa chat.</p>
-              ) : (
-                <div class="ilist">
-                  {changes.flatMap((card) =>
-                    card.files.map((file) => (
-                      <div key={`${card.id}-${file.path}`}>
-                        <span>{file.path}</span>
-                        <span>
-                          {card.decisions[file.path] === 'accepted'
-                            ? '■ ACCETTATO'
-                            : card.decisions[file.path] === 'rejected'
-                              ? '× RIFIUTATO'
-                              : file.binary
-                                ? 'BINARIO'
-                                : `+${String(file.added)} −${String(file.removed)}`}
-                        </span>
-                      </div>
-                    )),
-                  )}
-                  {open[0] && (
-                    <div>
-                      <span class="mut">{open.length} da rivedere</span>
-                      <button
-                        class="cn-btn cn-btn--text"
-                        type="button"
-                        onClick={() => {
-                          if (open[0]) go(open[0].card.id);
-                        }}
-                      >
-                        <span class="cn-btn__label">RIVEDI ↗</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))}
-            {tab === 'models' && (
+          {tab === 'waiting' &&
+            (waiting.length === 0 ? (
+              <p class="hint">Nessuna richiesta aperta.</p>
+            ) : (
               <div class="ilist">
-                {roles?.fake && (
+                {waiting.map((i) => (
+                  <div key={i.id}>
+                    <span>
+                      {i.kind === 'permission'
+                        ? `▲ Permesso · ${ROLE[i.role].toLowerCase()} · ${i.summary}`
+                        : `▲ ${i.approval === 'delegation' ? 'Delega' : 'Rapporto'} da approvare · ${i.from} → ${i.to}`}
+                    </span>
+                    <button
+                      class="cn-btn cn-btn--text"
+                      type="button"
+                      onClick={() => {
+                        go(i.id);
+                      }}
+                    >
+                      <span class="cn-btn__label">VAI ↗</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ))}
+          {tab === 'changes' &&
+            (changes.length === 0 ? (
+              <p class="hint">Nessuna modifica in questa chat.</p>
+            ) : (
+              <div class="ilist">
+                {changes.flatMap((card) =>
+                  card.files.map((file) => (
+                    <div key={`${card.id}-${file.path}`}>
+                      <span>{file.path}</span>
+                      <span>
+                        {card.decisions[file.path] === 'accepted'
+                          ? '■ ACCETTATO'
+                          : card.decisions[file.path] === 'rejected'
+                            ? '× RIFIUTATO'
+                            : file.binary
+                              ? 'BINARIO'
+                              : `+${String(file.added)} −${String(file.removed)}`}
+                      </span>
+                    </div>
+                  )),
+                )}
+                {open[0] && (
                   <div>
-                    <span>▲ CLI FINTI ATTIVI</span>
-                    <span class="mut">MODELLI DI PROVA</span>
+                    <span class="mut">{open.length} da rivedere</span>
+                    <button
+                      class="cn-btn cn-btn--text"
+                      type="button"
+                      onClick={() => {
+                        if (open[0]) go(open[0].card.id);
+                      }}
+                    >
+                      <span class="cn-btn__label">RIVEDI ↗</span>
+                    </button>
                   </div>
                 )}
-                {roles?.catalog.map((c) => (
-                  <div key={c.cli}>
-                    <span>
-                      {c.cli.toUpperCase()} ·{' '}
-                      {c.status === 'ready'
-                        ? '■ DISPONIBILE'
-                        : c.status === 'loading'
-                          ? '○ IN LETTURA'
-                          : `× ${c.note ?? 'NON DISPONIBILE'}`}
-                    </span>
-                    <span class="mut">{c.models.map((m) => m.name).join(' · ')}</span>
-                  </div>
-                ))}
               </div>
-            )}
-          </section>
+            ))}
         </div>
 
-        <aside class="sqw__s" aria-label="Ruolo selezionato">
-          {info && next && (
-            <>
-              <div class="ctl">
-                <span class="cn-tag">
-                  <b>SEL/</b> RUOLO
-                </span>
-                <span class={agent?.status === 'idle' || !agent ? 'cn-tag' : 'cn-tag cn-tag--ink'}>
-                  {STATE_TAG[agent?.status ?? 'idle']}
-                </span>
-              </div>
-              <div>
-                <h3 class="t-title">{ROLE[selected]}</h3>
-                <span class="t-data mut">
-                  {PROVIDER[info.cli]} · {started ? 'in questa chat' : 'dalla prossima chat'}
-                </span>
-              </div>
-              <RoleFields
-                role={selected}
-                info={
-                  // The leader's model stays the chat's; the rest are the settings it writes.
-                  selected === 'leader' && started
-                    ? { ...next, model: info.model, modelName: info.modelName }
-                    : next
-                }
-                catalog={catalog}
-                locked={selected === 'leader' && started}
-                providerFixed={selected === 'leader' && started}
-                {...(started && next.cli !== info.cli
-                  ? {
-                      providerNote: `QUESTA CHAT RESTA SU ${PROVIDER[info.cli].toUpperCase()}: IL PROVIDER VALE DALLA PROSSIMA CHAT`,
-                    }
-                  : selected === 'implementer' && started
-                    ? { providerNote: 'UN CAMBIO DI PROVIDER VALE DALLA PROSSIMA CHAT' }
-                    : {})}
-              />
-              <div class="kvl">
-                <div>
-                  <span>ORA</span>
-                  <span>{agent?.activity ?? '—'}</span>
-                </div>
-                <div>
-                  <span>SOTTO-AGENTI</span>
-                  <span>
-                    {agent && agent.subagents.length > 0 ? agent.subagents.join(' · ') : '—'}
-                  </span>
-                </div>
-              </div>
-              {firstWaiting && (
-                <button
-                  class="cn-btn cn-btn--text"
-                  type="button"
-                  style={{ alignSelf: 'flex-start' }}
-                  onClick={() => {
-                    go(firstWaiting.id);
-                  }}
-                >
-                  <span class="cn-btn__label">
-                    {firstWaiting.kind === 'permission' ? 'VAI AL PERMESSO ↗' : 'VAI ALLA DELEGA ↗'}
-                  </span>
-                </button>
-              )}
-            </>
+        <header class="cn-cell cn-cell--row sq-roleh" aria-label="Ruolo selezionato">
+          <span class="cn-tag">
+            <b>{INDEX[selected]}/</b> {ROLE[selected]}
+          </span>
+          <span class="cn-tag">{started ? 'Di questa chat' : 'Prossima chat'}</span>
+        </header>
+        <div class="cn-cell sq-roleb">
+          {roles ? (
+            <RoleEditor role={selected} roles={roles} />
+          ) : (
+            <p class="hint">Lettura dei ruoli…</p>
           )}
+        </div>
 
-          <section style={{ marginTop: 'auto' }} aria-label="Utilizzo">
-            <div class="sh">
-              <span class="cn-tag">
-                <b>03/</b> UTILIZZO
-              </span>
-              <span class="cn-tag">5H · 1W</span>
-            </div>
-            <table class="mtab" style={{ marginTop: '8px' }}>
-              <thead>
-                <tr>
-                  <th scope="col">PROVIDER</th>
-                  <th scope="col">5H</th>
-                  <th scope="col">1W</th>
-                </tr>
-              </thead>
-              <tbody>
-                {usage.map((p) => (
-                  <tr key={p.provider} title={p.note}>
-                    <td>{p.provider.toUpperCase()}</td>
-                    {windowCell(p, '5h')}
-                    {windowCell(p, 'weekly')}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {past.map((label) => (
-              <p key={label} class="hint" style={{ margin: '8px 0 0' }}>
-                ▲ {label} OLTRE LA SOGLIA DEL {threshold}%
-              </p>
-            ))}
-          </section>
-        </aside>
-      </section>
+        <Alert waiting={waiting} theme={theme} go={go} />
+
+        <footer class="cn-cell cn-cell--row sq-foot">
+          <span class="cn-tag">Trascina la lavagna · rotella per lo zoom</span>
+        </footer>
+      </Lattice>
     </div>
   );
 }

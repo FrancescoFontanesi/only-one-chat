@@ -41,7 +41,7 @@ function User({ item, index, busy }: { item: Item<'user'>; index: number; busy: 
         <b>TU</b>
         <span>→ {message.to === 'leader' ? 'LEADER' : 'IMPLEMENTATORE'}</span>
         {message.to === 'leader' && (
-          <span>VIA · {message.route ? ROUTE_LABEL[message.route] : 'DECIDE IL LEADER'}</span>
+          <span>VIA · {message.route ? ROUTE_LABEL[message.route] : 'DECIDE LUI'}</span>
         )}
         <span class="who__acts">
           <Copy text={message.text} />
@@ -442,9 +442,9 @@ function Notice({ item, retry }: { item: Item<'notice'>; retry: (() => void) | n
 }
 
 /**
- * Which items arrived while the chat was open: those enter with Construct.
- * What a chat brings when it is loaded (opened, resumed, a new epoch) is
- * just there.
+ * Which items arrived while the chat was open: those enter with Construct, as
+ * the answer to what the user did. What a chat brings when it is loaded
+ * (opened, resumed, a new epoch) is just there.
  */
 function useArrivals(items: readonly ThreadItem[], epoch: number): ReadonlyMap<string, boolean> {
   const seen = useRef(new Map<string, boolean>());
@@ -488,7 +488,7 @@ export function Thread({
         switch (item.kind) {
           case 'user':
             users++;
-            return <User key={item.id} item={item} index={users} busy={busy} />;
+            return enter(item.id, <User key={item.id} item={item} index={users} busy={busy} />);
           case 'turn':
             return enter(item.id, <Turn key={item.id} item={item} />);
           case 'approval':

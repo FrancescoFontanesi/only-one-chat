@@ -1,8 +1,9 @@
 /* What the live webview needs beyond the canvas (oo.css): a full-height shell where only the
    thread scrolls, the segmented controls, the composer with its tools, the thread in one column
    with its tool logs, popovers, the design system's motion (progress, cursor, reveal, flash),
-   1-bit scrollbars, and Squad as a layer over the chat that scrolls and stacks when the panel is
-   narrow. Colors, sizes and lines only from the design system's variables. */
+   1-bit scrollbars, the options as words and the level meter, Squad as a live console over the
+   chat and the settings page as a stack of Lattices, both stacking when the panel is narrow.
+   Colors, sizes and lines only from the design system's variables. */
 
 html,
 body {
@@ -23,8 +24,29 @@ body {
   padding-bottom: var(--space-4);
 }
 .app--live > .dock {
-  border-top: var(--stroke-hairline) solid var(--line);
   position: relative;
+}
+/* Proportions, not pixels: the composer's column is 70% of the panel, the messages reach 15% of
+   that column past it on each side (91% of the panel), whatever the panel's width. */
+.app--live .colw {
+  max-width: none;
+  width: 70%;
+}
+.thread__col {
+  margin: 0 -15%;
+}
+/* Why the chat cannot run, above everything in the thread. */
+.thread__col > .note {
+  align-items: center;
+  margin-bottom: var(--space-4);
+}
+@container oo (max-width: 640px) {
+  .app--live .colw {
+    width: 100%;
+  }
+  .thread__col {
+    margin: 0;
+  }
 }
 
 /* Text the agents and the user wrote: their line breaks are kept. */
@@ -115,68 +137,702 @@ body {
   overflow-wrap: anywhere;
 }
 
-/* Squad: a layer over the chat; the chat behind it veiled in 1-bit. */
+/* ── Lattice: the + at a junction one step stronger than the lines it cuts, not ink. ── */
+.cn-lattice__p line {
+  stroke: var(--ink-disabled);
+}
+
+/* ── The design system's counter (motion.tsx). ── */
+.cn-counter {
+  font-variant-numeric: tabular-nums;
+}
+.lt-mark {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 20px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+[data-theme='light'] .lt-mark {
+  font-weight: 700;
+}
+
+/* ── Options as words: the chosen one in ink between brackets; the pointer inverts. ── */
+.opts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-left: -8px;
+}
+.opts__lead {
+  margin: 0 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.opt {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.opt::before {
+  content: '[\00a0';
+  visibility: hidden;
+}
+.opt::after {
+  content: '\00a0]';
+  visibility: hidden;
+}
+.opt[aria-checked='true'] {
+  color: var(--ink);
+}
+.opt[aria-checked='true']::before,
+.opt[aria-checked='true']::after {
+  visibility: visible;
+}
+.opt:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--ground);
+}
+.opt:disabled {
+  color: var(--ink-disabled);
+  cursor: not-allowed;
+}
+.opt:focus-visible {
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* ── A level meter: solid up to the chosen step; under the pointer the steps it would add in
+   the 1-bit half tone, those it would drop hollow. ── */
+.scale {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 6px 12px;
+}
+.scale__cells {
+  grid-column: 1 / -1;
+}
+.scale__cells {
+  display: inline-flex;
+  gap: 3px;
+}
+.scale__c {
+  all: unset;
+  box-sizing: border-box;
+  width: 28px;
+  height: 14px;
+  border: var(--stroke-hairline) solid var(--line-strong);
+  cursor: pointer;
+}
+.scale__c--on {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+.scale__c--add {
+  border-color: var(--ink);
+  background-color: var(--ground);
+  background-image: conic-gradient(
+    var(--ink) 25%,
+    var(--ground) 0 50%,
+    var(--ink) 0 75%,
+    var(--ground) 0
+  );
+  background-size: 2px 2px;
+}
+.scale__c--drop {
+  border-color: var(--ink);
+}
+.scale__c:disabled {
+  border-color: var(--ink-disabled);
+  cursor: not-allowed;
+}
+.scale__c:focus-visible {
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: 2px;
+}
+.scale__v {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.scale__n {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+.fixed {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+/* The fields of a role: a stacked spec list. */
+.rf dd {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/* ── Squad: over the chat veiled in 1-bit, one Lattice with no gaps (squad.tsx places nothing:
+   the areas are here). Bar; board head and port; activity tabs and list; on the right the
+   selected role's head and fields, then what waits for you; the foot. ── */
 .stage--layer {
   position: fixed;
   inset: 0;
   z-index: 20;
   background: transparent;
 }
-.stage--layer .sqw__m,
-.stage--layer .sqw__s {
+.sqw {
+  position: absolute;
+  inset: var(--space-5);
+  background: var(--ground);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 30%);
+  grid-template-rows: 56px 44px minmax(0, 1fr) 44px minmax(0, 30%) 40px;
+}
+.sq-bar {
+  grid-area: 1 / 1 / 2 / 3;
+  gap: var(--space-4);
+}
+.sq-bar .crumb {
+  min-width: 0;
+  margin-right: auto;
+}
+.sq-bar__end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.sqw > .bd__head {
+  grid-area: 2 / 1 / 3 / 2;
+}
+.sqw > .bd__port {
+  grid-area: 3 / 1 / 4 / 2;
+}
+.sq-acth {
+  grid-area: 4 / 1 / 5 / 2;
+}
+.sq-actb {
+  grid-area: 5 / 1 / 6 / 2;
+  overflow-y: auto;
+  padding-top: 8px;
+}
+.sq-roleh {
+  grid-area: 2 / 2 / 3 / 3;
+}
+.sq-roleb {
+  grid-area: 3 / 2 / 4 / 3;
+  overflow-y: auto;
+  padding-top: 4px;
+}
+.sq-roleb .cn-spec {
+  border-top: 0;
+}
+.sq-alert {
+  grid-area: 4 / 2 / 6 / 3;
+  gap: 8px;
   overflow-y: auto;
 }
-.flow .fn {
-  text-align: left;
+.sq-alert[data-theme] .mut {
+  color: var(--ink-muted);
+}
+.sq-alert__a {
+  margin-top: 8px;
+  display: flex;
+  gap: 12px;
+}
+.sq-foot {
+  grid-area: 6 / 1 / 7 / 3;
+}
+
+/* ── A panel framed by its vertices (lattice.tsx, Crossed): one cell, a + at each corner; its
+   head and foot set off by rules inset from the frame. The agents on the board. ── */
+.xf {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
+  background: var(--ground);
+}
+.xf__h,
+.xf__f {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px var(--space-3);
+  margin: 0 var(--space-4);
+  padding: 12px 0;
+}
+.xf__h {
+  border-bottom: var(--stroke-hairline) solid var(--line);
+}
+.xf__f {
+  border-top: var(--stroke-hairline) solid var(--line);
+}
+.xf__b {
+  padding: var(--space-3) var(--space-4);
+}
+.sq-agent {
+  cursor: pointer;
+}
+.sq-agent__in {
+  display: flex;
+  flex-direction: column;
+}
+.sq-agent--on .cn-lattice__l line {
+  stroke: var(--line-strong);
+}
+.sq-agent--on .cn-lattice__p line {
+  stroke: var(--ink);
+}
+.sq-agent__h {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: 0 var(--space-4);
+  padding: 12px 0;
+  border-bottom: var(--stroke-hairline) solid var(--line);
+  cursor: pointer;
+}
+.sq-agent__h:focus-visible,
+.sq-tab:focus-visible {
+  outline: var(--stroke-focus) solid currentColor;
+  outline-offset: 3px;
+}
+.sq-agent__h .cn-tag b.cn-accent {
+  color: var(--ground);
+}
+.cn-accent .cn-tag--live::before {
+  background: var(--ground);
+}
+.sq-agent__b {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sq-agent__m {
+  font-family: var(--font-display);
+  font-size: 32px;
+  line-height: 1;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+[data-theme='light'] .sq-agent__m {
+  font-weight: 700;
+}
+.sq-agent__s {
+  margin-top: var(--space-2);
+  grid-template-columns: 112px minmax(0, 1fr);
+  border-top: 0;
+}
+.sq-agent__s dt,
+.sq-agent__s dd {
+  border-bottom: 0;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.sq-agent__s dd .cn-meter {
+  max-width: 200px;
+}
+.sq-agent__a {
+  overflow-wrap: anywhere;
+}
+.cn-spec .sq-agent__subs {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.sq-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.sq-tab {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.sq-tab[aria-selected='true'],
+.sq-tab:hover {
+  color: var(--ink);
+}
+.sq-tab b {
+  color: var(--ink);
+  font-weight: 500;
+}
+.sq-tab .cn-frame__idx:not(.cn-accent) {
+  outline: var(--stroke-hairline) solid var(--line-strong);
+  outline-offset: -1px;
 }
 @container oo (max-width: 980px) {
   .sqw {
-    left: 0;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 64px auto auto;
+    inset: 0;
     overflow-y: auto;
-  }
-  .sqw__m,
-  .sqw__s {
-    overflow: visible;
-  }
-  .sqw__s {
-    border-left: 0;
-    border-top: var(--stroke-hairline) solid var(--line);
-  }
-  .flow {
     grid-template-columns: minmax(0, 1fr);
-    row-gap: 8px;
+    grid-template-rows: none;
   }
-  .flow .fc {
-    flex-direction: row;
-    justify-content: center;
+  .sqw > .cn-cell {
+    grid-area: auto;
   }
-  .flow .fc__l {
-    display: none;
+  .sqw > .bd__head,
+  .sq-acth,
+  .sq-roleh {
+    min-height: 44px;
   }
-  .fu {
+  .sqw > .bd__port {
+    height: 420px;
+  }
+  .sq-bar,
+  .sq-foot {
+    min-height: 48px;
+  }
+  .sq-bar__end > .cn-tag,
+  .sq-foot > .cn-tag + .cn-tag {
     display: none;
   }
 }
 
-/* Settings: one scrolling page. */
+/* ── The board: blocks in a world moved by dragging the ground, a + at every crossing. ── */
+.bd__head {
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.bd__legend,
+.bd__ctl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+}
+.bd__ctl {
+  gap: 8px;
+}
+.bd__port {
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.bd__port:focus-visible {
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: -2px;
+}
+.bd__port--grab {
+  cursor: grabbing;
+}
+.bd__grid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.bd__grid path {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.bd__world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+}
+.bd__links {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+.bd__link polyline {
+  fill: none;
+  stroke: var(--ink-muted);
+  stroke-width: 1;
+}
+.bd__link polygon {
+  fill: var(--ink-muted);
+}
+.bd__link--live polyline {
+  stroke: var(--ink);
+  stroke-dasharray: 4 4;
+  animation: bd-march 0.66s steps(4) infinite;
+}
+.bd__link--live polygon {
+  fill: var(--ink);
+}
+@keyframes bd-march {
+  to {
+    stroke-dashoffset: -8;
+  }
+}
+.bd__world > .bd__label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 2px 6px;
+  background: var(--ground);
+  white-space: nowrap;
+}
+.bd__world > .bd__label.cn-accent {
+  background: var(--ink);
+}
+.bd__block {
+  position: absolute;
+  cursor: auto;
+  user-select: text;
+}
+.bd__block > .cn-reveal {
+  display: flex;
+}
+.bd__block > .cn-reveal > * {
+  flex: 1;
+  min-width: 0;
+}
+.bd__zoom {
+  min-width: 4ch;
+  text-align: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bd__link--live polyline {
+    animation: none;
+  }
+}
+
+/* ── Settings: printed lattice slides (RefLatticeSlidesPrint): a stack of Lattices on fourteen
+   columns, broken lines with a + at each junction, dense cells. Cells are placed by settings.tsx. ── */
 .app--page {
   height: 100vh;
   overflow: hidden;
 }
-.app--page > .st {
+.sl-scroll {
   flex: 1;
   min-height: 0;
-}
-.st > .rail {
   overflow-y: auto;
 }
-.st > .smain {
-  overflow-y: auto;
+.sl-page {
+  max-width: 1440px;
+  margin: 0 auto;
+  background: var(--ground);
+}
+.sl-wait {
+  padding: var(--space-4);
+}
+.sl-cols {
+  grid-template-columns: 48px repeat(12, minmax(0, 1fr)) 48px;
+}
+.sl-cover {
+  grid-template-rows: 56px 168px 64px auto;
+}
+.sl-end {
+  justify-content: flex-end;
+}
+.sl-nav {
+  justify-content: space-around;
+  flex-wrap: wrap;
+}
+.sl-nav a {
+  text-decoration: none;
+}
+.sl-nav a:hover {
+  color: var(--ink);
+}
+.sl-nav a:focus-visible {
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: 3px;
+}
+.sl-h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 56px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.sl-search {
+  flex: 1;
+  max-width: 480px;
+}
+.sl-search .cn-field__box {
+  height: 36px;
+}
+.sl-fake {
+  min-height: 96px;
+  flex-wrap: wrap;
+}
+.sl-fake__t {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sl-anchor {
+  scroll-margin-top: 0;
+}
+.sl-lead {
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+}
+.sl-title {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.sl-about {
+  margin: 0;
+  max-width: 34ch;
+}
+.sl-numc {
+  justify-content: flex-end;
+}
+.sl-num {
+  display: block;
+  margin: auto 0 -0.14em -0.04em;
+  font-family: var(--font-display);
+  font-size: 200px;
+  line-height: 0.78;
+  font-weight: 700;
+  letter-spacing: -0.06em;
+}
+.sl-num--in {
+  margin: auto 0 -0.14em -0.04em;
+  padding-top: var(--space-4);
+  font-size: 120px;
+}
+.sl-lead:has(.sl-num--in) {
+  padding-bottom: 0;
+  overflow: hidden;
+}
+.sl-eh .cn-tag--ink {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sl-side {
+  display: flex;
+  align-items: center;
+  gap: 4px 16px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.sl-eb,
+.sl-ev {
+  justify-content: center;
+  gap: var(--space-2);
+  padding-top: var(--space-4);
+  padding-bottom: var(--space-4);
+}
+.sl-d {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ink-muted);
+}
+.sl-model {
+  font-family: var(--font-display);
+  font-size: 40px;
+  line-height: 1;
+  font-weight: 600;
+}
+[data-theme='light'] .sl-model {
+  font-weight: 700;
+}
+.sl-ev .rf {
+  border-top: 0;
+}
+.sl-ev .cn-field input {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.sx-area .cn-field__box {
+  height: auto;
+  align-items: flex-start;
+  padding: 10px 12px;
+}
+.sx-area textarea {
+  min-height: 88px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+}
+.sl-none {
+  padding: var(--space-5) var(--space-4);
+}
+.sl-foot {
+  grid-template-rows: 48px;
+}
+@container oo (max-width: 900px) {
+  .sl-cols {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: none !important;
+  }
+  .sl-cols > .cn-cell {
+    grid-area: auto !important;
+  }
+  .sl-cols > .cn-cell--margin,
+  .sl-numc {
+    display: none;
+  }
+  .sl-cols > .cn-cell--row {
+    min-height: 48px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  .sl-h1 {
+    font-size: 36px;
+  }
+  .sl-hero {
+    padding-top: var(--space-5);
+    padding-bottom: var(--space-5);
+  }
+  .sl-num--in {
+    font-size: 72px;
+  }
 }
 
 textarea:focus-visible,
@@ -206,86 +862,611 @@ input:focus-visible {
   background: var(--ground);
 }
 
-/* ── Segmented control: the chosen option is the inversion held (aria-pressed). ── */
-.seg {
-  flex-wrap: wrap;
-  max-width: 100%;
-}
-.seg button[aria-pressed='true'] {
-  background: var(--ink);
-  color: var(--ground);
-}
-.seg button[aria-pressed='false']:hover:not(:disabled) {
-  color: var(--ink);
-  outline: var(--stroke-hairline) solid var(--ink);
-  outline-offset: -1px;
-}
-.seg button:disabled {
-  color: var(--ink-disabled);
-  cursor: not-allowed;
-}
-.seg button[aria-pressed='true']:disabled {
-  background: var(--ink-disabled);
-  color: var(--ground);
-}
-.seg--sm button {
-  height: 24px;
-  padding: 0 8px;
-  font-size: 10px;
-}
-.rset__v .seg {
-  align-self: flex-start;
-}
-
 /* ── Composer: one frame; recipient and route above the text, the tools below. ── */
 .dock {
+  padding: 0;
+}
+.dock__in {
   padding: var(--space-3) var(--space-4) var(--space-4);
 }
+/* A text button that cannot be used is dim text, never a filled block. */
+.cn-btn--text:disabled {
+  --_stroke: transparent;
+  color: var(--ink-disabled);
+}
+.crumb__st {
+  color: var(--ink);
+}
 .cmp {
-  position: relative;
-  border: var(--stroke-hairline) solid var(--line-strong);
   background: var(--ground);
 }
-.cmp:focus-within {
-  border-color: var(--ink);
+/* The frame's lines darken while one writes, the + one step above them. */
+.cmp:focus-within .cn-lattice__l line {
+  stroke: var(--line-strong);
 }
-.cmp--off {
-  border-color: var(--ink-disabled);
+.cmp:focus-within .cn-lattice__p line {
+  stroke: var(--ink-muted);
 }
-.cmp__head,
+.cmp__cell {
+  padding: 0;
+}
+/* Under the text, a rule inset from the frame, then one line of picks, the context and the send. */
 .cmp__foot {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 16px;
-  padding: 8px 12px;
-}
-.cmp__head {
-  border-bottom: var(--stroke-hairline) solid var(--line);
-}
-.cmp__foot {
+  gap: 8px 20px;
+  margin: 0 12px;
+  padding: 10px 0 10px;
   border-top: var(--stroke-hairline) solid var(--line);
-  gap: 8px 12px;
 }
-.cmp__head .ctx {
+.cmp__ctx {
   margin-left: auto;
 }
-.cmp__g {
+/* ── Beside the composer (Hud.tsx), on a wide panel: two dials of 216 × 192, 24px from it, each
+   joined to it by a connector at the middle of its edge; the composer as tall as they are. ── */
+.app--live {
+  --hud-w: 216px;
+  --hud-h: 192px;
+  --hud-gap: 24px;
+}
+.dock__side {
+  display: none;
+}
+.cmp__to {
+  display: contents;
+}
+@container oo (min-width: 1000px) {
+  .dock__in {
+    display: grid;
+    grid-template-columns: var(--hud-w) minmax(0, 1fr) var(--hud-w);
+    column-gap: var(--hud-gap);
+    align-items: end;
+  }
+  .app--live .dock__in > .colw {
+    width: auto;
+    margin: 0;
+  }
+  .dock__side {
+    display: block;
+    height: var(--hud-h);
+  }
+  .dock__in > .colw > .cmp {
+    min-height: var(--hud-h);
+  }
+  /* Who and how are on the left dial. */
+  .cmp__to {
+    display: none;
+  }
+  /* The thread spans the composer's column, 15% of it past each side but never past the dials. */
+  .app--live .thread > .colw {
+    width: calc(100% - 2 * (var(--hud-w) + var(--hud-gap)));
+  }
+  .app--live .thread__col {
+    margin: 0 max(-15%, calc(-1 * (var(--hud-w) + var(--hud-gap))));
+  }
+}
+.dock__in > .colw > .cmp > .cmp__cell {
+  min-height: inherit;
+}
+
+.hud {
+  position: relative;
+  width: var(--hud-w);
+  height: var(--hud-h);
+  user-select: none;
+}
+.hud__svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  fill: none;
+  pointer-events: none;
+}
+.hud__svg path {
+  fill: none;
+  stroke-width: 1;
+}
+.hud__line {
+  stroke: var(--line);
+}
+.hud__strong {
+  stroke: var(--line-strong);
+}
+.hud__ink {
+  stroke: var(--ink);
+}
+.hud__dash {
+  stroke: var(--line-strong);
+  stroke-dasharray: 2 3;
+}
+.hud__dots {
+  stroke: var(--line-strong);
+  stroke-dasharray: 1 3;
+}
+.hud__svg .hud__w2 {
+  stroke-width: 2;
+}
+.hud__svg .hud__w3 {
+  stroke-width: 3;
+}
+.hud__dashed {
+  stroke-dasharray: 3 2;
+}
+.hud__turn {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  z-index: 1;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.hud__turn--left {
+  left: 164px;
+  width: 52px;
+  cursor: ns-resize;
+}
+/* The outer ring of the left dial: a click or the wheel changes who you talk to. */
+.hud__ring {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: 132px;
+  width: 32px;
+  height: 100%;
+  cursor: pointer;
+}
+/* Above the middle line: provider and state, the role, the reasoning's reading on the line. */
+.hud__meta--left {
+  position: absolute;
+  left: 8px;
+  top: 28px;
+  max-width: 152px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hud__big--left {
+  position: absolute;
+  left: 8px;
+  width: 128px;
+  top: 44px;
+}
+.hud__read {
+  position: absolute;
+  left: 8px;
+  top: 76px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  letter-spacing: 0.12em;
+  color: var(--ink);
+}
+/* Below it: the model, then the route or the handoff. */
+.hud__act {
+  position: absolute;
+  left: 8px;
+  width: 124px;
+  top: 124px;
+}
+/* The route's drum: the one before, the chosen one, the one after; it rolls one line on a change. */
+.drum {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  height: 40px;
+  overflow: hidden;
+  cursor: ns-resize;
+}
+.drum:focus-visible {
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: 2px;
+}
+.drum__k {
+  align-self: center;
+}
+.drum__win {
+  display: grid;
+  grid-auto-rows: 12px;
+  row-gap: 2px;
+}
+.drum__win--down {
+  animation: drum-down 120ms steps(3) both;
+}
+.drum__win--up {
+  animation: drum-up 120ms steps(3) both;
+}
+@keyframes drum-down {
+  from {
+    transform: translateY(14px);
+  }
+}
+@keyframes drum-up {
+  from {
+    transform: translateY(-14px);
+  }
+}
+.drum__o {
+  all: unset;
+  box-sizing: border-box;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--ink-disabled);
+  cursor: pointer;
+}
+.drum__o:hover {
+  color: var(--ink-muted);
+}
+.drum__o--on {
+  font-size: 11px;
+  color: var(--ink);
+  cursor: inherit;
+}
+.drum__o--on::before {
+  content: '› ';
+  color: var(--ink-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .drum__win--down,
+  .drum__win--up {
+    animation: none;
+  }
+}
+.hud__turn--right {
+  left: 0;
+  width: 88px;
+}
+.hud__turn:focus-visible {
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: -2px;
+}
+.hud__lbl,
+.hud__model {
+  all: unset;
+  box-sizing: border-box;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 14px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.hud__lbl {
+  position: absolute;
+  z-index: 2;
+  height: 14px;
+  padding: 0 2px;
+}
+.hud__lbl.is-on,
+.hud__lbl:hover {
+  color: var(--ink);
+}
+.hud__lbl:disabled,
+.hud__model:disabled {
+  cursor: default;
+}
+.hud__lbl:focus-visible,
+.hud__model:focus-visible {
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: 1px;
+}
+.hud__key {
+  position: absolute;
+  top: 4px;
+}
+.hud__key--left {
+  left: 8px;
+}
+.hud__key--right {
+  right: 8px;
+}
+.hud__meta,
+.hud__k {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 14px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+.hud__big {
+  font-family: var(--font-display);
+  font-size: 19px;
+  line-height: 24px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hud__model {
+  position: absolute;
+  left: 8px;
+  top: 100px;
+  max-width: 128px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.hud__model > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.hud__model > span:last-child {
+  color: var(--ink-muted);
+}
+.hud__meta--right {
+  position: absolute;
+  left: 96px;
+  right: 8px;
+  top: 28px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The 5-hour figure above the middle line, as the role's name on the left. */
+.hud__fig {
+  position: absolute;
+  left: 96px;
+  right: 8px;
+  top: 44px;
+  height: 44px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.hud__fig--none {
+  align-items: flex-end;
+  padding-bottom: 4px;
+}
+.hud__num {
+  display: flex;
+  align-items: baseline;
+  font-family: var(--font-display);
+  font-size: 40px;
+  line-height: 44px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.hud__num small {
+  font-size: 22px;
+  font-weight: 300;
+}
+.hud__ctl {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.hud__ctl--right {
+  left: 96px;
+  right: 8px;
+  top: 104px;
+  gap: 8px;
+  letter-spacing: 0.14em;
+  color: var(--ink-muted);
+}
+.hud__ctl--right .hud__row > span:last-child {
+  color: var(--ink);
+}
+.hud__handoff {
+  align-self: flex-start;
+  min-height: 26px;
+}
+.hud__handoff .cn-btn__icon {
+  width: 26px;
+}
+.hud__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+.hud__cells {
+  display: flex;
+  gap: 2px;
+}
+.hud__cells i {
+  display: block;
+  width: 4px;
+  height: 7px;
+  box-sizing: border-box;
+  border-bottom: var(--stroke-hairline) solid var(--line-strong);
+}
+.hud__cells i.is-on {
+  background: var(--ink);
+  border-bottom-color: var(--ink);
+}
+
+/* ── A pick: a key, one tick per option, the chosen name. Under the pointer a tick turns to
+   the 1-bit half tone and the name decodes to it; a new choice flashes once, inverted. ── */
+.pk {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-}
-.cmp__k {
   font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.pk__k {
   color: var(--ink-muted);
 }
+.pk__ticks {
+  display: inline-flex;
+  gap: 2px;
+}
+.pk__t {
+  all: unset;
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  border: var(--stroke-hairline) solid var(--line-strong);
+  cursor: pointer;
+}
+.pk__t--on {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+.pk__t--look,
+.pk__t:not(.pk__t--on):focus-visible {
+  border-color: var(--ink);
+  background-color: var(--ground);
+  background-image: conic-gradient(
+    var(--ink) 25%,
+    var(--ground) 0 50%,
+    var(--ink) 0 75%,
+    var(--ground) 0
+  );
+  background-size: 2px 2px;
+}
+.pk__t:focus-visible {
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: 2px;
+}
+.pk__t:disabled {
+  cursor: not-allowed;
+}
+.pk__v {
+  all: unset;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 2px 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink);
+  cursor: pointer;
+}
+.pk__v:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--ground);
+}
+.pk__v--set {
+  animation: pk-set 360ms steps(1) both;
+}
+@keyframes pk-set {
+  0%,
+  66% {
+    background: var(--ink);
+    color: var(--ground);
+  }
+  33%,
+  100% {
+    background: transparent;
+    color: var(--ink);
+  }
+}
+.pk--off .pk__v,
+.pk--off .pk__t--on {
+  color: var(--ink-disabled);
+}
+.pk--off .pk__t--on {
+  background: var(--ink-disabled);
+  border-color: var(--ink-disabled);
+}
+.pk--off .pk__v {
+  cursor: default;
+}
+/* Compact: only the name, muted; the ticks wipe in above it under the pointer or the focus. */
+.pk--compact {
+  position: relative;
+}
+.pk--compact .pk__v {
+  color: var(--ink-muted);
+}
+.pk--compact .pk__ticks {
+  position: absolute;
+  left: 6px;
+  bottom: 100%;
+  padding: 6px 0;
+  clip-path: inset(0 100% 0 0);
+}
+.pk--compact:not(.pk--off):hover .pk__ticks,
+.pk--compact:not(.pk--off):focus-within .pk__ticks {
+  animation: cn-wipe 160ms steps(4) both;
+}
+.pk--compact:not(.pk--off):hover .pk__v:not(:hover),
+.pk--compact:focus-within .pk__v:not(:hover) {
+  color: var(--ink);
+}
+.pk--off.pk--compact .pk__v {
+  color: var(--ink-disabled);
+}
+
+/* ── The thread answers the pointer: a message under it draws a notch on its rule, inverts
+   its author and wipes its actions in, in steps. ── */
+.turn {
+  position: relative;
+}
+.turn::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -1px;
+  width: 0;
+  height: var(--stroke-rule);
+  background: var(--ink);
+  transition: width 240ms steps(4);
+}
+.turn:hover::before,
+.turn:focus-within::before {
+  width: 72px;
+}
+.turn:hover .who > b,
+.turn:focus-within .who > b {
+  background: var(--ink);
+  color: var(--ground);
+  box-shadow: 0 0 0 3px var(--ink);
+}
+.turn:hover .who__acts,
+.turn:focus-within .who__acts {
+  animation: cn-wipe 200ms steps(4) both;
+}
+@keyframes cn-wipe {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn::before {
+    transition: none;
+  }
+  .turn:hover .who__acts,
+  .turn:focus-within .who__acts,
+  .pk__v--set {
+    animation: none;
+  }
+}
+
 .cmp__atts {
   padding: 10px 12px 0;
 }
 .cmp__in {
+  flex: 1;
   display: flex;
   gap: 10px;
   padding: 10px 12px;
@@ -324,50 +1505,9 @@ input:focus-visible {
   color: var(--ink-muted);
 }
 .cmp__send {
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 12px;
-}
-.tool {
-  all: unset;
-  box-sizing: border-box;
-  height: 24px;
-  padding: 0 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: var(--stroke-hairline) solid var(--line-strong);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.12em;
-  color: var(--ink-muted);
-  cursor: pointer;
-}
-.tool b {
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 500;
-}
-.tool:hover:not(:disabled),
-.tool[aria-pressed='true'] {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: var(--ground);
-}
-.tool:hover:not(:disabled) b,
-.tool[aria-pressed='true'] b {
-  color: var(--ground);
-}
-.tool:disabled {
-  border-color: var(--ink-disabled);
-  color: var(--ink-disabled);
-  cursor: not-allowed;
-}
-.tool:focus-visible {
-  outline: var(--stroke-focus) solid var(--ink);
-  outline-offset: 3px;
 }
 .cmp > .pop--up {
   left: -1px;

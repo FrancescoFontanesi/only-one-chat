@@ -36,16 +36,25 @@ The chat opens in an editor tab, which you can move and resize; the layout follo
   click away; then the facts the extension verified and the changes to review.
 - **The dock, at the bottom:** what waits for you takes its place — a permission (keys 1, 2, 3;
   Esc denies), a delegation or a report to approve, editable — else the box you write in. It
-  grows with the text up to about a third of the panel, then scrolls. Around the text:
-  - **LEADER / IMPLEMENTATORE:** who receives it, one per message. Writing to the implementer
+  grows with the text up to about a third of the panel, then scrolls. Under the text, one line:
+  each choice shows only what is chosen, with one square per option (point at a square to see
+  that option, click it to choose, or click the name to move to the next).
+  - **A — LEADER / IMPLEMENTATORE:** who receives it, one per message. Writing to the implementer
     directly is the cheapest way when you already know what to ask; the leader reads that report
     with your next message;
-  - **VIA**, the route you ask of the leader: DECIDE LUI, DELEGA, FAI TU, CHIEDI;
+  - the route you ask of the leader: DECIDE LUI, DELEGA, FAI TU, CHIEDI (its squares open above
+    the name under the pointer);
+  - **DELEGHE:** whether you approve each message between the agents or they pass on their own;
   - **CTX:** how full the session of the agent you write to is, after its latest turn;
-  - **@ FILE** attaches a file or a folder (see below);
-  - **/ COMANDI**, or `/` at the start of the text: `/delega`, `/fai`, `/chiedi`, `/impl`,
-    `/leader`, `/allega`, `/nuova` (or `/ferma` while it works), `/squad`, `/impostazioni`;
-  - **DELEGHE:** whether you approve each message between the agents or they pass on their own.
+  - `@` in the text attaches a file or a folder (see below); `/` at the start of the text lists
+    the commands: `/delega`, `/fai`, `/chiedi`, `/impl`, `/leader`, `/allega`, `/nuova` (or
+    `/ferma` while it works), `/squad`, `/impostazioni`.
+- **On a wide panel,** two dials sit beside the box. On the left, who you talk to: click LDR or
+  IMP, or the outer ring. Its sight sets the reasoning (drag, click a segment or use the wheel);
+  the level reads above the middle line. Under it, for the leader the route, on a drum you roll with the wheel or click; for the implementer
+  its model (↕ moves to the next one) and **HANDOFF**, a new session of the same model that starts
+  from a handoff the current one writes. On the right the usage of the provider of who you talk
+  to: 5 hours and weekly, and when the window resets.
 - **Enter** sends, **Shift+Enter** starts a new line (the other way round in the settings).
 
 A brief written in the ChatGPT web app (it starts with `<<<OOC-BRIEF`) can be pasted into the
@@ -53,9 +62,11 @@ chat. The leader does not rewrite it: it forwards it with targeted notes or corr
 
 ## The Squad panel
 
-SQUAD opens a panel over the chat: how the work flows (you, the leader, the implementer), the
-roles with their model, permissions, state and context, the events, what waits for you, the
-changes, the models the CLIs offer, and the usage of the subscriptions. Select a role to change:
+SQUAD opens a panel over the chat: a board you can drag and zoom, with the leader and the
+implementer as blocks (model, state, context, what each is doing) and the delegations and reports
+that pass between them; the events, what waits for you, the changes, and gauges for the context
+and the usage of the subscriptions. Select an agent to
+change, in the side column:
 
 - the model, among those the CLIs offer, read from Codex and Claude Code themselves with no turn
   and no quota. The leader's model stays the one the chat began with; another applies from the

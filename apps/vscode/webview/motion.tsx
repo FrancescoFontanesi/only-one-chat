@@ -54,10 +54,26 @@ function decodeNode(node: Text, text: string, count: number) {
   });
 }
 
-/** Text that settles left to right whenever it changes: a status, a label. */
-export function Decode({ text, class: cls }: { text: string; class?: string }) {
+/**
+ * Text that settles left to right whenever it changes: a status, a label. Not
+ * when it first shows, unless `initial` asks for it (a value just chosen).
+ */
+export function Decode({
+  text,
+  class: cls,
+  initial = false,
+}: {
+  text: string;
+  class?: string;
+  initial?: boolean;
+}) {
   const ref = useRef<HTMLSpanElement>(null);
+  const first = useRef(!initial);
   useLayoutEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
     const node = ref.current?.firstChild;
     if (!(node instanceof Text)) return;
     return decodeNode(node, text, 12);
@@ -69,34 +85,37 @@ export function Decode({ text, class: cls }: { text: string; class?: string }) {
   );
 }
 
-/** Scramble on hover, for a button's label: 8 steps, then a 600 ms rest. */
-export function useScramble<T extends HTMLElement>() {
-  const ref = useRef<T>(null);
+/**
+ * Scramble on hover, for every button's label under `root`: 8 steps, then a
+ * 600 ms rest per button. One listener for the whole view.
+ */
+export function useHoverScramble(root: { current: HTMLElement | null }) {
   useEffect(() => {
-    const button = ref.current;
-    if (!button) return;
-    let busy = false;
-    let cancel: (() => void) | null = null;
-    const onEnter = () => {
+    const element = root.current;
+    if (!element || reducedMotion()) return;
+    const resting = new WeakSet<Element>();
+    const onOver = (event: PointerEvent) => {
+      const button = (event.target as Element | null)?.closest('.cn-btn');
+      if (!button || resting.has(button) || button.matches(':disabled')) return;
+      // Entering the button, not moving between its parts.
+      const from = event.relatedTarget as Node | null;
+      if (from && button.contains(from)) return;
       const node = button.querySelector('.cn-btn__label')?.firstChild;
-      if (busy || !(node instanceof Text)) return;
-      busy = true;
-      const text = node.data;
-      cancel = decodeNode(node, text, 8);
+      if (!(node instanceof Text) || node.data.trim() === '') return;
+      resting.add(button);
+      decodeNode(node, node.data, 8);
       window.setTimeout(
         () => {
-          busy = false;
+          resting.delete(button);
         },
         8 * TEMPO.tick + 600,
       );
     };
-    button.addEventListener('mouseenter', onEnter);
+    element.addEventListener('pointerover', onOver);
     return () => {
-      button.removeEventListener('mouseenter', onEnter);
-      cancel?.();
+      element.removeEventListener('pointerover', onOver);
     };
   }, []);
-  return ref;
 }
 
 /** Flash: the only alert motion; the element's polarity swaps three times. */
@@ -183,11 +202,13 @@ const construct: Paint = (ctx, k, { x, y, w, h }, color) => {
 /** ASCII: cells of 7×12 resolve left to right through a ramp of glyphs. */
 function asciiPaint(): Paint {
   const noise: number[] = [];
+  const glyphs: { x: number; y: number; g: string }[] = [];
   return (ctx, k, { x, y, w, h }, color) => {
     const cols = Math.ceil(w / 7);
     const rows = Math.ceil(h / 12);
-    ctx.font = '500 11px "JetBrains Mono", monospace';
-    ctx.textBaseline = 'top';
+    // One fill colour per pass: the ground cells first, then the glyphs over them.
+    glyphs.length = 0;
+    ctx.fillStyle = color('--ground');
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const i = r * cols + c;
@@ -195,14 +216,15 @@ function asciiPaint(): Paint {
         const d = (c / cols) * 0.7 + (noise[i] ?? 0) * 0.3;
         const ph = (k * 1.6 - d) * 3.2;
         if (ph >= 1) continue;
-        ctx.fillStyle = color('--ground');
         ctx.fillRect(x + c * 7, y + r * 12, 7, 12);
-        if (ph > 0) {
-          ctx.fillStyle = color('--ink');
-          ctx.fillText('@%#*+=-:.'[Math.floor(ph * 9)] ?? '.', x + c * 7, y + r * 12);
-        }
+        if (ph > 0)
+          glyphs.push({ x: x + c * 7, y: y + r * 12, g: '@%#*+=-:.'[Math.floor(ph * 9)] ?? '.' });
       }
     }
+    ctx.font = '500 11px "JetBrains Mono", monospace';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = color('--ink');
+    for (const glyph of glyphs) ctx.fillText(glyph.g, glyph.x, glyph.y);
   };
 }
 
@@ -233,8 +255,18 @@ export function Reveal({
     const canvas = document.createElement('canvas');
     canvas.className = 'cn-reveal-mask';
     const extend = mode === 'construct' ? 14 : 0;
+    // The colours are read once: reading the computed style on every cell of
+    // every step is what made the entrances stutter.
     const style = getComputedStyle(host);
-    const color = (name: string) => style.getPropertyValue(name).trim() || '#000';
+    const colors = new Map<string, string>();
+    const color = (name: string) => {
+      let value = colors.get(name);
+      if (value === undefined) {
+        value = style.getPropertyValue(name).trim() || '#000';
+        colors.set(name, value);
+      }
+      return value;
+    };
     const paint = mode === 'construct' ? construct : asciiPaint();
     const start = () => {
       const w = host.offsetWidth;
@@ -286,37 +318,6 @@ export function Reveal({
     <div ref={ref} class={cls ? `cn-reveal ${cls}` : 'cn-reveal'}>
       {children}
     </div>
-  );
-}
-
-/** Type: a one-line statement typed in, two random glyphs ahead of the caret. */
-export function TypeLine({ text, class: cls }: { text: string; class?: string }) {
-  const [shown, setShown] = useState({ typed: reducedMotion() ? text : '', lead: '', done: false });
-  useEffect(() => {
-    const n = text.length;
-    return steps(
-      n,
-      TEMPO.char,
-      (p) => {
-        const k = Math.round(n * p);
-        const lead = text.slice(k, k + 2).replace(/\S/g, glyph);
-        setShown({ typed: text.slice(0, k), lead, done: p >= 1 });
-      },
-      () => {
-        setShown({ typed: text, lead: '', done: true });
-      },
-    );
-  }, [text]);
-  return (
-    <span class={cls} aria-label={text}>
-      {shown.typed}
-      {!shown.done && (
-        <>
-          <span class="mut">{shown.lead}</span>
-          <span class="cn-term__cur" />
-        </>
-      )}
-    </span>
   );
 }
 
@@ -376,4 +377,28 @@ export function Progress({
       )}
     </span>
   );
+}
+
+/** Counter: a number that counts from its last value to the new one in 16 steps. */
+export function Counter({ value, format }: { value: number; format: (value: number) => string }) {
+  const [shown, setShown] = useState(0);
+  const from = useRef(0);
+  useEffect(() => {
+    const start = from.current;
+    const stop = steps(
+      16,
+      TEMPO.tick,
+      (p) => {
+        setShown(start + (value - start) * p);
+      },
+      () => {
+        from.current = value;
+      },
+    );
+    return () => {
+      stop();
+      from.current = value;
+    };
+  }, [value]);
+  return <span class="cn-counter">{format(shown)}</span>;
 }

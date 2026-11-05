@@ -1,5 +1,6 @@
 // The chat, as the canvas's Chat board draws it (ADR 0016): a bar, the
-// thread, the dock; the Squad panel over it on request.
+// thread (why the chat cannot run at its top), the dock (on a wide panel, the
+// dials beside the composer); the Squad panel over it on request.
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import {
@@ -9,11 +10,11 @@ import {
   type RolesState,
   type SessionInfo,
 } from '../src/webview/protocol.js';
-import { Dock } from './Dock.js';
+import { Dock, NotReady } from './Dock.js';
 import { Squad } from './Squad.js';
 import { applyUpdate, type ThreadItem } from './state.js';
 import { Thread } from './Thread.js';
-import { Decode, TypeLine } from './motion.js';
+import { Decode, useHoverScramble } from './motion.js';
 import { delegationNumbers } from './threadModel.js';
 import { post, useTheme } from './ui.js';
 
@@ -105,8 +106,9 @@ function Bar({
           ? `${folderName(session.workspace).toUpperCase()} / `
           : 'NESSUNA CARTELLA / '}
         <b>{(session.title || 'Nuova chat').toUpperCase()}</b>
+        {' / '}
+        <Decode class="crumb__st" text={status} />
       </span>
-      <Decode class="cn-tag cn-tag--ink" text={status} />
       <div class="bar__r">
         {session.fake && <span class="cn-tag cn-tag--bracket hide-m">SIMULAZIONE</span>}
         <button
@@ -170,9 +172,7 @@ function Empty({ session }: { session: SessionInfo | undefined }) {
         <b>CHAT NUOVA</b>
       </div>
       <div class="tb">
-        <h2 class="t-title">
-          <TypeLine text="Scrivi al leader." />
-        </h2>
+        <h2 class="t-title">Scrivi al leader</h2>
         <p class="t-body mut">
           Risponde, chiede chiarimenti, lavora da sé o delega all’implementatore.
           {session?.mode === 'manual' ? ' Le deleghe e le modifiche passano da te.' : ''}
@@ -195,6 +195,8 @@ export function App() {
   const [epoch, setEpoch] = useState(0);
   const end = useRef<HTMLDivElement>(null);
   const thread = useRef<HTMLElement>(null);
+  const root = useRef<HTMLDivElement>(null);
+  useHoverScramble(root);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<unknown>) => {
@@ -231,9 +233,21 @@ export function App() {
     };
   }, []);
 
+  // To the end once a frame at most: a streamed turn changes the items many times a second.
+  const scrolling = useRef(0);
   useEffect(() => {
-    end.current?.scrollIntoView({ block: 'end' });
+    if (scrolling.current !== 0) return;
+    scrolling.current = requestAnimationFrame(() => {
+      scrolling.current = 0;
+      end.current?.scrollIntoView({ block: 'end' });
+    });
   }, [items]);
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(scrolling.current);
+    },
+    [],
+  );
 
   const numbers = useMemo(() => delegationNumbers(items), [items]);
   const waiting = items.filter(
@@ -241,7 +255,7 @@ export function App() {
   ).length;
 
   return (
-    <div class="cn app app--live" data-theme={theme}>
+    <div ref={root} class="cn app app--live" data-theme={theme}>
       <Bar
         session={session}
         waiting={waiting}
@@ -251,9 +265,15 @@ export function App() {
       />
       <main class="thread" ref={thread}>
         <div class="colw">
-          {items.length === 0 && <Empty session={session} />}
-          <Thread items={items} numbers={numbers} session={session} epoch={epoch} />
-          <div ref={end} />
+          {/* The thread reaches 15% of the composer's column past it on each side. */}
+          <div class="thread__col">
+            {session && (session.workspace === null || !session.trusted) && (
+              <NotReady session={session} />
+            )}
+            {items.length === 0 && <Empty session={session} />}
+            <Thread items={items} numbers={numbers} session={session} epoch={epoch} />
+            <div ref={end} />
+          </div>
         </div>
       </main>
       <Dock
@@ -261,6 +281,9 @@ export function App() {
         items={items}
         numbers={numbers}
         theme={theme}
+        roles={roles}
+        monitor={monitor}
+        usage={usage}
         openSquad={() => {
           setSquad(true);
         }}
@@ -270,7 +293,6 @@ export function App() {
           session={session}
           roles={roles}
           monitor={monitor}
-          usage={usage}
           items={items}
           theme={theme}
           close={() => {

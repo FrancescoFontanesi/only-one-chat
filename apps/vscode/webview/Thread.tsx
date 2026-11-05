@@ -107,9 +107,10 @@ function User({ item, index, busy }: { item: Item<'user'>; index: number; busy: 
         <p class="t-body txt">
           <Linked text={message.text} refs={item.refs} />
         </p>
-        {item.attachments && item.attachments.length > 0 && (
+        {((item.attachments && item.attachments.length > 0) || item.skill) && (
           <div class="atts">
-            {item.attachments.map((a) => (
+            {item.skill && <span class="att att--skill">$ {item.skill}</span>}
+            {(item.attachments ?? []).map((a) => (
               <span key={a} class="att">
                 @ {a}
               </span>

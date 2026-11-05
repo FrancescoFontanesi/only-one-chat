@@ -128,12 +128,26 @@ export interface AgentTurn {
   stop(): Promise<void>;
 }
 
+/**
+ * A skill of the agent's own CLI the user named for a turn (ADR 0019): its
+ * name, and its file where the CLI needs it (Codex).
+ */
+export interface SkillRef {
+  readonly name: string;
+  readonly path?: string;
+}
+
+export interface TurnOptions {
+  /** Invoked at the start of the turn, in the CLI's own way. */
+  readonly skill?: SkillRef;
+}
+
 export interface AgentSession {
   /** Display name, e.g. "Codex (gpt-6-luna)". */
   readonly name: string;
-  /** Recipient name in delegation blocks (`<<<DELEGA @<id>`), e.g. "claude". */
+  /** Recipient name in delegation blocks (`<<<DELEGA #<id>`), e.g. "claude". */
   readonly id: string;
-  runTurn(prompt: string, handlers: AgentTurnHandlers): AgentTurn;
+  runTurn(prompt: string, handlers: AgentTurnHandlers, options?: TurnOptions): AgentTurn;
   /**
    * Sets the reasoning effort of the next turns, in the same session; the
    * user chooses it during the chat. Absent: the effort is fixed.

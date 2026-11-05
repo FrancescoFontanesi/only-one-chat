@@ -204,6 +204,12 @@ export interface ClaudeTurnOptions {
    */
   readonly readOnlyShell?: boolean;
   /**
+   * The Skill tool (ADR 0019): the model may load one of Claude Code's skills
+   * by itself. A skill brings instructions, not tools: what it asks stays
+   * within the tools and permissions above.
+   */
+  readonly skills?: boolean;
+  /**
    * Interactive permissions (R9): what would ask goes to the user through a
    * PermissionRequest hook and its bridge (permission.ts), instead of being
    * denied. With `askAll`, nothing is allowed in advance: every edit and
@@ -296,6 +302,7 @@ export function claudeTurnArgs(options: ClaudeTurnOptions): string[] {
       ...READ_ONLY_TOOLS,
       ...(options.sandbox ? SANDBOX_TOOLS : options.readOnlyShell ? ['Bash'] : []),
       ...(options.subagents ? [SUBAGENT_TOOL] : []),
+      ...(options.skills ? ['Skill'] : []),
     ].join(','),
     '--disallowedTools',
     (options.sandbox

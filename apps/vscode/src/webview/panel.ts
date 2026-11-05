@@ -11,6 +11,7 @@ import { expandMentions, inside, withRefs } from '../session/mentions.js';
 import { ChatHistory, forReplay, newChatId, type ChatRecord } from '../session/history.js';
 import { checkpointUri, checkpointsRoot } from './checkpointContent.js';
 import type { ModelCatalog } from '../session/catalog.js';
+import type { SkillCatalog } from '../session/skills.js';
 import type { MonitorStore } from '../session/monitor.js';
 import { notifyChat } from '../notifications.js';
 import { providerOf, type UsageStore } from '../session/usage.js';
@@ -64,6 +65,8 @@ export interface PanelServices {
   readonly monitor: MonitorStore;
   readonly roles: RoleSettings;
   readonly catalog: ModelCatalog;
+  /** The CLIs' skills for `$` (ADR 0019). */
+  readonly skills: SkillCatalog;
   readonly refreshCodexUsage: () => Promise<void>;
 }
 
@@ -452,6 +455,15 @@ export class OnlyOneChatPanel {
         if (!chat) break;
         // `@` is for files only: the recipient comes from the composer's control.
         const to = message.to ?? 'leader';
+        // A skill named with `$` must be one the recipient's CLI listed for this folder.
+        const skill = message.skill !== undefined ? this.skillOf(to, message.skill) : undefined;
+        if (message.skill !== undefined && !skill) {
+          this.notice(
+            'warn',
+            `La skill ${message.skill} non è tra quelle del destinatario: messaggio non inviato.`,
+          );
+          break;
+        }
         // Files named with `@` reach the agents as paths (ADR 0015).
         const cwd = workspaceFolder();
         const expanded = cwd ? expandMentions(message.text, cwd) : undefined;
@@ -467,6 +479,7 @@ export class OnlyOneChatPanel {
               }
             : undefined,
           to,
+          skill,
         );
         break;
       }
@@ -526,6 +539,9 @@ export class OnlyOneChatPanel {
         break;
       case 'listFiles':
         await this.post({ type: 'files', paths: await folderPaths() });
+        break;
+      case 'listSkills':
+        await this.postSkills(message.cli, message.again === true);
         break;
       case 'handoff':
         if (this.chat) await this.chat.handoff();
@@ -685,6 +701,44 @@ export class OnlyOneChatPanel {
     );
     this.showRoles();
     return this.chat;
+  }
+
+  /** A CLI's skills for the open folder, read from the CLI the first time (ADR 0019). */
+  private async postSkills(cli: 'codex' | 'claude', again: boolean): Promise<void> {
+    const cwd = workspaceFolder();
+    if (!cwd) {
+      await this.post({
+        type: 'skills',
+        cli,
+        status: 'unavailable',
+        skills: [],
+        note: 'Nessuna cartella aperta',
+      });
+      return;
+    }
+    await this.post({ type: 'skills', cli, status: 'loading', skills: [] });
+    const list = await this.services.skills.load(cli, cwd, again);
+    await this.post({
+      type: 'skills',
+      cli,
+      status: list.status,
+      skills:
+        list.status === 'ready'
+          ? list.skills.map(({ name, description }) => ({ name, description }))
+          : [],
+      ...(list.status === 'unavailable' ? { note: list.note } : {}),
+    });
+  }
+
+  /** The skill a message names, among those of its recipient's CLI. */
+  private skillOf(
+    to: 'leader' | 'implementer',
+    name: string,
+  ): { name: string; path?: string } | undefined {
+    const cwd = workspaceFolder();
+    const cli = (this.chatRoles() ?? this.rolesFor(this.record))[to].cli;
+    const found = cwd ? this.services.skills.find(cli, cwd, name) : undefined;
+    return found ? { name: found.name, ...(found.path ? { path: found.path } : {}) } : undefined;
   }
 
   private post(message: HostToWebviewMessage): Thenable<boolean> {

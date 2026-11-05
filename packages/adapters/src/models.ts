@@ -1,8 +1,8 @@
-// The models each CLI offers, read through its own protocol with no model
-// turn and no quota: Codex `model/list` over app-server, Claude Code the
-// `initialize` control request of stream-json input, answered before any user
-// message. Only the model fields are kept: the same Claude response carries
-// account data, which is never read.
+// The models and skills each CLI offers, read through its own protocol with
+// no model turn and no quota: Codex `model/list` and `skills/list` over
+// app-server, Claude Code the `initialize` control request of stream-json
+// input, answered before any user message. Only the model and command fields
+// are kept: the same Claude response carries account data, which is never read.
 
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -18,6 +18,14 @@ export interface ModelInfo {
   readonly defaultEffort: string | null;
   /** The CLI's own default model. */
   readonly isDefault: boolean;
+}
+
+/** A skill of a CLI (ADR 0019): what the composer lists after `$`. */
+export interface SkillInfo {
+  readonly name: string;
+  readonly description: string;
+  /** Its SKILL.md, where the CLI needs it to invoke the skill (Codex). */
+  readonly path?: string;
 }
 
 type Json = Record<string, unknown>;
@@ -113,8 +121,38 @@ export function claudeModels(response: unknown): ModelInfo[] {
 
 const INITIALIZE_ID = 'ooc-models';
 
+/**
+ * The skills among Claude Code's commands: those it loaded from a skill
+ * folder, which it tags at the end of their description, `(user)`,
+ * `(project)`, `(plugin:…)`, `(managed)` or `(claude.ai sync)`. Its own
+ * commands (`clear`, `compact`, `model`…) carry no tag and are left out.
+ */
+export function claudeSkills(response: unknown): SkillInfo[] {
+  const commands =
+    isRecord(response) && Array.isArray(response['commands']) ? response['commands'] : [];
+  const tagged = /\s*\((user|project|managed|plugin[^()]*|claude\.ai sync)\)\s*$/;
+  return commands.flatMap((entry): SkillInfo[] => {
+    if (!isRecord(entry)) return [];
+    const name = entry['name'];
+    const description = entry['description'];
+    if (typeof name !== 'string' || name === '' || typeof description !== 'string') return [];
+    if (!tagged.test(description)) return [];
+    return [{ name, description: description.replace(tagged, '') }];
+  });
+}
+
 /** Claude Code's models: one `initialize` control request, then stdin closes, no turn. */
-export function listClaudeModels(options: ListModelsOptions): Promise<ModelInfo[]> {
+export async function listClaudeModels(options: ListModelsOptions): Promise<ModelInfo[]> {
+  return claudeModels(await claudeInitialize(options));
+}
+
+/** Claude Code's skills, from the same request; `cwd` decides the project's own ones. */
+export async function listClaudeSkills(options: ListModelsOptions): Promise<SkillInfo[]> {
+  return claudeSkills(await claudeInitialize(options));
+}
+
+/** The `initialize` control response of Claude Code: no turn, no quota. */
+function claudeInitialize(options: ListModelsOptions): Promise<unknown> {
   const child = spawn(
     options.executable,
     [
@@ -133,7 +171,7 @@ export function listClaudeModels(options: ListModelsOptions): Promise<ModelInfo[
       windowsHide: true,
     },
   );
-  return new Promise<ModelInfo[]>((resolve, reject) => {
+  return new Promise<unknown>((resolve, reject) => {
     const timer = setTimeout(() => {
       finish(() => {
         reject(new Error('Claude did not list its models in time'));
@@ -176,9 +214,8 @@ export function listClaudeModels(options: ListModelsOptions): Promise<ModelInfo[
         });
         return;
       }
-      const models = claudeModels(response['response']);
       finish(() => {
-        resolve(models);
+        resolve(response['response']);
       });
     });
     child.stdin.write(
@@ -189,4 +226,46 @@ export function listClaudeModels(options: ListModelsOptions): Promise<ModelInfo[
       })}\n`,
     );
   });
+}
+
+/** The enabled skills of one `skills/list` response, for the first folder it lists. */
+export function codexSkills(result: unknown): SkillInfo[] {
+  const data = isRecord(result) && Array.isArray(result['data']) ? result['data'] : [];
+  const entry: unknown = data[0];
+  const skills = isRecord(entry) && Array.isArray(entry['skills']) ? entry['skills'] : [];
+  return skills.flatMap((skill): SkillInfo[] => {
+    if (!isRecord(skill) || skill['enabled'] === false) return [];
+    const { name, description, path } = skill;
+    if (typeof name !== 'string' || name === '' || typeof path !== 'string') return [];
+    const short = skill['shortDescription'];
+    return [
+      {
+        name,
+        description:
+          typeof short === 'string' && short !== ''
+            ? short
+            : typeof description === 'string'
+              ? description
+              : '',
+        path,
+      },
+    ];
+  });
+}
+
+/** Codex's skills for a folder: `skills/list` over app-server, no turn. */
+export async function listCodexSkills(
+  options: ListModelsOptions & { readonly cwd: string },
+): Promise<SkillInfo[]> {
+  const session = await connectCodex({
+    executable: options.executable,
+    launcherArgs: options.launcherArgs ?? [],
+    ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
+    clientInfo: { name: 'only-one-chat', version: '0.0.1' },
+  });
+  try {
+    return codexSkills(await session.request('skills/list', { cwds: [options.cwd] }));
+  } finally {
+    await session.close();
+  }
 }

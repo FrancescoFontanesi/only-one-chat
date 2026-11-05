@@ -49,6 +49,7 @@ export type {
   AgentSubagentEvent,
   AgentSubagentOptions,
   AgentSession,
+  AgentSkillRef,
   AgentTurn,
   AgentTurnHandlers,
 } from './agent.js';
@@ -59,17 +60,24 @@ export {
   createCodexAgentFactory,
   declineResponse,
   approvalResponse,
+  codexInput,
   type CodexAgentConfig,
 } from './codex/agent.js';
 export { createClaudeAgentFactory, type ClaudeAgentConfig } from './claude/agent.js';
 export {
   claudeModels,
+  claudeSkills,
   codexModels,
+  codexSkills,
   listClaudeModels,
+  listClaudeSkills,
   listCodexModels,
+  listCodexSkills,
   type ListModelsOptions,
   type ModelInfo,
+  type SkillInfo,
 } from './models.js';
+export { claudePrompt } from './claude/agent.js';
 export {
   startPermissionBridge,
   summarizeToolCall,

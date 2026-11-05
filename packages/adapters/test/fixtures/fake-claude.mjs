@@ -90,6 +90,13 @@ input.on('line', (line) => {
             },
             { value: 'claude-haiku-4-5-20251001', displayName: 'Haiku 4.5' },
           ],
+          // Skills are tagged with where they come from; Claude Code's own commands are not.
+          commands: [
+            { name: 'tdd', description: 'Test-driven development. (user)', argumentHint: '' },
+            { name: 'probe', description: 'A probe skill. (project)', argumentHint: '' },
+            { name: 'clear', description: 'Clear conversation history', argumentHint: '' },
+            { name: 'compact', description: 'Clear history but keep a summary', argumentHint: '' },
+          ],
           account: { email: 'user@example.com' },
         },
       },

@@ -1,10 +1,17 @@
 import * as os from 'node:os';
 import * as vscode from 'vscode';
-import { checkClaudeBilling, listClaudeModels, listCodexModels } from '@only-one-chat/adapters';
+import {
+  checkClaudeBilling,
+  listClaudeModels,
+  listClaudeSkills,
+  listCodexModels,
+  listCodexSkills,
+} from '@only-one-chat/adapters';
 import { cliLaunch } from './clis.js';
 import { registerCommands } from './commands/index.js';
 import { RoleSettings } from './roles.js';
 import { ModelCatalog } from './session/catalog.js';
+import { SkillCatalog } from './session/skills.js';
 import { MonitorStore } from './session/monitor.js';
 import { UsageStore } from './session/usage.js';
 import { usageWarnings } from './notifications.js';
@@ -39,6 +46,11 @@ export function activate(context: vscode.ExtensionContext): OnlyOneChatExports {
       return listClaudeModels({ ...launch, cwd: os.tmpdir() });
     },
   });
+  // The skills of the open folder, from the CLIs as well (ADR 0019): no turn, no quota.
+  const skills = new SkillCatalog({
+    codex: async (cwd) => listCodexSkills({ ...(await cliLaunch(context, 'codex')), cwd }),
+    claude: async (cwd) => listClaudeSkills({ ...(await cliLaunch(context, 'claude')), cwd }),
+  });
   const roles = new RoleSettings(catalog);
   const codexUsage = new CodexUsageReader(context, usage);
   context.subscriptions.push(
@@ -53,6 +65,7 @@ export function activate(context: vscode.ExtensionContext): OnlyOneChatExports {
     monitor,
     roles,
     catalog,
+    skills,
     refreshCodexUsage: () => codexUsage.refresh(),
   };
   registerCommands(context, services);

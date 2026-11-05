@@ -444,6 +444,33 @@ const handlers = {
     };
   },
 
+  // The skills of the folder asked for (ADR 0019), fields as in the 0.164.0 schema.
+  'skills/list': (params) => ({
+    data: [
+      {
+        cwd: params.cwds?.[0] ?? process.cwd(),
+        skills: [
+          {
+            name: 'tdd',
+            description: 'Test-driven development.',
+            shortDescription: 'Tests first',
+            path: '/home/u/.codex/skills/tdd/SKILL.md',
+            scope: 'user',
+            enabled: true,
+          },
+          {
+            name: 'off',
+            description: 'Disabled.',
+            path: '/home/u/.codex/skills/off/SKILL.md',
+            scope: 'user',
+            enabled: false,
+          },
+        ],
+        errors: [],
+      },
+    ],
+  }),
+
   // Two pages, as a long catalog would come; fields as recorded from 0.164.0.
   'model/list': (params) =>
     params.cursor === 'page-2'

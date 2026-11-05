@@ -20,6 +20,7 @@ import type {
   AgentSession,
   AgentTurn,
   AgentTurnHandlers,
+  AgentSkillRef,
 } from '../agent.js';
 import { CodexAuthError, isUsable } from './auth.js';
 import {
@@ -144,6 +145,19 @@ function stringOrNull(value: unknown): string | null {
 }
 
 /** Answer that declines what an approval request asks for, per request method. */
+/**
+ * A turn's input (ADR 0019): a skill the user named goes first, as Codex's own
+ * skill input with its file; without a file it is named in the text, as `$name`.
+ */
+export function codexInput(prompt: string, skill?: AgentSkillRef): Record<string, unknown>[] {
+  if (!skill) return [{ type: 'text', text: prompt }];
+  if (!skill.path) return [{ type: 'text', text: `$${skill.name} ${prompt}` }];
+  return [
+    { type: 'skill', name: skill.name, path: skill.path },
+    { type: 'text', text: prompt },
+  ];
+}
+
 export function declineResponse(method: string): unknown {
   switch (method) {
     case 'item/commandExecution/requestApproval':
@@ -483,7 +497,11 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
       );
     }
 
-    function runTurn(prompt: string, handlers: AgentTurnHandlers): AgentTurn {
+    function runTurn(
+      prompt: string,
+      handlers: AgentTurnHandlers,
+      options?: { readonly skill?: AgentSkillRef },
+    ): AgentTurn {
       if (current) throw new Error('A Codex turn is already running in this session');
       children.clear();
       let settle!: (outcome: TurnOutcome) => void;
@@ -506,7 +524,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
       session
         .request('turn/start', {
           threadId,
-          input: [{ type: 'text', text: prompt }],
+          input: codexInput(prompt, options?.skill),
           ...(currentModel ? { model: currentModel } : {}),
           ...(currentEffort ? { effort: currentEffort } : {}),
         })

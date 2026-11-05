@@ -50,9 +50,13 @@ The chat opens in an editor tab, which you can move and resize; the layout follo
   - **CONSEGNA:** for the leader, whether its briefs go at once (AUTO) or wait for you
     (MANUALE), when the dials are not shown;
   - **CTX:** how full the session of the agent you write to is, after its latest turn;
-  - `@` in the text attaches a file or a folder (see below); `/` at the start of the text lists
-    the commands: `/impl`, `/leader`, `/allega`, `/nuova` (or
-    `/ferma` while it works), `/squad`, `/impostazioni`.
+  - `@` in the text attaches a file or a folder (see below); `$` names a skill of the CLI you
+    write to, which it invokes in its own way (Claude may also choose skills by itself, as
+    Codex does); `/` at the start of the text lists
+    the commands: `/impl`, `/leader`, `/allega`, `/skill`, `/nuova` (or
+    `/ferma` while it works), `/squad`, `/impostazioni`. Any other text that starts with `/`
+    reaches the agent as text: the CLIs' own commands (`/clear`, `/plan`…) never run from the
+    chat.
 - **On a wide panel,** two dials sit beside the box. On the left, who you talk to: click LDR or
   IMP, or the outer ring. Its sight sets the reasoning (drag, click a segment or use the wheel);
   the level reads above the middle line. Under it, for the leader the delivery, AUTO or MANUALE; for the implementer

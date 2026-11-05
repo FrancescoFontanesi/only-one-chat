@@ -1104,3 +1104,24 @@ describe('event log', () => {
     await expect(openEventLog('log.jsonl', join(dir, 'workspace'))).rejects.toThrow(/absolute/);
   });
 });
+
+describe('leader mode: a skill named by the user (ADR 0019)', () => {
+  it('goes to the leader’s first turn only, not to its review nor to the implementer', async () => {
+    const codex = fakeAgent('Codex', [
+      { answer: '<<<DELEGA #claude\nfai x\nDELEGA>>>' },
+      { answer: 'ok' },
+    ]);
+    const claude = fakeAgent('Claude', [{ answer: 'r' }]);
+    const leaderSession = await codex.factory({ instructions: leaderInstructions('claude') });
+    const { running } = await loop(codex, claude, [], [], {
+      request: 'Procedi.',
+      mode: 'leader',
+      leaderSession,
+      autoApprove: true,
+      skill: { name: 'tdd', path: '/s/tdd/SKILL.md' },
+    });
+    await running.done;
+    expect(codex.skills).toEqual(['tdd', undefined]);
+    expect(claude.skills).toEqual([undefined]);
+  });
+});

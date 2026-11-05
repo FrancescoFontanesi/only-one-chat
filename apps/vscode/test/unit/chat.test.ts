@@ -675,3 +675,73 @@ describe('chat session: the delegation cycle (ADR 0018)', () => {
     expect(drafts.at(-1)).toBeNull();
   });
 });
+
+describe('chat session: skills (ADR 0019)', () => {
+  it('invokes a skill on the implementer as /name; Claude may load skills by itself', async () => {
+    const { chat, updates } = session('auto');
+    try {
+      await chat.send('aggiungi i test', undefined, 'implementer', { name: 'tdd' });
+    } finally {
+      await chat.dispose();
+    }
+    expect(updates[0]).toMatchObject({ type: 'user', skill: 'tdd', to: 'implementer' });
+    const log = readFileSync(join(root, 'claude.jsonl'), 'utf8');
+    expect(log).toContain('/tdd aggiungi i test');
+    // The first process may be the billing check (`auth status`): the turn is the one with --tools.
+    const argv =
+      log
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => (JSON.parse(line) as { argv?: string[] }).argv ?? [])
+        .find((a) => a.includes('--tools')) ?? [];
+    expect(argv[argv.indexOf('--tools') + 1]?.split(',')).toContain('Skill');
+  });
+
+  it('sends a text that starts with / to Claude as text, never as one of its commands', async () => {
+    const { chat } = session('auto');
+    try {
+      await chat.send('/clear', undefined, 'implementer');
+    } finally {
+      await chat.dispose();
+    }
+    const log = readFileSync(join(root, 'claude.jsonl'), 'utf8');
+    // The stdin line is logged as JSON inside JSON: the quote before the text is escaped.
+    expect(log).toContain('\\" /clear');
+    expect(log).not.toContain('\\"/clear');
+  });
+
+  it('invokes a skill on the Codex leader as Codex’s own skill input', async () => {
+    const codexLog = join(root, 'codex.jsonl');
+    const { chat } = session(
+      'auto',
+      'always',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        codexLauncherArgs: [
+          join(FIXTURES, 'fake-app-server.mjs'),
+          '--account=chatgpt',
+          `--log=${codexLog}`,
+        ],
+      },
+    );
+    try {
+      await chat.send('ciao', undefined, 'leader', { name: 'tdd', path: '/s/tdd/SKILL.md' });
+    } finally {
+      await chat.dispose();
+    }
+    const start = readFileSync(codexLog, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { method?: string; params?: { input?: unknown[] } })
+      .find((m) => m.method === 'turn/start');
+    expect(start?.params?.input?.[0]).toEqual({
+      type: 'skill',
+      name: 'tdd',
+      path: '/s/tdd/SKILL.md',
+    });
+  });
+});

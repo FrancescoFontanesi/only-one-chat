@@ -2,7 +2,15 @@
 
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { claudeModels, listClaudeModels, listCodexModels } from '../src/index.js';
+import {
+  claudeModels,
+  claudeSkills,
+  codexSkills,
+  listClaudeModels,
+  listClaudeSkills,
+  listCodexModels,
+  listCodexSkills,
+} from '../src/index.js';
 import { testEnv } from './env.js';
 
 const FAKE_CODEX = join(import.meta.dirname, 'fixtures', 'fake-app-server.mjs');
@@ -56,5 +64,49 @@ describe('model catalogs', () => {
       { id: 'opus', name: 'Opus', efforts: [], defaultEffort: null, isDefault: false },
     ]);
     expect(JSON.stringify(models)).not.toContain('example.com');
+  });
+});
+
+describe('skill catalogs (ADR 0019)', () => {
+  it('reads Codex’s enabled skills for a folder over skills/list', async () => {
+    const skills = await listCodexSkills({
+      executable: process.execPath,
+      launcherArgs: [FAKE_CODEX, '--account=chatgpt'],
+      baseEnv: testEnv(),
+      cwd: 'F:/x',
+    });
+    expect(skills).toEqual([
+      { name: 'tdd', description: 'Tests first', path: '/home/u/.codex/skills/tdd/SKILL.md' },
+    ]);
+  });
+
+  it('reads Claude’s skills from its initialize response, leaving out its own commands', async () => {
+    const skills = await listClaudeSkills({
+      executable: process.execPath,
+      launcherArgs: [FAKE_CLAUDE],
+      baseEnv: testEnv(),
+    });
+    expect(skills).toEqual([
+      { name: 'tdd', description: 'Test-driven development.' },
+      { name: 'probe', description: 'A probe skill.' },
+    ]);
+  });
+
+  it('tells skills by the tag of where they come from', () => {
+    expect(
+      claudeSkills({
+        commands: [
+          { name: 'a', description: 'From a plugin. (plugin:tools)' },
+          { name: 'b', description: 'Synced. (claude.ai sync)' },
+          { name: 'clear', description: 'Clear history (stays on disk, resumable with /resume)' },
+          { name: 'c', description: 3 },
+        ],
+      }),
+    ).toEqual([
+      { name: 'a', description: 'From a plugin.' },
+      { name: 'b', description: 'Synced.' },
+    ]);
+    expect(codexSkills({ data: [] })).toEqual([]);
+    expect(codexSkills({ data: [{ skills: [{ name: 'x', description: 'd' }] }] })).toEqual([]);
   });
 });

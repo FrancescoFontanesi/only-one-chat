@@ -70,6 +70,34 @@ describe('parseWebviewMessage: the chat', () => {
   });
 });
 
+describe('parseWebviewMessage: skills (ADR 0019)', () => {
+  it('accepts a skill named for a message and a request for a CLI’s skills', () => {
+    expect(parseWebviewMessage({ type: 'send', text: 'x', skill: 'oleafly-latex-build' })).toEqual({
+      type: 'send',
+      text: 'x',
+      skill: 'oleafly-latex-build',
+    });
+    expect(parseWebviewMessage({ type: 'listSkills', cli: 'claude' })).toEqual({
+      type: 'listSkills',
+      cli: 'claude',
+    });
+    expect(parseWebviewMessage({ type: 'listSkills', cli: 'codex', again: true })).toEqual({
+      type: 'listSkills',
+      cli: 'codex',
+      again: true,
+    });
+  });
+
+  it.each([
+    { type: 'send', text: 'x', skill: '' },
+    { type: 'send', text: 'x', skill: '../etc' },
+    { type: 'send', text: 'x', skill: 3 },
+    { type: 'listSkills', cli: 'gemini' },
+  ])('rejects %j', (value) => {
+    expect(parseWebviewMessage(value)).toBeUndefined();
+  });
+});
+
 describe('parseWebviewMessage: a linked path (ADR 0018)', () => {
   it('accepts a path and its lines', () => {
     expect(parseWebviewMessage({ type: 'openFile', path: 'src/a.ts', from: 3, to: 9 })).toEqual({

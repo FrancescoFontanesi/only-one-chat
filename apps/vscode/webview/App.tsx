@@ -174,10 +174,14 @@ function Empty({ session }: { session: SessionInfo | undefined }) {
       <div class="tb">
         <h2 class="t-title">Scrivi al leader</h2>
         <p class="t-body mut">
-          Risponde, chiede chiarimenti, lavora da sé o delega all’implementatore.
-          {session?.mode === 'manual' ? ' Le deleghe e le modifiche passano da te.' : ''}
+          Ragiona e pianifica con te; quando glielo chiedi scrive il brief per l’implementatore.
+          {session?.mode === 'manual'
+            ? ' Il brief aspetta che tu lo invii.'
+            : ' Il brief parte subito.'}
         </p>
-        <p class="hint">UN BRIEF DA CHATGPT (&lt;&lt;&lt;OOC-BRIEF) PASSA COSÌ COM’È</p>
+        <p class="hint">
+          UN BRIEF DA CHATGPT (&lt;&lt;&lt;OOC-BRIEF) PARTE SUBITO, CON LE NOTE DEL LEADER
+        </p>
       </div>
     </section>
   );

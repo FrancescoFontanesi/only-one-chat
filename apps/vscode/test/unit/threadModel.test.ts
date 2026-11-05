@@ -127,3 +127,11 @@ describe('a leader text without its delegation block (ADR 0018)', () => {
     expect(withoutDelegation('Solo testo.')).toEqual({ text: 'Solo testo.', writing: false });
   });
 });
+
+describe('the $ word of the composer (ADR 0019)', () => {
+  it('finds a skill name being typed anywhere, after a space', () => {
+    expect(wordAt('usa $td', 7, '$')).toEqual({ start: 4, query: 'td' });
+    expect(wordAt('$', 1, '$')).toEqual({ start: 0, query: '' });
+    expect(wordAt('costa 5$', 8, '$')).toBeNull();
+  });
+});

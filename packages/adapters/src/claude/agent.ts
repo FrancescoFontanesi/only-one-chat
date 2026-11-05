@@ -8,7 +8,13 @@
 // events for the runtime; stopping the turn ends the whole process tree, and
 // with it every sub-agent.
 
-import type { AgentFactory, AgentSession, AgentTurn, AgentTurnHandlers } from '../agent.js';
+import type {
+  AgentFactory,
+  AgentSession,
+  AgentSkillRef,
+  AgentTurn,
+  AgentTurnHandlers,
+} from '../agent.js';
 import {
   ClaudeError,
   SUBAGENT_TOOL,
@@ -26,6 +32,17 @@ export type ClaudeAgentConfig = Omit<
   ClaudeTurnOptions,
   'prompt' | 'appendSystemPrompt' | 'resumeSessionId' | 'onEvent' | 'subagents'
 >;
+
+/**
+ * What Claude receives as the user's text (ADR 0019). In -p a leading `/` runs
+ * one of Claude Code's own commands (`/clear` resets the conversation), so a
+ * text that starts with one gets a space before it and stays text. A skill the
+ * user named is invoked as `/name`, then the text.
+ */
+export function claudePrompt(prompt: string, skill?: AgentSkillRef): string {
+  if (skill) return prompt.trim() === '' ? `/${skill.name}` : `/${skill.name} ${prompt}`;
+  return prompt.startsWith('/') ? ` ${prompt}` : prompt;
+}
 
 export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactory {
   return ({ instructions, subagents, resume }): Promise<AgentSession> => {
@@ -50,7 +67,11 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
     /** The model of the next turns: each turn is its own process with --model. */
     let model = config.model;
 
-    function runTurn(prompt: string, handlers: AgentTurnHandlers): AgentTurn {
+    function runTurn(
+      prompt: string,
+      handlers: AgentTurnHandlers,
+      options?: { readonly skill?: AgentSkillRef },
+    ): AgentTurn {
       const startedAt = Date.now();
       /** Sub-agents of this turn, by Agent tool call id. */
       const children = new Map<string, { identified: boolean }>();
@@ -65,7 +86,7 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
         ...config,
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
-        prompt,
+        prompt: claudePrompt(prompt, options?.skill),
         appendSystemPrompt: subagents ? `${instructions}\n\n${subagents.rules}` : instructions,
         ...(subagents
           ? { subagents: { model: subagents.model, effort: effort ?? subagents.effort } }

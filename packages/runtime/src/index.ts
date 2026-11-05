@@ -32,6 +32,8 @@ export type {
   ApprovalRequest,
   ContextUsage,
   QuotaSnapshot,
+  SkillRef,
+  TurnOptions,
   SubagentEvent,
   SubagentPolicy,
   TokenUsage,

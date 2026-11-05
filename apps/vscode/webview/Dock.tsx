@@ -3,14 +3,16 @@
 // the manual delivery as an ink frame: the chat waits for it, ADR 0018), else
 // the composer: one lattice cell, closed on its four sides with a + at each
 // corner, the text and, under a rule, one line with the recipient and the
-// delivery as picks, the context and the send. `@` in the text attaches a file, `/` lists the
-// commands. On a wide panel, beside the composer, the two dials (Hud.tsx):
+// delivery as picks, the context and the send. `@` in the text attaches a file, `$` names a
+// skill of the recipient's CLI (ADR 0019), `/` lists the commands. On a wide panel, beside the composer, the two dials (Hud.tsx):
 // who you talk to, and the providers' usage.
 
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   parseHostMessage,
   type ApprovalMode,
+  type Cli,
+  type HostToWebviewMessage,
   type MonitorState,
   type ProviderUsage,
   type RolesState,
@@ -217,6 +219,26 @@ const setMode = (mode: ApprovalMode) => {
   post({ type: 'setMode', mode });
 };
 
+type SkillsMessage = Extract<HostToWebviewMessage, { type: 'skills' }>;
+
+/** The skills that match, best first: the name starting with the query, then containing it. */
+function matchSkills(
+  skills: SkillsMessage['skills'],
+  query: string,
+  limit = 8,
+): SkillsMessage['skills'] {
+  const q = query.toLowerCase();
+  return skills
+    .map((s) => {
+      const name = s.name.toLowerCase();
+      return { s, score: q === '' ? 1 : name.startsWith(q) ? 0 : name.includes(q) ? 1 : -1 };
+    })
+    .filter((x) => x.score >= 0)
+    .sort((a, b) => a.score - b.score || a.s.name.localeCompare(b.s.name))
+    .slice(0, limit)
+    .map((x) => x.s);
+}
+
 interface Command {
   name: string;
   hint: string;
@@ -224,11 +246,12 @@ interface Command {
 }
 
 /**
- * The open popover: the files for `@`, the commands for `/`. `start` is where
- * its word begins in the text, null when it was opened from the toolbar.
+ * The open popover: the files for `@`, the skills for `$`, the commands for
+ * `/`. `start` is where its word begins in the text, null when it was opened
+ * from a command.
  */
 interface Pop {
-  kind: 'file' | 'command';
+  kind: 'file' | 'skill' | 'command';
   start: number | null;
   query: string;
 }
@@ -247,14 +270,20 @@ function Composer({
   openSquad,
   to,
   setTo,
+  cli,
 }: {
   session: SessionInfo | undefined;
   openSquad: () => void;
   to: RoleName;
   setTo: (to: RoleName) => void;
+  /** The recipient's CLI, whose skills `$` lists. */
+  cli: Cli | undefined;
 }) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<readonly string[]>([]);
+  /** The skill this message invokes, one at most (ADR 0019). */
+  const [skill, setSkill] = useState<string | null>(null);
+  const [skills, setSkills] = useState<Partial<Record<Cli, SkillsMessage>>>({});
   const [files, setFiles] = useState<readonly string[]>([]);
   const [pop, setPop] = useState<Pop | null>(null);
   const [choice, setChoice] = useState(0);
@@ -272,6 +301,9 @@ function Composer({
     const onMessage = (event: MessageEvent<unknown>) => {
       const message = parseHostMessage(event.data);
       if (message?.type === 'files') setFiles(message.paths);
+      if (message?.type === 'skills') {
+        setSkills((current) => ({ ...current, [message.cli]: message }));
+      }
       // The editor's file or selection (Ctrl+Alt+K) arrives as `@path#L1-2`: an attachment.
       if (message?.type === 'insert') {
         const path = /^@(\S+)\s*$/.exec(message.text)?.[1];
@@ -290,6 +322,18 @@ function Composer({
     setPop({ kind: 'file', start, query });
     setChoice(0);
   };
+  const openSkills = (start: number | null, query: string) => {
+    // Read from the CLI the first time; the host keeps them for the folder.
+    if (cli && pop?.kind !== 'skill' && skills[cli]?.status !== 'ready') {
+      post({ type: 'listSkills', cli });
+    }
+    setPop({ kind: 'skill', start, query });
+    setChoice(0);
+  };
+  // A skill belongs to its recipient's CLI: another recipient drops it.
+  useEffect(() => {
+    setSkill(null);
+  }, [to, cli]);
 
   const commands: Command[] = [
     {
@@ -311,6 +355,13 @@ function Composer({
       hint: 'Allega un file o una cartella',
       run: () => {
         openFiles(null, '');
+      },
+    },
+    {
+      name: 'skill',
+      hint: 'Usa una skill di chi ricevi',
+      run: () => {
+        openSkills(null, '');
       },
     },
     busy
@@ -338,16 +389,42 @@ function Composer({
     },
   ];
   const fileOptions = pop?.kind === 'file' ? matchPaths(files, pop.query) : [];
+  const skillList = cli ? skills[cli] : undefined;
+  const skillOptions =
+    pop?.kind === 'skill' && skillList?.status === 'ready'
+      ? matchSkills(skillList.skills, pop.query)
+      : [];
   const commandOptions =
     pop?.kind === 'command'
       ? commands.filter((c) => c.name.startsWith(pop.query.toLowerCase()))
       : [];
-  const optionCount = pop?.kind === 'file' ? fileOptions.length : commandOptions.length;
+  const optionCount =
+    pop?.kind === 'file'
+      ? fileOptions.length
+      : pop?.kind === 'skill'
+        ? skillOptions.length
+        : commandOptions.length;
+  /** Why the skills popover has nothing to choose, if so. */
+  const skillNote =
+    pop?.kind !== 'skill'
+      ? null
+      : !cli || !skillList || skillList.status === 'loading'
+        ? 'LETTURA DELLE SKILL…'
+        : skillList.status === 'unavailable'
+          ? `× ${skillList.note ?? 'SKILL NON DISPONIBILI'}`
+          : skillOptions.length === 0
+            ? 'NESSUNA SKILL CON QUESTO NOME'
+            : null;
 
   const follow = (value: string, caret: number) => {
     const file = wordAt(value, caret, '@');
     if (file) {
       openFiles(file.start, file.query);
+      return;
+    }
+    const named = wordAt(value, caret, '$');
+    if (named) {
+      openSkills(named.start, named.query);
       return;
     }
     const command = wordAt(value, caret, '/');
@@ -373,6 +450,9 @@ function Composer({
     if (pop.kind === 'file') {
       const path = fileOptions[index];
       if (path) attach(path);
+    } else if (pop.kind === 'skill') {
+      const chosen = skillOptions[index];
+      if (chosen) setSkill(chosen.name);
     } else {
       commandOptions[index]?.run();
     }
@@ -386,9 +466,11 @@ function Composer({
       type: 'send',
       text: mentions ? `${text.trimEnd()}\n\n${mentions}` : text,
       ...(to === 'implementer' ? { to } : {}),
+      ...(skill ? { skill } : {}),
     });
     setText('');
     setAttachments([]);
+    setSkill(null);
   };
   const option = (index: number) => ({
     class: index === choice ? 'pick pick--mono cn-accent' : 'pick pick--mono',
@@ -408,12 +490,21 @@ function Composer({
       class={ready ? 'cmp' : 'cmp cmp--off'}
       edges={{ top: true, bottom: true, left: true, right: true }}
     >
-      {pop && optionCount > 0 && (
+      {pop && (optionCount > 0 || skillNote) && (
         <section class="pop pop--up cn-frame cn-frame--ink" role="listbox">
           <div class="cn-frame__head pop__h">
-            <span class="t-label">{pop.kind === 'file' ? 'ALLEGA FILE' : 'COMANDI'}</span>
-            <span class="t-label mut">{pop.kind === 'file' ? '@' : '/'}</span>
+            <span class="t-label">
+              {pop.kind === 'file'
+                ? 'ALLEGA FILE'
+                : pop.kind === 'skill'
+                  ? `SKILL · ${cli === 'claude' ? 'CLAUDE' : 'CODEX'}`
+                  : 'COMANDI'}
+            </span>
+            <span class="t-label mut">
+              {pop.kind === 'file' ? '@' : pop.kind === 'skill' ? '$' : '/'}
+            </span>
           </div>
+          {skillNote && <p class="hint pop__note">{skillNote}</p>}
           {pop.kind === 'file'
             ? fileOptions.map((path, index) => (
                 <button key={path} {...option(index)}>
@@ -421,20 +512,46 @@ function Composer({
                   <span class="pick__m">{path.endsWith('/') ? 'CARTELLA' : ''}</span>
                 </button>
               ))
-            : commandOptions.map((command, index) => (
-                <button key={command.name} {...option(index)}>
-                  <span class="pick__n">/{command.name}</span>
-                  <span class="pick__m">{command.hint}</span>
-                </button>
-              ))}
+            : pop.kind === 'skill'
+              ? skillOptions.map((s, index) => (
+                  <button
+                    key={s.name}
+                    {...option(index)}
+                    class={`${option(index).class} pick--skill`}
+                    title={s.description}
+                  >
+                    <span class="pick__n">${s.name}</span>
+                    <span class="pick__m">{s.description}</span>
+                  </button>
+                ))
+              : commandOptions.map((command, index) => (
+                  <button key={command.name} {...option(index)}>
+                    <span class="pick__n">/{command.name}</span>
+                    <span class="pick__m">{command.hint}</span>
+                  </button>
+                ))}
           <div class="cn-frame__foot pop__f">
             <span class="hint">↑↓ · INVIO O TAB SCEGLIE · ESC CHIUDE</span>
           </div>
         </section>
       )}
       <div class="cn-cell cmp__cell">
-        {attachments.length > 0 && (
+        {(attachments.length > 0 || skill) && (
           <div class="atts cmp__atts">
+            {skill && (
+              <span class="att att--skill">
+                $ {skill}{' '}
+                <button
+                  type="button"
+                  aria-label={`Togli la skill ${skill}`}
+                  onClick={() => {
+                    setSkill(null);
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            )}
             {attachments.map((a) => (
               <span key={a} class="att">
                 @ {a}{' '}
@@ -465,7 +582,7 @@ function Composer({
               !ready
                 ? 'Invio non disponibile finché la chat non è pronta.'
                 : to === 'leader'
-                  ? 'Scrivi al leader · @ allega un file · / comandi'
+                  ? 'Scrivi al leader · @ allega un file · $ skill · / comandi'
                   : 'Scrivi all’implementatore · il leader leggerà il rapporto dopo'
             }
             onInput={(event) => {
@@ -675,7 +792,13 @@ export function Dock({
               number={numbers.get(approval.id) ?? ''}
             />
           ) : (
-            <Composer session={session} openSquad={openSquad} to={to} setTo={setTo} />
+            <Composer
+              session={session}
+              openSquad={openSquad}
+              to={to}
+              setTo={setTo}
+              cli={recipient?.cli}
+            />
           )}
         </div>
         <aside class="dock__side" aria-label="Utilizzo">

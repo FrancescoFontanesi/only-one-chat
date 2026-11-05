@@ -162,6 +162,8 @@ export type ThreadUpdate =
       readonly attachments?: readonly string[];
       /** The `@` paths of the text that exist in the folder, as written (ADR 0018). */
       readonly refs?: readonly string[];
+      /** The skill the user named with `$` (ADR 0019). */
+      readonly skill?: string;
     }
   | {
       readonly type: 'turn';
@@ -299,6 +301,14 @@ export type HostToWebviewMessage =
   | { readonly type: 'settings'; readonly settings: SettingsState }
   /** The folder's files and folders for `@` (relative; a folder ends with `/`). */
   | { readonly type: 'files'; readonly paths: readonly string[] }
+  /** A CLI's skills for `$` (ADR 0019), as its CLI lists them for the open folder. */
+  | {
+      readonly type: 'skills';
+      readonly cli: Cli;
+      readonly status: 'loading' | 'ready' | 'unavailable';
+      readonly skills: readonly { readonly name: string; readonly description: string }[];
+      readonly note?: string;
+    }
   /** Text for the composer: a mention of the open file or of the selection. */
   | { readonly type: 'insert'; readonly text: string };
 
@@ -315,6 +325,8 @@ export type WebviewToHostMessage =
       readonly text: string;
       /** Default: the leader. */
       readonly to?: RoleName;
+      /** A skill of the recipient's CLI, named with `$` (ADR 0019). */
+      readonly skill?: string;
     }
   | {
       readonly type: 'decide';
@@ -364,6 +376,8 @@ export type WebviewToHostMessage =
   /** The implementer's work to a new session of the same model (ADR 0017). */
   | { readonly type: 'handoff' }
   | { readonly type: 'listFiles' }
+  /** The skills of a CLI for `$`; `again` reads them anew. */
+  | { readonly type: 'listSkills'; readonly cli: Cli; readonly again?: boolean }
   /** A path the thread links (ADR 0018), opened at its lines; the host checks it is in the folder. */
   | {
       readonly type: 'openFile';
@@ -378,6 +392,8 @@ const ID_PATTERN = /^[a-z0-9-]{1,64}$/;
 /** Model ids and aliases as the CLIs name them, e.g. `gpt-6.1-sol`, `claude-haiku-4-5-20251001`. */
 const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/;
 const EFFORT_PATTERN = /^[a-z]{0,16}$/;
+/** A skill's name as the CLIs write them, e.g. `tdd`, `oleafly-latex-build`, `Figure prep`. */
+const SKILL_PATTERN = /^[\w][\w .:()-]{0,99}$/;
 /** A key under `onlyOneChat.`, e.g. `notifications.waiting`; the host knows which exist. */
 const SETTING_KEY = /^[a-zA-Z]+(\.[a-zA-Z]+)?$/;
 
@@ -410,8 +426,17 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
       const body = text(msg['text']);
       if (body === undefined || body.trim() === '') return undefined;
       const to = msg['to'];
+      const skill = msg['skill'];
       if (to !== undefined && !isRole(to)) return undefined;
-      return { type: 'send', text: body, ...(to ? { to } : {}) };
+      if (skill !== undefined && (typeof skill !== 'string' || !SKILL_PATTERN.test(skill))) {
+        return undefined;
+      }
+      return {
+        type: 'send',
+        text: body,
+        ...(to ? { to } : {}),
+        ...(skill !== undefined ? { skill } : {}),
+      };
     }
     case 'decide': {
       const id = msg['id'];
@@ -478,6 +503,11 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
     }
     case 'listFiles':
       return { type: 'listFiles' };
+    case 'listSkills': {
+      const cli = msg['cli'];
+      if (cli !== 'codex' && cli !== 'claude') return undefined;
+      return { type: 'listSkills', cli, ...(msg['again'] === true ? { again: true } : {}) };
+    }
     case 'restoreCheckpoint': {
       const checkpoint = msg['checkpoint'];
       return typeof checkpoint === 'string' && ID_PATTERN.test(checkpoint)
@@ -573,6 +603,10 @@ export function parseHostMessage(value: unknown): HostToWebviewMessage | undefin
     case 'files':
       return Array.isArray(msg['paths'])
         ? { type: 'files', paths: msg['paths'] as string[] }
+        : undefined;
+    case 'skills':
+      return (msg['cli'] === 'codex' || msg['cli'] === 'claude') && Array.isArray(msg['skills'])
+        ? (msg as unknown as Extract<HostToWebviewMessage, { type: 'skills' }>)
         : undefined;
     case 'insert':
       return typeof msg['text'] === 'string' ? { type: 'insert', text: msg['text'] } : undefined;

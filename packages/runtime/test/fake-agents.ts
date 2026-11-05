@@ -10,6 +10,7 @@ import type {
   AgentTurnHandlers,
   ApprovalDecision,
   SubagentEvent,
+  TurnOptions,
 } from '../src/index.js';
 
 export type Step =
@@ -21,6 +22,8 @@ export interface FakeAgent {
   readonly factory: AgentFactory;
   /** Prompts received, in order. */
   readonly prompts: string[];
+  /** The skill each turn was given, in order (ADR 0019). */
+  readonly skills: (string | undefined)[];
   readonly instructions: string[];
   /** Session options received by the factory, in order. */
   readonly options: AgentSessionOptions[];
@@ -37,6 +40,7 @@ export function fakeAgent(
   id = name.toLowerCase(),
 ): FakeAgent {
   const prompts: string[] = [];
+  const skills: (string | undefined)[] = [];
   const instructions: string[] = [];
   const options: AgentSessionOptions[] = [];
   const decisions: ApprovalDecision[] = [];
@@ -46,8 +50,13 @@ export function fakeAgent(
   let started: () => void = () => undefined;
   let startedPromise = new Promise<void>((resolve) => (started = resolve));
 
-  function runTurn(prompt: string, handlers: AgentTurnHandlers): AgentTurn {
+  function runTurn(
+    prompt: string,
+    handlers: AgentTurnHandlers,
+    turnOptions?: TurnOptions,
+  ): AgentTurn {
     prompts.push(prompt);
+    skills.push(turnOptions?.skill?.name);
     const step = steps[next++];
     let stop: () => void = () => undefined;
     const stopsAtStart = stops;
@@ -109,6 +118,7 @@ export function fakeAgent(
       return Promise.resolve(session);
     },
     prompts,
+    skills,
     instructions,
     options,
     decisions,

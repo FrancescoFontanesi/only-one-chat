@@ -34,6 +34,7 @@ import {
   type ContextUsage,
   type QuotaSnapshot,
   type SubagentPolicy,
+  type SkillRef,
   type ThreadEvent,
   type TurnUsage,
 } from '@only-one-chat/runtime';
@@ -338,6 +339,8 @@ export class ChatSession {
           effort: choice.effort,
           ...(writable ? { sandbox: { commands: config.allowedCommands } } : {}),
           ...(leader ? { readOnlyShell: true } : {}),
+          // The model loads a skill by itself, as Codex does (ADR 0019).
+          skills: true,
           ...(bridge
             ? {
                 permissionHook: {
@@ -496,7 +499,12 @@ export class ChatSession {
    * One turn of the implementer, shown in the thread as it runs; `keep` notes
    * its session to resume (not for a handoff, whose session is closed).
    */
-  private async implementerTurn(session: AgentSession, prompt: string, keep: boolean) {
+  private async implementerTurn(
+    session: AgentSession,
+    prompt: string,
+    keep: boolean,
+    skill?: SkillRef,
+  ) {
     const id = this.id('t');
     this.currentTurn.set('implementer', id);
     this.events.update({
@@ -506,20 +514,24 @@ export class ChatSession {
       agent: session.name,
       status: 'running',
     });
-    const turn = session.runTurn(prompt, {
-      onText: (chunk) => {
-        this.events.update({ type: 'chunk', turnId: id, text: chunk });
+    const turn = session.runTurn(
+      prompt,
+      {
+        onText: (chunk) => {
+          this.events.update({ type: 'chunk', turnId: id, text: chunk });
+        },
+        onApprovalRequest: (request) =>
+          this.askPermission('implementer', session.name, request.summary),
+        onActivity: ({ kind, detail }) => {
+          this.events.update({
+            type: 'activity',
+            turnId: id,
+            text: `${kind}: ${detail.slice(0, 240)}`,
+          });
+        },
       },
-      onApprovalRequest: (request) =>
-        this.askPermission('implementer', session.name, request.summary),
-      onActivity: ({ kind, detail }) => {
-        this.events.update({
-          type: 'activity',
-          turnId: id,
-          text: `${kind}: ${detail.slice(0, 240)}`,
-        });
-      },
-    });
+      skill ? { skill } : undefined,
+    );
     this.stopRunning = () => turn.stop();
     const result = await turn.done;
     this.currentTurn.delete('implementer');
@@ -619,6 +631,7 @@ export class ChatSession {
     text: string,
     attached?: { readonly text: string; readonly paths: readonly string[] },
     to?: 'leader' | 'implementer',
+    skill?: SkillRef,
   ): Promise<void> {
     const direct = to ? to === 'implementer' : DIRECT.test(text);
     if (!to && direct) text = text.replace(DIRECT, '');
@@ -647,11 +660,14 @@ export class ChatSession {
       to: direct ? 'implementer' : 'leader',
       ...(checkpoint ? { checkpoint: checkpoint.id } : {}),
       ...(attached && attached.paths.length > 0 ? { attachments: attached.paths } : {}),
+      ...(skill ? { skill: skill.name } : {}),
     });
     // The files the user named reach the agent after the text; the thread shows the text.
     const prompt = attachments === '' ? text : `${text}\n\n${attachments}`;
     await this.run(checkpoint, (baseline, shown) =>
-      direct ? this.toImplementer(prompt, baseline, shown) : this.toLeader(prompt, baseline, shown),
+      direct
+        ? this.toImplementer(prompt, baseline, shown, skill)
+        : this.toLeader(prompt, baseline, shown, undefined, skill),
     );
   }
 
@@ -718,11 +734,17 @@ export class ChatSession {
     text: string,
     baseline: ReturnType<typeof snapshot>,
     shown: { facts: boolean },
+    skill?: SkillRef,
   ): Promise<void> {
     const { config } = this;
     const session = await this.implementer();
     const notes = this.takeNotes('implementer');
-    const result = await this.implementerTurn(session, notes ? `${notes}\n\n${text}` : text, true);
+    const result = await this.implementerTurn(
+      session,
+      notes ? `${notes}\n\n${text}` : text,
+      true,
+      skill,
+    );
     const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand);
     shown.facts = true;
     this.events.update({ type: 'notice', level: 'info', text: facts });
@@ -741,6 +763,7 @@ export class ChatSession {
     baseline: ReturnType<typeof snapshot>,
     shown: { facts: boolean },
     draft?: string,
+    skill?: SkillRef,
   ): Promise<void> {
     const { config } = this;
     const leaderPolicy = { ...this.policy(this.roles.leader), proactive: true };
@@ -770,6 +793,7 @@ export class ChatSession {
       request: text,
       ...(preface !== '' ? { preface } : {}),
       ...(draft !== undefined ? { delegation: draft } : {}),
+      ...(skill ? { skill } : {}),
       // `@path` reaches the other agent as a plain path (ADR 0018).
       relay: (message) => plainRefs(message, config.cwd),
       log: this.log ?? (await openEventLog(config.logPath, config.cwd)),

@@ -173,11 +173,13 @@ export function readUserMessage(
 export function wordAt(
   text: string,
   caret: number,
-  sign: '@' | '/',
+  sign: '@' | '/' | '$',
 ): { start: number; query: string } | null {
   const before = text.slice(0, caret);
-  // `@` a file anywhere; `/` a command, only at the start of the message.
-  const match = (sign === '@' ? /(^|\s)@([^\s@]*)$/ : /^()\/([\p{L}]*)$/u).exec(before);
+  // `@` a file and `$` a skill anywhere; `/` a command, only at the start of the message.
+  const match = (
+    sign === '@' ? /(^|\s)@([^\s@]*)$/ : sign === '$' ? /(^|\s)\$([\w.:-]*)$/ : /^()\/([\p{L}]*)$/u
+  ).exec(before);
   if (!match) return null;
   const query = match[2] ?? '';
   return { start: caret - query.length - 1, query };

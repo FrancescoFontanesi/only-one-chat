@@ -25,6 +25,8 @@ export type ThreadItem =
       readonly attachments?: readonly string[];
       /** The `@` paths of the text that exist in the folder (ADR 0018). */
       readonly refs?: readonly string[];
+      /** The skill the message invoked (ADR 0019). */
+      readonly skill?: string;
     }
   | {
       readonly kind: 'turn';
@@ -101,6 +103,7 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
           ...(update.checkpoint ? { checkpoint: update.checkpoint } : {}),
           ...(update.attachments ? { attachments: update.attachments } : {}),
           ...(update.refs ? { refs: update.refs } : {}),
+          ...(update.skill ? { skill: update.skill } : {}),
         },
       ];
     case 'turn': {

@@ -21,6 +21,7 @@ import type {
   ApprovalDecision,
   ContextUsage,
   QuotaSnapshot,
+  SkillRef,
   SubagentEvent,
   SubagentPolicy,
   TurnUsage,
@@ -275,6 +276,8 @@ export interface LoopOptions {
    * does, e.g. `@path` mentions as plain paths. Default: unchanged.
    */
   relay?(text: string): string;
+  /** `leader` mode: a skill the user named for the leader's first turn (ADR 0019). */
+  readonly skill?: SkillRef;
   /** Policies for the agents' own sub-agents (D13), per role. */
   readonly subagents?: {
     readonly orchestrator?: SubagentPolicy;
@@ -998,7 +1001,12 @@ export function runLoop(options: LoopOptions): Loop {
     if (stopped) throw new Stopped();
   }
 
-  async function turn(session: AgentSession, role: Role, prompt: string): Promise<AgentTurnResult> {
+  async function turn(
+    session: AgentSession,
+    role: Role,
+    prompt: string,
+    skill?: SkillRef,
+  ): Promise<AgentTurnResult> {
     checkStopped();
     await emit({ type: 'turn_started', role, agent: session.name });
     const policy =
@@ -1057,33 +1065,37 @@ export function runLoop(options: LoopOptions): Loop {
       }
     }
 
-    const running = session.runTurn(prompt, {
-      onText: (text) => {
-        options.onEvent?.({ type: 'text', role, text });
+    const running = session.runTurn(
+      prompt,
+      {
+        onText: (text) => {
+          options.onEvent?.({ type: 'text', role, text });
+        },
+        onApprovalRequest: async (request): Promise<ApprovalDecision> => {
+          if (!options.onApproval) {
+            await emit({
+              type: 'approval_denied',
+              role,
+              agent: session.name,
+              request,
+              message: APPROVAL_DENIED_MESSAGE,
+            });
+            return 'decline';
+          }
+          // The user decides (R9); stopping the loop declines what is still waiting.
+          const decision = await options
+            .onApproval({ role, agent: session.name, request }, controller.signal)
+            .catch((): ApprovalDecision => 'decline');
+          await emit({ type: 'approval_decided', role, agent: session.name, request, decision });
+          return decision;
+        },
+        onActivity: (activity) => {
+          void emit({ type: 'activity', role, ...activity });
+        },
+        onSubagent,
       },
-      onApprovalRequest: async (request): Promise<ApprovalDecision> => {
-        if (!options.onApproval) {
-          await emit({
-            type: 'approval_denied',
-            role,
-            agent: session.name,
-            request,
-            message: APPROVAL_DENIED_MESSAGE,
-          });
-          return 'decline';
-        }
-        // The user decides (R9); stopping the loop declines what is still waiting.
-        const decision = await options
-          .onApproval({ role, agent: session.name, request }, controller.signal)
-          .catch((): ApprovalDecision => 'decline');
-        await emit({ type: 'approval_decided', role, agent: session.name, request, decision });
-        return decision;
-      },
-      onActivity: (activity) => {
-        void emit({ type: 'activity', role, ...activity });
-      },
-      onSubagent,
-    });
+      skill ? { skill } : undefined,
+    );
     started.turn = running;
     // A violation reported while runTurn was still starting the turn.
     if (violation !== undefined) void running.stop();
@@ -1263,7 +1275,10 @@ export function runLoop(options: LoopOptions): Loop {
     const first = leader && options.preface ? `${options.preface}\n\n${request}` : request;
     /** A draft the user approved: the implementer starts from it, with no leader turn first. */
     let draft = leader ? options.delegation : undefined;
-    let answer = draft === undefined ? (await turn(orchestrator, 'orchestrator', first)).text : '';
+    let answer =
+      draft === undefined
+        ? (await turn(orchestrator, 'orchestrator', first, leader ? options.skill : undefined)).text
+        : '';
     const relay = (text: string) => options.relay?.(text) ?? text;
     let exchange = 0;
     let fixes = 0;

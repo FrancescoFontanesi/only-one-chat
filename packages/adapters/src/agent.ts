@@ -67,11 +67,21 @@ export interface AgentTurn {
   stop(): Promise<void>;
 }
 
+/** A skill of the CLI named for a turn (ADR 0019); the path where the CLI needs it (Codex). */
+export interface AgentSkillRef {
+  readonly name: string;
+  readonly path?: string;
+}
+
 export interface AgentSession {
   readonly name: string;
   /** Recipient name in delegation blocks. */
   readonly id: string;
-  runTurn(prompt: string, handlers: AgentTurnHandlers): AgentTurn;
+  runTurn(
+    prompt: string,
+    handlers: AgentTurnHandlers,
+    options?: { readonly skill?: AgentSkillRef },
+  ): AgentTurn;
   /** Reasoning effort of the next turns, without a new session. */
   setEffort?(effort: string): void;
   /** Model of the next turns, in the same session. */

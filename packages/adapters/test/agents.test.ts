@@ -19,6 +19,7 @@ import {
   type AgentSubagentEvent,
   type AgentSession,
   type AgentTurnHandlers,
+  codexInput,
 } from '../src/index.js';
 import { testEnv } from './env.js';
 
@@ -771,5 +772,16 @@ describe('Claude agent session', () => {
     expect(error).toMatchObject({ kind: 'usage_limit' });
     expect((error as Error).message).toMatch(/usage limit reached: You've hit your session limit/);
     expect(turnArgs()).toHaveLength(1);
+  });
+});
+
+describe('a Codex turn’s input (ADR 0019)', () => {
+  it('puts a named skill first, as Codex’s own skill input', () => {
+    expect(codexInput('ciao')).toEqual([{ type: 'text', text: 'ciao' }]);
+    expect(codexInput('ciao', { name: 'tdd', path: '/s/tdd/SKILL.md' })).toEqual([
+      { type: 'skill', name: 'tdd', path: '/s/tdd/SKILL.md' },
+      { type: 'text', text: 'ciao' },
+    ]);
+    expect(codexInput('ciao', { name: 'tdd' })).toEqual([{ type: 'text', text: '$tdd ciao' }]);
   });
 });

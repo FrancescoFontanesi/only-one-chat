@@ -1509,6 +1509,15 @@ input:focus-visible {
 .pop__f {
   padding: 8px 16px;
 }
+/* Why the skills popover has nothing to choose yet (ADR 0019). */
+.pop__note {
+  margin: 0;
+  padding: 10px 16px;
+}
+/* The skill a message invokes: an attachment in ink, before the files. */
+.att--skill {
+  border-color: var(--ink);
+}
 .pop__e {
   padding: 10px 16px;
 }
@@ -1517,6 +1526,15 @@ input:focus-visible {
 }
 .pop .pick--mono .pick__n {
   font-size: 12px;
+}
+/* A skill: its name whole, its description on one line after it (ADR 0019). */
+.pop .pick--skill {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+.pop .pick--skill .pick__m {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* The approval of a delegation or a report, and the permission Slab. */

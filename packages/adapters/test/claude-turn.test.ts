@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   ClaudeError,
+  claudePrompt,
   claudeTurnArgs,
   resolveClaudeExecutable,
   startClaudeTurn,
@@ -125,6 +126,12 @@ describe('arguments', () => {
     expect(shell).not.toContain('--allowedTools');
     expect(shell[shell.indexOf('--permission-prompts') + 1]).toBe('none');
     expect(shell[shell.indexOf('--permission-mode') + 1]).toBe('default');
+  });
+
+  it('offers the Skill tool when asked, and only then (ADR 0019)', () => {
+    const skills = claudeTurnArgs({ executable: 'c', cwd: '.', prompt: 'x', skills: true });
+    expect(skills[skills.indexOf('--tools') + 1]?.split(',')).toContain('Skill');
+    expect(args[args.indexOf('--tools') + 1]?.split(',')).not.toContain('Skill');
   });
 
   it('never bypasses permissions', () => {
@@ -386,5 +393,18 @@ describe('executable', () => {
     await expect(resolveClaudeExecutable({ configuredPath: 'claude.exe' })).rejects.toThrow(
       /absolute/,
     );
+  });
+});
+
+describe('the user’s text to Claude (ADR 0019)', () => {
+  it('keeps a leading slash as text, so no command of Claude Code runs from the chat', () => {
+    expect(claudePrompt('/clear')).toBe(' /clear');
+    expect(claudePrompt('/plan a sum')).toBe(' /plan a sum');
+    expect(claudePrompt('ciao /clear')).toBe('ciao /clear');
+  });
+
+  it('invokes a skill the user named as /name, then the text', () => {
+    expect(claudePrompt('aggiungi i test', { name: 'tdd' })).toBe('/tdd aggiungi i test');
+    expect(claudePrompt('', { name: 'tdd' })).toBe('/tdd');
   });
 });

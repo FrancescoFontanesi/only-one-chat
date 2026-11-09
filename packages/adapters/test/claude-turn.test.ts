@@ -328,6 +328,44 @@ describe('sandbox mode (ADR 0008)', () => {
   });
 });
 
+describe('Claude Code’s auto mode (ADR 0021)', () => {
+  const turnArgv = () => fakeLog().find((entry) => entry.argv?.includes('-p'))?.argv ?? [];
+  const after = (argv: string[], flag: string) => argv[argv.indexOf(flag) + 1];
+
+  it('asks for it with the same tools and rules, never for bypassPermissions', async () => {
+    const result = await startClaudeTurn(
+      options([], { sandbox: { commands: ['python'], auto: true } }).options,
+    ).done;
+    expect(result.text).toBe('OK');
+    const argv = turnArgv();
+    expect(after(argv, '--permission-mode')).toBe('auto');
+    expect(after(argv, '--tools')).toBe('Read,Grep,Glob,Write,Edit,Bash');
+    expect(after(argv, '--allowedTools')).toBe('Edit(./**),Bash(python *)');
+    expect(argv.join(' ')).not.toMatch(/bypassPermissions|dangerously/);
+  });
+
+  it('goes on in default mode when Claude Code turns auto mode off by itself', async () => {
+    const result = await startClaudeTurn(
+      options(['--permission-mode-reported=default'], {
+        sandbox: { commands: ['python'], auto: true },
+      }).options,
+    ).done;
+    expect(result.text).toBe('OK');
+  });
+
+  it('stops a turn that reports any other mode', async () => {
+    const error = await failure(
+      startClaudeTurn(
+        options(['--permission-mode-reported=bypassPermissions'], {
+          sandbox: { commands: ['python'], auto: true },
+        }).options,
+      ).done,
+    );
+    expect(error.kind).toBe('permission_mode');
+    expect(error.message).toMatch(/instead of "auto" or "default"/);
+  });
+});
+
 describe('ending a turn', () => {
   it('stops a running turn and terminates its whole process tree', async () => {
     const { options: turn, events } = options(['--hang']);

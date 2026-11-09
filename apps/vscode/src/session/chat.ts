@@ -51,6 +51,7 @@ import type {
 } from '../webview/protocol.js';
 import type { Checkpoint, CheckpointStore } from './checkpoints.js';
 import { changes, snapshot, verifiedFacts } from './facts.js';
+import { ignoredPaths, type Ignored } from './ignore.js';
 import { plainRefs } from './mentions.js';
 
 export interface AgentChoice {
@@ -88,6 +89,8 @@ export interface ChatConfig {
   readonly resume?: Partial<Record<TurnRole, string>>;
   /** Records the folder before each message, for the review and the restore (ADR 0014). */
   readonly checkpoints?: CheckpointStore;
+  /** Paths left out of the facts and of the changes shown (ADR 0021). */
+  readonly ignoredPaths?: readonly string[];
   /** The user's own instructions per role, added to the role's (ADR 0013). */
   readonly instructions?: Partial<Record<TurnRole, string>>;
   /** Implementer work of a reopened chat the leader has not seen yet (R5). */
@@ -219,6 +222,7 @@ export class ChatSession {
   private held: DraftDelegation | undefined;
   /** The chat is being closed: what waits for the user stays kept with it. */
   private closing = false;
+  private readonly ignored: Ignored;
   /** The latest message between agents the loop showed, for the card of one that went on by itself. */
   private lastIntercepted: { from: string; to: string; text: string } | undefined;
 
@@ -229,6 +233,7 @@ export class ChatSession {
     this.mode = config.mode;
     this.roles = { leader: readOnly(config.leader), implementer: config.implementer };
     this.restored = config.draft;
+    this.ignored = ignoredPaths(config.ignoredPaths ?? []);
     this.unseen = [...(config.unseen ?? [])];
     this.fileNotes = {
       leader: [...(config.fileNotes?.leader ?? [])],
@@ -308,7 +313,8 @@ export class ChatSession {
 
   /**
    * A role's sessions, with its permission level (ADR 0011): `read-only`
-   * writes nothing; `auto` acts inside the folder and asks to go beyond it;
+   * writes nothing; `auto` acts inside the folder and, for Claude, lets
+   * Claude Code's auto mode decide the rest (ADR 0021);
    * `ask` asks before acting (Codex: before any command it does not know to
    * be safe). The leader is read-only and still runs commands to search and
    * check (ADR 0018): Codex in its read-only sandbox, never asking to leave
@@ -346,7 +352,16 @@ export class ChatSession {
           cwd: config.cwd,
           model: choice.model,
           effort: choice.effort,
-          ...(writable ? { sandbox: { commands: config.allowedCommands } } : {}),
+          // `auto` is Claude Code's own auto mode (ADR 0021): its classifier decides
+          // what would ask; `ask` stays in default mode with every action asking.
+          ...(writable
+            ? {
+                sandbox: {
+                  commands: config.allowedCommands,
+                  auto: choice.permission === 'auto',
+                },
+              }
+            : {}),
           ...(leader ? { readOnlyShell: true } : {}),
           // The model loads a skill by itself, as Codex does (ADR 0019).
           skills: true,
@@ -708,7 +723,7 @@ export class ChatSession {
   ): Promise<void> {
     this.running = true;
     this.events.busy(true);
-    const baseline = snapshot(this.config.cwd);
+    const baseline = snapshot(this.config.cwd, this.ignored);
     /** Set once the facts are shown, by the facts callback or the direct turn. */
     const shown = { facts: false };
     try {
@@ -728,7 +743,7 @@ export class ChatSession {
       const reviewed = checkpoint ? this.review(checkpoint) : false;
       if (!shown.facts && !reviewed) {
         // Changes made with no delegation: shown, not judged.
-        const changed = changes(baseline, snapshot(this.config.cwd));
+        const changed = changes(baseline, snapshot(this.config.cwd, this.ignored));
         if (changed !== 'unknown' && changed.length > 0) {
           this.events.update({
             type: 'notice',
@@ -757,7 +772,7 @@ export class ChatSession {
       true,
       skill,
     );
-    const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand);
+    const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand, this.ignored);
     shown.facts = true;
     this.events.update({ type: 'notice', level: 'info', text: facts });
     this.unseen.push({ source: 'direct', request: text, report: result.text, facts });
@@ -834,7 +849,7 @@ export class ChatSession {
       onQuestion: ({ role, agent, questions }, signal) =>
         this.ask(roleOf(role), agent, questions, signal),
       facts: async () => {
-        const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand);
+        const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand, this.ignored);
         shown.facts = true;
         this.events.update({ type: 'notice', level: 'info', text: facts });
         return facts;

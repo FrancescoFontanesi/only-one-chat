@@ -6,7 +6,8 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
+import { NOTHING_IGNORED, type Ignored } from './ignore.js';
 
 /** Folders never walked: dependencies, caches, version control. */
 export const SKIPPED = new Set([
@@ -24,26 +25,28 @@ export const MAX_FILES = 5_000;
 /** `unavailable`: too many files, or the folder could not be read. */
 export type Snapshot = ReadonlyMap<string, string> | 'unavailable';
 
-/** Content hash of every file under `dir`, by relative path. */
-export function snapshot(dir: string): Snapshot {
+/** Content hash of every file under `dir`, by relative path; `ignored` paths left out (ADR 0021). */
+export function snapshot(dir: string, ignored: Ignored = NOTHING_IGNORED): Snapshot {
   try {
-    return walkFolder(dir);
+    return walkFolder(dir, ignored);
   } catch {
     return 'unavailable';
   }
 }
 
-function walkFolder(dir: string): Snapshot {
+function walkFolder(dir: string, ignored: Ignored): Snapshot {
   const out = new Map<string, string>();
   const walk = (folder: string): boolean => {
     for (const entry of readdirSync(folder, { withFileTypes: true })) {
+      const path = join(folder, entry.name);
+      const rel = relative(dir, path);
       if (entry.isDirectory()) {
-        if (SKIPPED.has(entry.name)) continue;
-        if (!walk(join(folder, entry.name))) return false;
+        if (SKIPPED.has(entry.name) || ignored(rel.split(sep).join('/'), true)) continue;
+        if (!walk(path)) return false;
       } else if (entry.isFile()) {
+        if (ignored(rel.split(sep).join('/'), false)) continue;
         if (out.size >= MAX_FILES) return false;
-        const path = join(folder, entry.name);
-        out.set(relative(dir, path), createHash('sha256').update(readFileSync(path)).digest('hex'));
+        out.set(rel, createHash('sha256').update(readFileSync(path)).digest('hex'));
       }
     }
     return true;
@@ -103,8 +106,9 @@ export async function verifiedFacts(
   dir: string,
   baseline: Snapshot,
   verify: readonly string[],
+  ignored: Ignored = NOTHING_IGNORED,
 ): Promise<string> {
-  const changed = changes(baseline, snapshot(dir));
+  const changed = changes(baseline, snapshot(dir, ignored));
   const lines = ['File cambiati dall’inizio della richiesta:'];
   if (changed === 'unknown') {
     lines.push('- non calcolati: la cartella ha troppi file o non si può leggere');

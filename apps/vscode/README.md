@@ -164,16 +164,26 @@ sub-agents, permissions and unsaved files, the composer, notifications, the CLIs
 
 - The agents work only in the folder open in VS Code, once it is trusted (Workspace Trust).
 - The first request asks for your consent.
-- Claude may run only the programs in `onlyOneChat.allowedCommands`; Codex writes inside the
-  folder, without network.
+- Claude runs the programs in `onlyOneChat.allowedCommands` without asking; Codex writes inside
+  the folder, without network.
 - **The leader is read-only** (ADR 0018): Codex in its read-only sandbox, never asking to leave
   it; Claude with its read tools and only the commands Claude Code counts as read-only.
 - **The implementer's permission level**, set in `onlyOneChat.implementer.permission`:
   - `read-only`: no file changes, no commands that write;
   - `ask`: asks you before acting. Codex asks before any command it does not know to be safe,
     Claude before every edit and command;
-  - `auto`: acts inside the folder and asks you to go beyond it.
+  - `auto`: acts inside the folder. For Claude this is Claude Code's own auto mode (ADR 0021):
+    its classifier decides what would otherwise ask, as in the Claude Code extension. Where
+    auto mode is not available (plan, model), Claude says so in the chat and works in default
+    mode. `bypassPermissions` is never used.
+- **The level can change during the chat** from the left dial (PERMESSI: Legge · Chiede · Auto)
+  or from Squad; it applies from the implementer's next turn.
 - **When an agent asks**, a PERMESSO card appears in the chat: once, for the session (the same
   command or file only), or no. Stopping the chat declines what is still waiting.
+- **What waits for you** (permissions, delegations to send, questions) is counted on the SQUAD
+  button and listed in Squad, where each can be answered. A short notice above the composer
+  says when a new one arrives; click it to open Squad.
+- **`onlyOneChat.ignoredPaths`** leaves paths out of the verified facts, the checkpoints and the
+  changes card, written as in a `.gitignore` (for example `graft/` for a tool's cache).
 
 License: MIT.

@@ -27,7 +27,8 @@
         "onlyOneChat.codexPath",
         "onlyOneChat.claudePath",
         "onlyOneChat.allowedCommands",
-        "onlyOneChat.verifyCommand"
+        "onlyOneChat.verifyCommand",
+        "onlyOneChat.ignoredPaths"
       ]
     },
     "virtualWorkspaces": false
@@ -188,6 +189,14 @@
           ],
           "scope": "machine",
           "description": "Programs Claude may run without asking, for example to run the tests."
+        },
+        "onlyOneChat.ignoredPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Paths left out of the verified facts, the checkpoints and the changes card, written as in a `.gitignore` (for example `graft/` or `*.log`). Use it for folders that tools write into the workspace."
         },
         "onlyOneChat.verifyCommand": {
           "type": "array",

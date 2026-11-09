@@ -145,8 +145,13 @@ tocca e come le mitiga.
   - Alla prima richiesta un avviso modale chiede il consenso per quella cartella.
 - **Mitigazioni sui permessi:**
   - Valgono quelli della modalità sandbox (ADR 0008): Claude scrive con `Edit(./**)` ed esegue
-    solo i programmi di `onlyOneChat.allowedCommands`; Codex scrive con `workspace-write`, senza
-    rete.
+    senza chiedere i programmi di `onlyOneChat.allowedCommands`; Codex scrive con
+    `workspace-write`, senza rete.
+  - Al livello `auto` Claude lavora nella modalità auto di Claude Code (ADR 0021): ciò che
+    chiederebbe lo decide il classificatore di Claude Code. Se la sessione riporta una modalità
+    diversa da `auto` o `default`, il turno si ferma. `bypassPermissions` non si usa mai.
+  - `onlyOneChat.ignoredPaths` toglie percorsi dai fatti verificati e dai checkpoint. È limitata
+    nelle cartelle non attendibili, perché nasconderebbe modifiche alla revisione.
   - Le altre richieste di approvazione dei CLI vengono rifiutate e mostrate: R9 è ancora da
     fare.
   - I percorsi degli eseguibili, i comandi ammessi e il comando di verifica hanno scope
@@ -155,7 +160,8 @@ tocca e come le mitiga.
   - Ogni messaggio della Webview è validato, con un limite di 50 000 caratteri.
   - I testi dei modelli sono resi come testo, mai come HTML.
 - **Limite noto:** come nella sandbox, un comando ammesso (per esempio `python`) può fare
-  quello che può fare quel programma. Per provare l'estensione si usa una cartella separata
+  quello che può fare quel programma. Al livello `auto` di Claude decide un classificatore,
+  non l'utente: chi vuole decidere tutto sceglie `ask`. Per provare l'estensione si usa una cartella separata
   (`pnpm playground`).
 
 ### T12. Approvazioni interattive (R9, ADR 0011)

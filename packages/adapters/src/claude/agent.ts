@@ -18,6 +18,7 @@ import type {
 } from '../agent.js';
 import { tail } from '../steps.js';
 import {
+  AUTO_PERMISSION_MODE,
   ClaudeError,
   SUBAGENT_TOOL,
   startClaudeTurn,
@@ -126,6 +127,8 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
     let effort = config.effort;
     /** The model of the next turns: each turn is its own process with --model. */
     let model = config.model;
+    /** Claude Code's auto mode fell back to another mode, and the thread was told. */
+    let autoUnavailableSaid = false;
 
     function runTurn(
       prompt: string,
@@ -217,6 +220,19 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
               kind: 'session',
               detail: `${event.model} (${event.sessionId}), permission mode ${event.permissionMode}`,
             });
+            if (
+              config.sandbox?.auto === true &&
+              event.permissionMode !== AUTO_PERMISSION_MODE &&
+              !autoUnavailableSaid
+            ) {
+              // Said once per session: Claude Code turned its auto mode off by itself (ADR 0021).
+              autoUnavailableSaid = true;
+              handlers.onStep?.({
+                kind: 'message',
+                id: `m-${String(++stepCount)}`,
+                text: `La modalità auto di Claude Code non è disponibile qui (piano, modello o impostazioni): Claude lavora in modalità ${event.permissionMode} e chiede per ciò che non è consentito.`,
+              });
+            }
           }
         },
       });

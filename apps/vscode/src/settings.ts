@@ -63,6 +63,11 @@ const SECTIONS: readonly { title: string; items: readonly Definition[] }[] = [
     items: [
       { key: 'allowedCommands', label: 'Programmi che Claude esegue senza chiedere', kind: 'list' },
       {
+        key: 'ignoredPaths',
+        label: 'Percorsi ignorati da fatti, checkpoint e modifiche (come in .gitignore)',
+        kind: 'list',
+      },
+      {
         key: 'saveBeforeSend',
         label: 'File non salvati prima di un messaggio',
         kind: 'enum',

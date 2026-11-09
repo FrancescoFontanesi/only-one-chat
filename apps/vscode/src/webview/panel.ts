@@ -7,6 +7,7 @@ import type { ChatRoles, RoleSettings, Roles } from '../roles.js';
 import { ChatSession } from '../session/chat.js';
 import { CheckpointStore } from '../session/checkpoints.js';
 import { SKIPPED } from '../session/facts.js';
+import { ignoredPaths } from '../session/ignore.js';
 import { expandMentions, inside, withRefs } from '../session/mentions.js';
 import { ChatHistory, forReplay, newChatId, type ChatRecord } from '../session/history.js';
 import { checkpointUri, checkpointsRoot } from './checkpointContent.js';
@@ -641,7 +642,12 @@ export class OnlyOneChatPanel {
         resume: { ...record.sessions },
         unseen: record.unseen ?? [],
         ...(record.draft ? { draft: record.draft } : {}),
-        checkpoints: new CheckpointStore(checkpointsRoot(this.context, record.id), cwd),
+        checkpoints: new CheckpointStore(
+          checkpointsRoot(this.context, record.id),
+          cwd,
+          ignoredPaths(settings.get<string[]>('ignoredPaths') ?? []),
+        ),
+        ignoredPaths: settings.get<string[]>('ignoredPaths') ?? [],
         fileNotes: record.fileNotes ?? {},
         persistent: true,
         review: settings.get<string>('leaderReview') === 'deferred' ? 'deferred' : 'always',

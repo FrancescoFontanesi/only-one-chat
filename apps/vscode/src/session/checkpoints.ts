@@ -22,6 +22,7 @@ import {
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { ChangedFile } from '../webview/protocol.js';
 import { MAX_FILES, SKIPPED } from './facts.js';
+import { NOTHING_IGNORED, type Ignored } from './ignore.js';
 
 /** Larger files are not recorded: their changes cannot be undone. */
 export const MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -88,6 +89,8 @@ export class CheckpointStore {
   constructor(
     root: string,
     private readonly cwd: string,
+    /** Paths left out of every checkpoint (ADR 0021). */
+    private readonly ignored: Ignored = NOTHING_IGNORED,
   ) {
     this.blobs = join(root, 'blobs');
     this.manifests = join(root, 'checkpoints');
@@ -133,12 +136,13 @@ export class CheckpointStore {
     const walk = (folder: string): boolean => {
       for (const entry of readdirSync(folder, { withFileTypes: true })) {
         const full = join(folder, entry.name);
+        const path = relative(this.cwd, full).split(sep).join('/');
         if (entry.isDirectory()) {
-          if (SKIPPED.has(entry.name)) continue;
+          if (SKIPPED.has(entry.name) || this.ignored(path, true)) continue;
           if (!walk(full)) return false;
         } else if (entry.isFile()) {
+          if (this.ignored(path, false)) continue;
           if (files.size + large.size >= MAX_FILES) return false;
-          const path = relative(this.cwd, full).split(sep).join('/');
           const stat = statSync(full);
           if (stat.size > MAX_FILE_BYTES)
             large.set(path, `${String(stat.size)}:${String(stat.mtimeMs)}`);

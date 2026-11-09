@@ -77,6 +77,16 @@ const SANDBOX_DENIED_TOOLS = ['PowerShell', 'MultiEdit', 'NotebookEdit', 'WebFet
 export const PERMISSION_MODE = 'default';
 
 /**
+ * Claude Code's own auto mode (ADR 0021): where something would ask, Claude
+ * Code's classifier allows it or blocks it, as in its `auto` mode; allow and
+ * deny rules still apply first, and bypassPermissions is never used. Claude
+ * Code turns it off by itself where it is not available (plan, model, fast
+ * mode, settings): the session then reports `default`, and what would ask
+ * goes to the hook as before.
+ */
+export const AUTO_PERMISSION_MODE = 'auto';
+
+/**
  * Rules allowed without asking in sandbox mode (Claude Code docs, permissions):
  * - `Edit(./**)`: file edits under the working directory only; a CLI rule's
  *   relative path is anchored there, and Write is checked against Edit rules
@@ -200,7 +210,11 @@ export interface ClaudeTurnOptions {
    * in `cwd` and run the listed commands (e.g. `python`); everything else stays
    * denied. Only for a fresh, disposable working directory.
    */
-  readonly sandbox?: { readonly commands: readonly string[] };
+  readonly sandbox?: {
+    readonly commands: readonly string[];
+    /** Claude Code's auto mode instead of `default` (ADR 0021). */
+    readonly auto?: boolean;
+  };
   /**
    * A read-only role that still runs commands (ADR 0018: the leader). Bash
    * joins the read tools with no rule that allows a command, so only the
@@ -331,7 +345,7 @@ export function claudeTurnArgs(options: ClaudeTurnOptions): string[] {
     'none',
     // Explicit, so the user's defaultMode (acceptEdits, bypassPermissions, …) never applies.
     '--permission-mode',
-    PERMISSION_MODE,
+    options.sandbox?.auto === true ? AUTO_PERMISSION_MODE : PERMISSION_MODE,
     // Without it the text of a foreground sub-agent is left out of the stream.
     ...(options.subagents ? ['--forward-subagent-text'] : []),
     ...(options.model ? ['--model', options.model] : []),
@@ -422,6 +436,9 @@ export function isOfficialAnthropicUrl(url: string): boolean {
 /** Starts a turn once billing has been checked; see the module comment. */
 export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
   const shutdownTimeoutMs = options.shutdownTimeoutMs ?? 5_000;
+  /** The modes the session may report: auto mode may fall back to `default` by itself. */
+  const acceptedModes =
+    options.sandbox?.auto === true ? [AUTO_PERMISSION_MODE, PERMISSION_MODE] : [PERMISSION_MODE];
   let child: ReturnType<typeof spawn> | undefined;
   let stopped = false;
   const stopRequested = () => stopped;
@@ -522,10 +539,10 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
                   'api_key',
                   `Claude reported the API key source ${JSON.stringify(apiKeySource)}; the turn was stopped`,
                 )
-              : permissionMode !== PERMISSION_MODE
+              : !acceptedModes.includes(permissionMode)
                 ? new ClaudeError(
                     'permission_mode',
-                    `Claude reported the permission mode ${JSON.stringify(permissionMode)} instead of "${PERMISSION_MODE}"; the turn was stopped`,
+                    `Claude reported the permission mode ${JSON.stringify(permissionMode)} instead of "${acceptedModes.join('" or "')}"; the turn was stopped`,
                   )
                 : undefined;
           if (refusal) {

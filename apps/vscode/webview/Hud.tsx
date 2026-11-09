@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type {
   ApprovalMode,
   MonitorState,
+  PermissionLevel,
   ProviderUsage,
   RoleName,
   RolesState,
@@ -38,7 +39,7 @@ import {
   steps,
 } from './hudGeometry.js';
 import { Counter, Decode, reducedMotion } from './motion.js';
-import { clock, editableRole, post, PROVIDER, writeRole } from './ui.js';
+import { clock, editableRole, PERMISSIONS, post, PROVIDER, writeRole } from './ui.js';
 
 const FPS = 24;
 
@@ -216,8 +217,8 @@ const EFFORT_SHORT: Record<string, string> = {
 };
 
 /**
- * Two choices side by side under their key: the chosen one bright, the other dim;
- * a click on the other, the wheel or the arrows switch.
+ * Choices side by side under their key: the chosen one bright, the others dim;
+ * a click on another chooses it, the wheel or the arrows move to the next.
  */
 function Switch<T extends string>({
   label,
@@ -230,9 +231,10 @@ function Switch<T extends string>({
   options: readonly { value: T; label: string; title: string }[];
   onChange: (value: T) => void;
 }) {
-  const other = () => {
-    const next = options.find((o) => o.value !== value);
-    if (next) onChange(next.value);
+  const other = (step = 1) => {
+    const at = options.findIndex((o) => o.value === value);
+    const next = options[(at + step + options.length) % options.length];
+    if (next && next.value !== value) onChange(next.value);
   };
   return (
     <div
@@ -242,12 +244,12 @@ function Switch<T extends string>({
       aria-label={label}
       onWheel={(event: WheelEvent) => {
         event.preventDefault();
-        other();
+        other(event.deltaY > 0 ? 1 : -1);
       }}
       onKeyDown={(event: KeyboardEvent) => {
         if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
         event.preventDefault();
-        other();
+        other(event.key === 'ArrowDown' ? 1 : -1);
       }}
     >
       <span class="hud__k">{label}</span>
@@ -282,6 +284,21 @@ const DELIVERY: readonly { value: ApprovalMode; label: string; title: string }[]
     title: 'Il brief aspetta te, modificabile; la chat si ferma finché non lo invii o annulli',
   },
 ];
+
+/**
+ * The implementer's permissions (ADR 0021), as Claude Code calls its modes:
+ * read only, ask before acting, auto (Claude Code's own auto mode). From its next turn.
+ */
+const PERMISSION_TITLE: Record<PermissionLevel, string> = {
+  'read-only': 'Legge e cerca, non modifica nulla',
+  ask: 'Chiede prima di ogni modifica o comando',
+  auto: 'Lavora nella cartella senza chiedere; per Claude decide la modalità auto di Claude Code',
+};
+const PERMISSION_OPTIONS = PERMISSIONS.map((p) => ({
+  value: p.value,
+  label: p.value === 'read-only' ? 'Legge' : p.short,
+  title: PERMISSION_TITLE[p.value],
+}));
 
 /** The reasoning step under a point of the sight: its segments run from the bottom up. */
 function stepAt(y: number, count: number): number {
@@ -463,26 +480,38 @@ export function RoleHud({
         {isLeader ? (
           <Switch label="Consegna" value={mode} options={DELIVERY} onChange={setMode} />
         ) : (
-          <button
-            class="cn-btn cn-btn--outline cn-btn--sm hud__handoff"
-            type="button"
-            disabled={busy || !started}
-            title={
-              !started
-                ? 'La chat non è ancora partita: l’implementatore parte già da zero'
-                : busy
-                  ? 'Un messaggio è in corso: l’handoff si fa quando finisce'
-                  : 'Una sessione nuova dello stesso modello, che parte da un passaggio di consegne di questa'
-            }
-            onClick={() => {
-              post({ type: 'handoff' });
-            }}
-          >
-            <span class="cn-btn__label">Handoff</span>
-            <span class="cn-btn__icon" aria-hidden="true">
-              →
-            </span>
-          </button>
+          <>
+            {info && (
+              <Switch
+                label="Permessi"
+                value={info.permission}
+                options={PERMISSION_OPTIONS}
+                onChange={(permission) => {
+                  writeRole(to, info, { permission });
+                }}
+              />
+            )}
+            <button
+              class="cn-btn cn-btn--outline cn-btn--sm hud__handoff"
+              type="button"
+              disabled={busy || !started}
+              title={
+                !started
+                  ? 'La chat non è ancora partita: l’implementatore parte già da zero'
+                  : busy
+                    ? 'Un messaggio è in corso: l’handoff si fa quando finisce'
+                    : 'Una sessione nuova dello stesso modello, che parte da un passaggio di consegne di questa'
+              }
+              onClick={() => {
+                post({ type: 'handoff' });
+              }}
+            >
+              <span class="cn-btn__label">Handoff</span>
+              <span class="cn-btn__icon" aria-hidden="true">
+                →
+              </span>
+            </button>
+          </>
         )}
       </div>
     </div>

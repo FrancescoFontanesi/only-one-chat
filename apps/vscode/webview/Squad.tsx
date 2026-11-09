@@ -19,14 +19,15 @@ import { Board } from './board.js';
 import { Crossed, Lattice } from './lattice.js';
 import { Decode, flash, Progress, Reveal } from './motion.js';
 import type { ThreadItem } from './state.js';
-import { clock, kilo, Meter, PERMISSIONS, PROVIDER, ROLE, RoleEditor } from './ui.js';
+import { waitingItems, type WaitingItem } from './threadModel.js';
+import { clock, kilo, Meter, PERMISSIONS, post, PROVIDER, ROLE, RoleEditor } from './ui.js';
 
 const STATE_TAG = { working: 'LAVORA', waiting: '▲ ASPETTA TE', idle: '○ FERMO' } as const;
 const LEVEL = { info: '■', warn: '▲', error: '×' } as const;
 const INDEX: Record<RoleName, string> = { leader: 'A', implementer: 'B' };
 
 type Tab = 'events' | 'waiting' | 'changes';
-type Waiting = Extract<ThreadItem, { kind: 'permission' | 'approval' }>;
+type Waiting = WaitingItem;
 
 function agentOf(monitor: MonitorState, role: RoleName): MonitorAgent | undefined {
   return monitor.agents.find((a) => a.role === role);
@@ -136,6 +137,75 @@ function Agent({
  * What waits for you, as a cell of the panel: inverted (the view's one
  * accent) when something waits, and it flashes when it comes; plain when not.
  */
+function waitingTitle(item: Waiting): string {
+  if (item.kind === 'permission') return `Permesso · ${ROLE[item.role]}`;
+  if (item.kind === 'question') return `Domanda · ${ROLE[item.role]}`;
+  return `${item.approval === 'delegation' ? 'Delega' : 'Rapporto'} da approvare`;
+}
+
+function waitingDetail(item: Waiting): string {
+  if (item.kind === 'permission') return item.summary;
+  if (item.kind === 'question') return item.questions.map((q) => q.question).join(' · ');
+  return `${item.from} → ${item.to}`;
+}
+
+/**
+ * A request in the waiting list, answered from here (ADR 0021): a permission
+ * with its three answers, a delegation sent or cancelled as written; a
+ * question, or a delegation to edit, opens where it is in the chat.
+ */
+function WaitingRow({ item, go }: { item: Waiting; go: (id: string) => void }) {
+  const open = (
+    <button
+      class="cn-btn cn-btn--text"
+      type="button"
+      onClick={() => {
+        go(item.id);
+      }}
+    >
+      <span class="cn-btn__label">{item.kind === 'question' ? 'RISPONDI ↗' : 'VAI ↗'}</span>
+    </button>
+  );
+  const action = (label: string, run: () => void) => (
+    <button class="cn-btn cn-btn--text" type="button" onClick={run}>
+      <span class="cn-btn__label">{label}</span>
+    </button>
+  );
+  return (
+    <div>
+      <span>
+        ▲ {waitingTitle(item)} · {waitingDetail(item)}
+      </span>
+      <span class="wlist__a">
+        {item.kind === 'permission' && (
+          <>
+            {action('CONSENTI', () => {
+              post({ type: 'permit', id: item.id, decision: 'accept' });
+            })}
+            {action('PER LA SESSIONE', () => {
+              post({ type: 'permit', id: item.id, decision: 'acceptForSession' });
+            })}
+            {action('RIFIUTA', () => {
+              post({ type: 'permit', id: item.id, decision: 'decline' });
+            })}
+          </>
+        )}
+        {item.kind === 'approval' && (
+          <>
+            {action('INVIA', () => {
+              post({ type: 'decide', id: item.id, action: 'approve' });
+            })}
+            {action('ANNULLA', () => {
+              post({ type: 'decide', id: item.id, action: 'cancel' });
+            })}
+          </>
+        )}
+        {open}
+      </span>
+    </div>
+  );
+}
+
 function Alert({
   waiting,
   theme,
@@ -168,14 +238,8 @@ function Alert({
       <span class="cn-tag">
         <b>▲</b> Aspetta te{waiting.length > 1 ? ` · ${String(waiting.length)}` : ''}
       </span>
-      <h3 class="t-title">
-        {first.kind === 'permission'
-          ? `Permesso · ${ROLE[first.role]}`
-          : `${first.approval === 'delegation' ? 'Delega' : 'Rapporto'} da approvare`}
-      </h3>
-      <p class="t-data mut">
-        {first.kind === 'permission' ? first.summary : `${first.from} → ${first.to}`}
-      </p>
+      <h3 class="t-title">{waitingTitle(first)}</h3>
+      <p class="t-data mut">{waitingDetail(first)}</p>
       <div class="sq-alert__a">
         <button
           class="cn-btn cn-btn--sm"
@@ -211,7 +275,10 @@ export function Squad({
   go: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<RoleName>('leader');
-  const [tab, setTab] = useState<Tab>('events');
+  // Opened with something waiting: its list first (ADR 0021).
+  const [tab, setTab] = useState<Tab>(() =>
+    waitingItems(items).length > 0 ? 'waiting' : 'events',
+  );
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -226,9 +293,7 @@ export function Squad({
   // The chat's own roles once it has run, else those of the next chat.
   const shown = (role: RoleName): RoleInfo | undefined => roles?.chat?.[role] ?? roles?.roles[role];
   const started = roles?.chat !== null && roles?.chat !== undefined;
-  const waiting = items.filter(
-    (i): i is Waiting => (i.kind === 'permission' || i.kind === 'approval') && !i.closed,
-  );
+  const waiting = waitingItems(items);
   const changes = items.filter(
     (i): i is Extract<ThreadItem, { kind: 'changes' }> => i.kind === 'changes',
   );
@@ -366,22 +431,7 @@ export function Squad({
             ) : (
               <div class="ilist">
                 {waiting.map((i) => (
-                  <div key={i.id}>
-                    <span>
-                      {i.kind === 'permission'
-                        ? `▲ Permesso · ${ROLE[i.role].toLowerCase()} · ${i.summary}`
-                        : `▲ ${i.approval === 'delegation' ? 'Delega' : 'Rapporto'} da approvare · ${i.from} → ${i.to}`}
-                    </span>
-                    <button
-                      class="cn-btn cn-btn--text"
-                      type="button"
-                      onClick={() => {
-                        go(i.id);
-                      }}
-                    >
-                      <span class="cn-btn__label">VAI ↗</span>
-                    </button>
-                  </div>
+                  <WaitingRow key={i.id} item={i} go={go} />
                 ))}
               </div>
             ))}

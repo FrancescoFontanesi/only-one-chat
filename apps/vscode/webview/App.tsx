@@ -15,7 +15,7 @@ import { Squad } from './Squad.js';
 import { applyUpdate, type ThreadItem } from './state.js';
 import { Thread } from './Thread.js';
 import { Decode, useHoverScramble } from './motion.js';
-import { delegationNumbers } from './threadModel.js';
+import { delegationNumbers, waitingItems } from './threadModel.js';
 import { post, useTheme } from './ui.js';
 
 function chatDate(ms: number): string {
@@ -143,13 +143,19 @@ function Bar({
         </button>
         <span class="vsep hide-m" />
         <button
-          class="cn-btn cn-btn--outline cn-btn--sm"
+          class="cn-btn cn-btn--outline cn-btn--sm sq-open"
           type="button"
           aria-label={`Apri il pannello Squad${waiting > 0 ? `, ${String(waiting)} richieste in attesa` : ''}`}
           onClick={openSquad}
         >
-          <span class="cn-btn__label">SQUAD{waiting > 0 ? ` · ▲ ${String(waiting)}` : ''}</span>
+          <span class="cn-btn__label">SQUAD</span>
           <span class="cn-btn__icon">↗</span>
+          {/* One per request that waits for you (ADR 0021). */}
+          {waiting > 0 && (
+            <span class="sq-badge" aria-hidden="true">
+              {waiting > 99 ? '99+' : String(waiting)}
+            </span>
+          )}
         </button>
       </div>
       {history && (
@@ -254,9 +260,29 @@ export function App() {
   );
 
   const numbers = useMemo(() => delegationNumbers(items), [items]);
-  const waiting = items.filter(
-    (i) => (i.kind === 'permission' || i.kind === 'approval') && !i.closed,
-  ).length;
+  const open = useMemo(() => waitingItems(items), [items]);
+  const waiting = open.length;
+
+  // A short notice above the dock when something new waits for you (ADR 0021):
+  // `notice` counts the arrivals, and each one shows it again for 4 seconds.
+  const [notice, setNotice] = useState(0);
+  const [toast, setToast] = useState(false);
+  const seen = useRef(new Set<string>());
+  useEffect(() => {
+    const fresh = open.filter((item) => !seen.current.has(item.id));
+    for (const item of fresh) seen.current.add(item.id);
+    if (fresh.length > 0 && !squad) setNotice((n) => n + 1);
+  }, [open, squad]);
+  useEffect(() => {
+    if (notice === 0) return;
+    setToast(true);
+    const timer = setTimeout(() => {
+      setToast(false);
+    }, 4000);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [notice]);
 
   return (
     <div ref={root} class="cn app app--live" data-theme={theme}>
@@ -280,6 +306,22 @@ export function App() {
           </div>
         </div>
       </main>
+      {/* Takes no room: the notice floats over the end of the thread, above the dock. */}
+      <div class="toast-slot" aria-live="polite">
+        {toast && !squad && waiting > 0 && (
+          <button
+            class="toast"
+            type="button"
+            onClick={() => {
+              setToast(false);
+              setSquad(true);
+            }}
+          >
+            <b>▲</b> Azione richiesta{waiting > 1 ? ` · ${String(waiting)}` : ''}
+            <span class="toast__go">Apri Squad ↗</span>
+          </button>
+        )}
+      </div>
       <Dock
         session={session}
         items={items}

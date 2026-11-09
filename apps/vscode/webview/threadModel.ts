@@ -259,3 +259,14 @@ export function readReport(text: string): Report | null {
       .trim(),
   };
 }
+
+/** What waits for the user (ADR 0021): open permissions, delegations to send, questions. */
+export type WaitingItem = Extract<ThreadItem, { kind: 'permission' | 'approval' | 'question' }>;
+
+export function waitingItems(items: readonly ThreadItem[]): WaitingItem[] {
+  return items.filter(
+    (item): item is WaitingItem =>
+      (item.kind === 'permission' || item.kind === 'approval' || item.kind === 'question') &&
+      item.closed === undefined,
+  );
+}

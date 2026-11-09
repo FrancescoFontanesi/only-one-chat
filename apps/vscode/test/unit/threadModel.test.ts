@@ -8,6 +8,7 @@ import {
   readOp,
   readReport,
   readUserMessage,
+  waitingItems,
   withoutDelegation,
   wordAt,
 } from '../../webview/threadModel.js';
@@ -173,5 +174,33 @@ describe('the implementer’s report (ADR 0020)', () => {
   it('is not one while its block is still open, nor in a text without it', () => {
     expect(readReport('<<<RAPPORTO\n## Esito\nparziale')).toBeNull();
     expect(readReport('Fatto.')).toBeNull();
+  });
+});
+
+describe('what waits for the user (ADR 0021)', () => {
+  it('counts each open permission, delegation and question, not the closed ones', () => {
+    const items: ThreadItem[] = [
+      { kind: 'permission', id: 'p1', role: 'implementer', agent: 'C', summary: 'Bash: rtk ls' },
+      {
+        kind: 'permission',
+        id: 'p2',
+        role: 'implementer',
+        agent: 'C',
+        summary: 'x',
+        closed: 'accept',
+      },
+      { kind: 'approval', id: 'a1', approval: 'delegation', from: 'L', to: 'I', text: 'brief' },
+      {
+        kind: 'question',
+        id: 'q1',
+        role: 'leader',
+        agent: 'L',
+        questions: [
+          { id: 'k', header: 'H', question: 'Quale?', options: null, other: true, secret: false },
+        ],
+      },
+      { kind: 'user', id: 'u1', text: 'ciao' },
+    ];
+    expect(waitingItems(items).map((item) => item.id)).toEqual(['p1', 'a1', 'q1']);
   });
 });

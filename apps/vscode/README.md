@@ -11,8 +11,10 @@ implementer.
 
 - **The leader answers, explains and asks** what it needs to decide.
 - **When you ask for the prompt or the work** ("genera il prompt", "procedi"), it writes a brief
-  for the implementer: goal, context with `@path`, decisions and why, constraints, numbered
-  acceptance criteria, verification commands, when to stop, latitude.
+  for the implementer (ADR 0020): Obiettivo, Contesto with `@path`, Vincoli, Criteri di
+  accettazione, Confini, Fermati se. The brief never asks for a report: the implementer's own
+  role prompt has its format, between `<<<RAPPORTO` and `RAPPORTO>>>` (Esito, Modifiche,
+  Verifica, Decisioni, Bloccato su, Fuori ambito), and the thread shows it as a card.
 - **How the brief reaches the implementer** is the delivery, in the leader's dial (CONSEGNA) or
   in the box:
   - **AUTO:** it goes at once;

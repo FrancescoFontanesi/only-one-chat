@@ -19,7 +19,7 @@ import {
   type PermissionBridgeOptions,
 } from '@only-one-chat/adapters';
 import {
-  LIGHT_IMPLEMENTER_INSTRUCTIONS,
+  IMPLEMENTER_ROLE_INSTRUCTIONS,
   agentLabel,
   agentSessionOptions,
   leaderInstructions,
@@ -416,7 +416,7 @@ export class ChatSession {
     if (!this.implementerSession) {
       const brief = this.handoffBrief;
       this.handoffBrief = undefined;
-      const instructions = this.withUserInstructions('implementer', LIGHT_IMPLEMENTER_INSTRUCTIONS);
+      const instructions = this.withUserInstructions('implementer', IMPLEMENTER_ROLE_INSTRUCTIONS);
       this.implementerSession = await this.factory(
         'implementer',
         this.roles.implementer,
@@ -424,7 +424,7 @@ export class ChatSession {
       )({
         ...agentSessionOptions(
           brief ? `${instructions}\n\n${HANDOFF_PREFACE}\n${brief}` : instructions,
-          this.policy(this.roles.implementer),
+          { ...this.policy(this.roles.implementer), proactive: true },
         ),
         ...this.resumeOf('implementer'),
       });
@@ -786,7 +786,13 @@ export class ChatSession {
       await this.bridgeFor('leader'),
     )({
       ...agentSessionOptions(
-        this.withUserInstructions('leader', leaderInstructions(this.roles.implementer.cli)),
+        this.withUserInstructions(
+          'leader',
+          // Only a Codex leader has the questions tool (ADR 0019).
+          leaderInstructions(this.roles.implementer.cli, {
+            questions: this.roles.leader.cli === 'codex',
+          }),
+        ),
         leaderPolicy,
       ),
       ...this.resumeOf('leader'),
@@ -819,7 +825,10 @@ export class ChatSession {
       autoApprove: !manual,
       orchestrator: () => Promise.reject(new Error('the leader session is given')),
       worker: () => Promise.reject(new Error('the implementer session is given')),
-      subagents: { orchestrator: leaderPolicy, worker: this.policy(this.roles.implementer) },
+      subagents: {
+        orchestrator: leaderPolicy,
+        worker: { ...this.policy(this.roles.implementer), proactive: true },
+      },
       onApproval: ({ role, agent, request }, signal) =>
         this.askPermission(roleOf(role), agent, request.summary, signal),
       onQuestion: ({ role, agent, questions }, signal) =>

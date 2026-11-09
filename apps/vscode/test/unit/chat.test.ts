@@ -617,7 +617,7 @@ describe('chat session: the delegation cycle (ADR 0018)', () => {
     let draft: DraftDelegation | null | undefined;
     try {
       void first.chat.send('[spec] aggiungi una funzione');
-      await expect.poll(() => first.drafts.length).toBe(1);
+      await expect.poll(() => first.drafts.length, { timeout: 15_000 }).toBe(1);
       draft = first.drafts[0];
     } finally {
       await first.chat.dispose();
@@ -645,8 +645,9 @@ describe('chat session: the delegation cycle (ADR 0018)', () => {
       );
       expect(second.updates.some((u) => u.type === 'user')).toBe(false);
       second.chat.decide(draft.id, 'edit', 'Brief modificato.');
-      await expect.poll(() => doneTurns(second.updates).length).toBe(2);
-      await expect.poll(() => second.chat.busy).toBe(false);
+      // Two real processes in turn: under a loaded test run they take longer than the default.
+      await expect.poll(() => doneTurns(second.updates).length, { timeout: 15_000 }).toBe(2);
+      await expect.poll(() => second.chat.busy, { timeout: 15_000 }).toBe(false);
     } finally {
       await second.chat.dispose();
     }

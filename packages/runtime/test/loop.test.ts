@@ -11,6 +11,9 @@ import {
   checkSubagent,
   frameWorkerAnswer,
   leaderInstructions,
+  IMPLEMENTER_ROLE_INSTRUCTIONS,
+  REPORT_END,
+  REPORT_START,
   parseVerdict,
   pendingReportsPreface,
   openEventLog,
@@ -880,7 +883,8 @@ describe('leader mode: one chat across requests', () => {
     );
     // The leader knows its collaborator is external, never writes code, and delegates on request (ADR 0018).
     expect(codex.instructions[0]).toMatch(/non un tuo sotto-agente/);
-    expect(codex.instructions[0]).toMatch(/Non scrivi codice e non modifichi file/);
+    expect(codex.instructions[0]).toMatch(/in sola lettura: leggi il repository/);
+    expect(codex.instructions[0]).toMatch(/Non chiedere un rapporto e non darne il formato/);
     expect(codex.instructions[0]).toMatch(/solo quando l’utente ti chiede il prompt o il lavoro/);
     expect(codex.instructions[0]).toContain('<<<DELEGA #claude');
     expect(codex.instructions[0]).not.toMatch(/Via:|faccio io|\/fai/);
@@ -904,9 +908,11 @@ describe('leader mode: one chat across requests', () => {
       exchanges: 1,
     });
     expect(claude.prompts[0]).toMatch(/^## Goal/);
-    expect(claude.instructions[0]).toMatch(/Esplora il repository solo quanto serve/);
+    // The report's format is the implementer's own (ADR 0020).
+    expect(claude.instructions[0]).toContain(REPORT_START);
+    expect(claude.instructions[0]).toContain('## Bloccato su');
     expect(codex.prompts[1]).toContain('python -m unittest: exit 0');
-    expect(codex.prompts[1]).toMatch(/rispondi all’utente in breve/);
+    expect(codex.prompts[1]).toMatch(/rispondi all’utente/);
   });
 
   it('with deferred review, ends on the report; the next request carries it in its preface', async () => {
@@ -995,7 +1001,8 @@ describe('leader mode: one chat across requests', () => {
     expect(claude.prompts[0]).toBe(
       'Brief (project=calc, track=ans):\n\n## Goal\nans.\n\nNote del leader (aggiunte e correzioni mirate; una correzione vale sul testo del brief):\n- Nessuna nota di rilievo.',
     );
-    expect(codex.prompts[0]).toMatch(/^Brief dalla chat di ragionamento/);
+    // The leader reads the web-app brief with its own markers (ADR 0020).
+    expect(codex.prompts[0]).toMatch(/^<<<OOC-BRIEF v1 project=calc track=ans/);
     expect(codex.prompts[1]).toMatch(/senza rileggere il codice/);
   });
 });
@@ -1015,7 +1022,8 @@ describe('leader mode: the delegation cycle (ADR 0018)', () => {
     expect(await running.done).toMatchObject({ status: 'completed', exchanges: 1 });
     expect(harness.intercepted.map((m) => m.kind)).toEqual(['delegation']);
     expect(codex.prompts[1]).toContain('## Status\ndone');
-    expect(codex.prompts[1]).toMatch(/Non scrivere un nuovo blocco di delega/);
+    expect(codex.prompts[1]).toMatch(/Il rapporto dell’implementatore/);
+    expect(codex.instructions[0]).toMatch(/Non scrivere un nuovo blocco di delega mentre valuti/);
   });
 
   it('sends a brief from the web app at once, also with manual delivery', async () => {
@@ -1176,5 +1184,31 @@ describe('leader mode: questions while the leader works (ADR 0019)', () => {
     await waiting;
     await running.stop();
     expect(await running.done).toEqual({ status: 'stopped' });
+  });
+});
+
+describe('the role prompts (ADR 0020)', () => {
+  it('without the questions tool, the leader asks in words', () => {
+    expect(leaderInstructions('claude', { questions: false })).toMatch(
+      /chiedila all’utente a parole/,
+    );
+    expect(leaderInstructions('claude')).toMatch(/con lo strumento delle domande/);
+  });
+
+  it('the implementer’s report opens and closes with its markers, in the sections the leader reads', () => {
+    const at = (text: string) => IMPLEMENTER_ROLE_INSTRUCTIONS.indexOf(text);
+    expect(at(REPORT_START)).toBeGreaterThan(-1);
+    const order = [
+      REPORT_START,
+      '## Esito',
+      '## Modifiche',
+      '## Verifica',
+      '## Decisioni',
+      '## Bloccato su',
+      '## Fuori ambito',
+      REPORT_END,
+    ];
+    const positions = order.map(at);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
   });
 });

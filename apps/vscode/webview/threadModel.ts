@@ -203,3 +203,45 @@ export function withoutDelegation(text: string): { text: string; writing: boolea
     .trim();
   return { text: after === '' ? before : `${before}\n\n${after}`.trim(), writing: false };
 }
+
+/** The implementer's report (ADR 0020): its sections, and the text around it. */
+export interface Report {
+  readonly before: string;
+  /** completato, parziale, bloccato; null when the Esito does not say. */
+  readonly outcome: 'completato' | 'parziale' | 'bloccato' | null;
+  readonly sections: readonly { readonly name: string; readonly body: string }[];
+  readonly after: string;
+}
+
+/**
+ * The report between `<<<RAPPORTO` and `RAPPORTO>>>` in a turn's text, if any;
+ * a block still open (the turn streams) is not one yet.
+ */
+export function readReport(text: string): Report | null {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const start = lines.findIndex((line) => line.trim() === '<<<RAPPORTO');
+  if (start < 0) return null;
+  const end = lines.findIndex((line, at) => at > start && line.trim() === 'RAPPORTO>>>');
+  if (end < 0) return null;
+  const sections: { name: string; body: string[] }[] = [];
+  for (const line of lines.slice(start + 1, end)) {
+    const heading = /^##\s+(.+?)\s*$/.exec(line);
+    if (heading?.[1]) sections.push({ name: heading[1], body: [] });
+    else sections.at(-1)?.body.push(line);
+  }
+  const done = sections.map((section) => ({
+    name: section.name,
+    body: section.body.join('\n').trim(),
+  }));
+  const esito = done.find((section) => /^esito$/i.test(section.name))?.body ?? '';
+  const word = /^(completato|parziale|bloccato)\b/i.exec(esito)?.[1]?.toLowerCase();
+  return {
+    before: lines.slice(0, start).join('\n').trim(),
+    outcome: word === 'completato' || word === 'parziale' || word === 'bloccato' ? word : null,
+    sections: done,
+    after: lines
+      .slice(end + 1)
+      .join('\n')
+      .trim(),
+  };
+}

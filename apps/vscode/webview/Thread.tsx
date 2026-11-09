@@ -15,6 +15,7 @@ import {
   opsSummary,
   readFacts,
   readOp,
+  readReport,
   readUserMessage,
   withoutDelegation,
   type Op,
@@ -390,6 +391,56 @@ function Steps({ item }: { item: Item<'turn'> }) {
   );
 }
 
+const OUTCOME = {
+  completato: '■ COMPLETATO',
+  parziale: '▲ PARZIALE',
+  bloccato: '× BLOCCATO',
+} as const;
+
+/**
+ * The implementer's report (ADR 0020) as a card: its outcome first, then its
+ * sections; one that says "nessuno" is left out.
+ */
+function ReportCard({ text, refs }: { text: string; refs: readonly string[] | undefined }) {
+  const report = readReport(text);
+  if (!report) return null;
+  const shown = report.sections.filter(
+    (section) => section.body !== '' && !/^nessun[oa]\.?$/i.test(section.body),
+  );
+  return (
+    <>
+      {report.before !== '' && (
+        <p class="t-body txt">
+          <Linked text={report.before} refs={refs} />
+        </p>
+      )}
+      <section class="rep" aria-label="Rapporto dell’implementatore">
+        <div class="rep__h">
+          <span class="cn-tag">
+            <b>RAPPORTO</b>
+          </span>
+          {report.outcome && <span class="cn-tag">{OUTCOME[report.outcome]}</span>}
+        </div>
+        <dl class="rep__l">
+          {shown.map((section) => (
+            <Fragment key={section.name}>
+              <dt>{section.name.toUpperCase()}</dt>
+              <dd class="txt">
+                <Linked text={section.body} refs={refs} />
+              </dd>
+            </Fragment>
+          ))}
+        </dl>
+      </section>
+      {report.after !== '' && (
+        <p class="t-body txt">
+          <Linked text={report.after} refs={refs} />
+        </p>
+      )}
+    </>
+  );
+}
+
 function Turn({ item }: { item: Item<'turn'> }) {
   const ops = item.activity.map((line) => ({ line, op: readOp(line) }));
   // A leader's route line of older chats is left out; its delegation block is in its card (ADR 0018).
@@ -422,7 +473,9 @@ function Turn({ item }: { item: Item<'turn'> }) {
         ) : (
           (ops.length > 0 || item.subagents.length > 0) && <ToolLog item={item} ops={ops} />
         )}
-        {body !== '' ? (
+        {body !== '' && !running && readReport(body) ? (
+          <ReportCard text={body} refs={item.refs} />
+        ) : body !== '' ? (
           <p class={running && !writing ? 't-body txt cn-cursor' : 't-body txt'}>
             <Linked text={body} refs={item.refs} />
           </p>

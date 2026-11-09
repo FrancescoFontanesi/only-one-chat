@@ -6,6 +6,7 @@ import {
   opsSummary,
   readFacts,
   readOp,
+  readReport,
   readUserMessage,
   withoutDelegation,
   wordAt,
@@ -133,5 +134,36 @@ describe('the $ word of the composer (ADR 0019)', () => {
     expect(wordAt('usa $td', 7, '$')).toEqual({ start: 4, query: 'td' });
     expect(wordAt('$', 1, '$')).toEqual({ start: 0, query: '' });
     expect(wordAt('costa 5$', 8, '$')).toBeNull();
+  });
+});
+
+describe('the implementer’s report (ADR 0020)', () => {
+  it('reads its outcome and sections, and the text around it', () => {
+    const text = [
+      'Ecco.',
+      '<<<RAPPORTO',
+      '## Esito',
+      'completato — round(x, n) aggiunto.',
+      '## Modifiche',
+      '@calc.py — la funzione',
+      '## Bloccato su',
+      'nessuno',
+      'RAPPORTO>>>',
+    ].join('\n');
+    expect(readReport(text)).toEqual({
+      before: 'Ecco.',
+      outcome: 'completato',
+      sections: [
+        { name: 'Esito', body: 'completato — round(x, n) aggiunto.' },
+        { name: 'Modifiche', body: '@calc.py — la funzione' },
+        { name: 'Bloccato su', body: 'nessuno' },
+      ],
+      after: '',
+    });
+  });
+
+  it('is not one while its block is still open, nor in a text without it', () => {
+    expect(readReport('<<<RAPPORTO\n## Esito\nparziale')).toBeNull();
+    expect(readReport('Fatto.')).toBeNull();
   });
 });

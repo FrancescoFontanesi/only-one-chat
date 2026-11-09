@@ -24,3 +24,4 @@ Una decisione superata non si cancella: si marca "Sostituita da NNNN".
 | [0017](0017-implementer-handoff.md)               | Handoff dell'implementatore                                          | Accettata                                     |
 | [0018](0018-delegation-cycle.md)                  | Ciclo della delega                                                   | Accettata                                     |
 | [0019](0019-skills-questions-visible-turn.md)     | Skill, domande del leader e turno visibile                           | Accettata                                     |
+| [0020](0020-role-prompts-brief-report.md)         | Prompt di ruolo, brief e rapporto                                    | Accettata                                     |

@@ -1870,6 +1870,41 @@ input:focus-visible {
   color: var(--ink-disabled);
 }
 
+/* The implementer's report (ADR 0020): its outcome, then its sections. */
+.rep {
+  margin-top: 4px;
+  border-top: var(--stroke-hairline) solid var(--line-strong);
+}
+.rep__h {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 0 6px;
+}
+.rep .rep__l {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 0;
+}
+.rep__l dt {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 20px;
+  letter-spacing: 0.12em;
+  color: var(--ink-muted);
+}
+.rep .rep__l dd {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink);
+}
+@media (max-width: 560px) {
+  .rep .rep__l {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* ── Motion (the design system's bundle, without its inline styles) ── */
 .cn-progress {
   display: inline-flex;

@@ -19,6 +19,8 @@ const common = {
   minify: production,
   sourcemap: !production,
   legalComments: 'none',
+  // The runtime's role prompts are Markdown files, bundled as text (ADR 0020).
+  loader: { '.md': 'text' },
   logLevel: 'info',
 };
 

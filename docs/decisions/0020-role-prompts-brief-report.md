@@ -30,6 +30,10 @@ Stato: Accettata (iterazione 3). Precisa l'ADR 0018 (formati del brief e del rap
 
 1. **Due prompt di ruolo, del prodotto, uguali per Codex e Claude**: `leaderInstructions` e
    `IMPLEMENTER_ROLE_INSTRUCTIONS` nel runtime.
+   - **Il testo sta in due file Markdown,** `packages/runtime/prompts/leader.md` e
+     `implementer.md`, da leggere e modificare così come li leggono i modelli: la build li
+     include come testo, `{{implementer}}` e `{{ask}}` li riempie il runtime, le regole sui
+     sotto-agenti le aggiunge in coda. Prettier non li tocca.
    - **Si aggiungono al prompt di sistema del CLI e alle istruzioni del repository**
      (AGENTS.md, CLAUDE.md), che il CLI carica da sé: per Codex come `developerInstructions`, per
      Claude come `--append-system-prompt`.

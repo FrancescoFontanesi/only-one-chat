@@ -1188,6 +1188,16 @@ describe('leader mode: questions while the leader works (ADR 0019)', () => {
 });
 
 describe('the role prompts (ADR 0020)', () => {
+  it('the Markdown files carry the markers the runtime reads, with every placeholder filled', () => {
+    const leader = leaderInstructions('claude');
+    expect(leader).toContain('<<<DELEGA #claude');
+    expect(leader).toContain('OOC-BRIEF>>>');
+    expect(leader).toContain(REPORT_START);
+    expect(leader).not.toMatch(/\{\{\w+\}\}/);
+    expect(IMPLEMENTER_ROLE_INSTRUCTIONS).toContain(REPORT_END);
+    expect(IMPLEMENTER_ROLE_INSTRUCTIONS).not.toMatch(/\{\{\w+\}\}/);
+  });
+
   it('without the questions tool, the leader asks in words', () => {
     expect(leaderInstructions('claude', { questions: false })).toMatch(
       /chiedila all’utente a parole/,

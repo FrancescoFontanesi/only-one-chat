@@ -219,12 +219,26 @@ export interface Report {
  */
 export function readReport(text: string): Report | null {
   const lines = text.replace(/\r\n/g, '\n').split('\n');
-  const start = lines.findIndex((line) => line.trim() === '<<<RAPPORTO');
-  if (start < 0) return null;
-  const end = lines.findIndex((line, at) => at > start && line.trim() === 'RAPPORTO>>>');
-  if (end < 0) return null;
+  const marker = lines.findIndex((line) => line.trim() === '<<<RAPPORTO');
+  /** Where the text before the report ends, its sections begin, and the report ends. */
+  let before: number;
+  let from: number;
+  let end: number;
+  if (marker >= 0) {
+    end = lines.findIndex((line, at) => at > marker && line.trim() === 'RAPPORTO>>>');
+    if (end < 0) return null;
+    before = marker;
+    from = marker + 1;
+  } else {
+    // A report written without its markers: from its "## Esito" to the end of the text.
+    const esito = lines.findIndex((line) => /^##\s+Esito\s*$/i.test(line));
+    if (esito < 0) return null;
+    before = esito;
+    from = esito;
+    end = lines.length;
+  }
   const sections: { name: string; body: string[] }[] = [];
-  for (const line of lines.slice(start + 1, end)) {
+  for (const line of lines.slice(from, end)) {
     const heading = /^##\s+(.+?)\s*$/.exec(line);
     if (heading?.[1]) sections.push({ name: heading[1], body: [] });
     else sections.at(-1)?.body.push(line);
@@ -236,7 +250,7 @@ export function readReport(text: string): Report | null {
   const esito = done.find((section) => /^esito$/i.test(section.name))?.body ?? '';
   const word = /^(completato|parziale|bloccato)\b/i.exec(esito)?.[1]?.toLowerCase();
   return {
-    before: lines.slice(0, start).join('\n').trim(),
+    before: lines.slice(0, before).join('\n').trim(),
     outcome: word === 'completato' || word === 'parziale' || word === 'bloccato' ? word : null,
     sections: done,
     after: lines

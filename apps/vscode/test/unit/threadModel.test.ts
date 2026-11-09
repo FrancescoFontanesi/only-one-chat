@@ -162,6 +162,14 @@ describe('the implementer’s report (ADR 0020)', () => {
     });
   });
 
+  it('reads a report written without its markers, from its Esito on', () => {
+    expect(readReport('## Esito\nbloccato. Niente.\n## Modifiche\nnessuno')).toMatchObject({
+      before: '',
+      outcome: 'bloccato',
+      sections: [{ name: 'Esito' }, { name: 'Modifiche' }],
+    });
+  });
+
   it('is not one while its block is still open, nor in a text without it', () => {
     expect(readReport('<<<RAPPORTO\n## Esito\nparziale')).toBeNull();
     expect(readReport('Fatto.')).toBeNull();

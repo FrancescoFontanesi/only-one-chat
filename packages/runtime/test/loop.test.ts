@@ -1206,7 +1206,8 @@ describe('the role prompts (ADR 0020)', () => {
   });
 
   it('the implementer’s report opens and closes with its markers, in the sections the leader reads', () => {
-    const at = (text: string) => IMPLEMENTER_ROLE_INSTRUCTIONS.indexOf(text);
+    // Each as a whole line: the markers are also named in the sentence before the block.
+    const at = (text: string) => IMPLEMENTER_ROLE_INSTRUCTIONS.indexOf(`\n${text}\n`);
     expect(at(REPORT_START)).toBeGreaterThan(-1);
     const order = [
       REPORT_START,

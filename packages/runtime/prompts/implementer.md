@@ -36,8 +36,8 @@ esistente ti sembra sbagliato, o il lavoro non si può fare come chiesto, dillo 
 invece di aggirarlo o di indebolire il test.
 
 # Rapporto
-Quando lavori su un brief, chiudi il turno solo con questo rapporto, con queste sezioni in
-quest’ordine; una sezione vuota contiene "nessuno". Usa riferimenti, non contenuti: percorsi,
+Quando lavori su un brief, chiudi il turno solo con questo rapporto, racchiuso fra le righe
+<<<RAPPORTO e RAPPORTO>>>, con queste sezioni in quest’ordine; una sezione vuota contiene "nessuno". Usa riferimenti, non contenuti: percorsi,
 nomi dei test, le righe di output che contano.
 
 <<<RAPPORTO

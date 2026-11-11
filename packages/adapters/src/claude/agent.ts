@@ -33,8 +33,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export type ClaudeAgentConfig = Omit<
   ClaudeTurnOptions,
-  'prompt' | 'appendSystemPrompt' | 'resumeSessionId' | 'onEvent' | 'subagents'
->;
+  'prompt' | 'appendSystemPrompt' | 'resumeSessionId' | 'onEvent' | 'subagents' | 'questions'
+> & {
+  /**
+   * The model asks the user while it works (ADR 0022): each turn's questions
+   * go to its handlers' onQuestion; what else would ask is denied with this message.
+   */
+  readonly questions?: { readonly denyMessage: string };
+};
 
 const lines = (text: string) => (text === '' ? [] : text.split('\n'));
 
@@ -148,8 +154,18 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
         subagent.identified = true;
         handlers.onSubagent?.({ type: 'identified', id, model, effort: null });
       }
+      const { questions, ...rest } = config;
       const turn = startClaudeTurn({
-        ...config,
+        ...rest,
+        ...(questions
+          ? {
+              questions: {
+                denyMessage: questions.denyMessage,
+                onQuestion: (asked) =>
+                  handlers.onQuestion ? handlers.onQuestion(asked) : Promise.resolve(null),
+              },
+            }
+          : {}),
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
         prompt: claudePrompt(prompt, options?.skill),

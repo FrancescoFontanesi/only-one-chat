@@ -14,6 +14,8 @@
 //        --permission-mode-reported=<m> (in the init event; default: the -p argument)
 //        --subagent-hang (stops after the first message of a sub-agent and never
 //        finishes, like a sub-agent still running)
+//        --ask (after init, asks its host with two can_use_tool control requests, a
+//        Bash command then AskUserQuestion, and answers with the host's two responses)
 // Real Claude arguments (-p, --model, …) are accepted and ignored.
 
 import { spawn } from 'node:child_process';
@@ -62,10 +64,21 @@ const recorded = readFileSync(join(fixtures, version, `${scenario}.jsonl`), 'utf
   .map((entry) => entry.message);
 
 let started = false;
+/** Control requests sent to the host, waiting for its response, by request id. */
+const waiting = new Map();
+const askHost = (id, request) =>
+  new Promise((resolve) => {
+    waiting.set(id, resolve);
+    send({ type: 'control_request', request_id: id, request });
+  });
 const input = createInterface({ input: process.stdin });
 input.on('line', (line) => {
   log({ stdin: line });
   const request = JSON.parse(line);
+  if (request.type === 'control_response' && waiting.has(request.response?.request_id)) {
+    waiting.get(request.response.request_id)(request.response.response);
+    return;
+  }
   // The control protocol's initialize, answered with no turn (models as in 2.1.308).
   if (request.type === 'control_request' && request.request?.subtype === 'initialize') {
     send({
@@ -105,7 +118,11 @@ input.on('line', (line) => {
   }
   if (started) return;
   started = true;
-  const prompt = request.message.content;
+  void replay(request.message.content);
+});
+
+async function replay(prompt) {
+  let answered = null;
   for (const original of recorded) {
     const message = structuredClone(original);
     if (message.type === 'system' && message.subtype === 'init') {
@@ -127,6 +144,31 @@ input.on('line', (line) => {
         setInterval(() => undefined, 60_000);
         return;
       }
+      if (flag('ask')) {
+        const bash = await askHost('ask-1', {
+          subtype: 'can_use_tool',
+          tool_name: 'Bash',
+          input: { command: 'rm -rf build' },
+        });
+        const ask = await askHost('ask-2', {
+          subtype: 'can_use_tool',
+          tool_name: 'AskUserQuestion',
+          input: {
+            questions: [
+              {
+                question: 'Quale formato?',
+                header: 'Formato',
+                options: [
+                  { label: 'CSV', description: 'semplice' },
+                  { label: 'JSON', description: 'annidato' },
+                ],
+                multiSelect: true,
+              },
+            ],
+          },
+        });
+        answered = JSON.stringify({ bash, ask });
+      }
       continue;
     }
     if (flag('subagent-hang') && typeof message.parent_tool_use_id === 'string') {
@@ -138,9 +180,10 @@ input.on('line', (line) => {
       message.message.content = [{ type: 'text', text: `ECHO: ${prompt}` }];
     }
     if (flag('echo') && message.type === 'result') message.result = `ECHO: ${prompt}`;
+    if (answered !== null && message.type === 'result') message.result = answered;
     send(message);
   }
-});
+}
 input.on('close', () => {
   if (!flag('hang')) process.exit(0);
 });

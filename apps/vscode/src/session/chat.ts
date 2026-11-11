@@ -10,10 +10,6 @@
 // tested against the fake CLIs.
 
 import {
-  CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
-  CODEX_SUBAGENT_FORBIDDEN_NAMES,
-  createClaudeAgentFactory,
-  createCodexAgentFactory,
   startPermissionBridge,
   type PermissionBridge,
   type PermissionBridgeOptions,
@@ -53,6 +49,7 @@ import type { Checkpoint, CheckpointStore } from './checkpoints.js';
 import { changes, snapshot, verifiedFacts } from './facts.js';
 import { ignoredPaths, type Ignored } from './ignore.js';
 import { plainRefs } from './mentions.js';
+import { PROVIDERS } from './providers.js';
 
 export interface AgentChoice {
   readonly cli: 'codex' | 'claude';
@@ -311,86 +308,35 @@ export class ChatSession {
     return `${prefix}-${this.tag}-${String(this.nextId++)}`;
   }
 
-  /**
-   * A role's sessions, with its permission level (ADR 0011): `read-only`
-   * writes nothing; `auto` acts inside the folder and, for Claude, lets
-   * Claude Code's auto mode decide the rest (ADR 0021);
-   * `ask` asks before acting (Codex: before any command it does not know to
-   * be safe). The leader is read-only and still runs commands to search and
-   * check (ADR 0018): Codex in its read-only sandbox, never asking to leave
-   * it; Claude with the commands it counts as read-only.
-   */
+  /** A role's sessions, from its provider (ADR 0022): the leader read-only (ADR 0018). */
   private factory(
     role: TurnRole,
     choice: AgentChoice,
     bridge: PermissionBridge | undefined,
   ): AgentFactory {
-    const { config } = this;
-    const leader = role === 'leader';
-    const writable = !leader && choice.permission !== 'read-only';
-    return choice.cli === 'codex'
-      ? createCodexAgentFactory({
-          executable: config.codexExecutable,
-          ...(config.codexLauncherArgs ? { launcherArgs: config.codexLauncherArgs } : {}),
-          cwd: config.cwd,
-          model: choice.model,
-          effort: choice.effort,
-          requestTimeoutMs: 120_000,
-          writable,
-          // The leader asks the user while it works (ADR 0019); the implementer does not.
-          questions: leader,
-          approvalPolicy: leader
-            ? 'never'
-            : choice.permission === 'ask'
-              ? 'untrusted'
-              : 'on-request',
-          persistent: config.persistent === true,
-        })
-      : createClaudeAgentFactory({
-          executable: config.claudeExecutable,
-          ...(config.claudeLauncherArgs ? { launcherArgs: config.claudeLauncherArgs } : {}),
-          cwd: config.cwd,
-          model: choice.model,
-          effort: choice.effort,
-          // `auto` is Claude Code's own auto mode (ADR 0021): its classifier decides
-          // what would ask; `ask` stays in default mode with every action asking.
-          ...(writable
-            ? {
-                sandbox: {
-                  commands: config.allowedCommands,
-                  auto: choice.permission === 'auto',
-                },
-              }
-            : {}),
-          ...(leader ? { readOnlyShell: true } : {}),
-          // The model loads a skill by itself, as Codex does (ADR 0019).
-          skills: true,
-          ...(bridge
-            ? {
-                permissionHook: {
-                  settings: bridge.settings,
-                  env: bridge.env,
-                  askAll: choice.permission === 'ask',
-                },
-              }
-            : {}),
-        });
+    return PROVIDERS[choice.cli].factory(
+      this.config,
+      { choice, leader: role === 'leader' },
+      bridge,
+    );
   }
 
   /**
-   * A Claude role that may write asks the user through a PermissionRequest
-   * hook (R9): one bridge per role, for the chat. Codex asks through its own
-   * protocol, so it needs none.
+   * The permission bridge of a role that may write, when its provider asks
+   * through it (R9): one per role, for the chat. A read-only role has none.
    */
   private async bridgeFor(role: TurnRole): Promise<PermissionBridge | undefined> {
     const choice = this.roles[role];
     const hook = this.config.permissionHook;
-    if (choice.cli !== 'claude' || choice.permission === 'read-only' || !hook) return undefined;
+    const provider = PROVIDERS[choice.cli];
+    if (!provider.bridged || !hook || role === 'leader' || choice.permission === 'read-only') {
+      return undefined;
+    }
     let bridge = this.bridges.get(role);
     if (!bridge) {
       bridge = await startPermissionBridge(
         (request) =>
-          this.askPermission(role, `Claude (${this.roles[role].model})`, request.summary),
+          this.askPermission(role, `${provider.name} (${this.roles[role].model})`, request.summary),
         hook,
       );
       this.bridges.set(role, bridge);
@@ -399,12 +345,10 @@ export class ChatSession {
   }
 
   private policy(choice: AgentChoice): SubagentPolicy {
-    const sub = this.config.subagents[choice.cli];
     return {
-      ...sub,
+      ...this.config.subagents[choice.cli],
       maxConcurrent: 2,
-      forbiddenNames:
-        choice.cli === 'codex' ? CODEX_SUBAGENT_FORBIDDEN_NAMES : CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
+      forbiddenNames: PROVIDERS[choice.cli].subagentForbiddenNames,
     };
   }
 
@@ -803,10 +747,8 @@ export class ChatSession {
       ...agentSessionOptions(
         this.withUserInstructions(
           'leader',
-          // Only a Codex leader has the questions tool (ADR 0019).
-          leaderInstructions(this.roles.implementer.cli, {
-            questions: this.roles.leader.cli === 'codex',
-          }),
+          // Every leader has the questions tool, Codex's or Claude's (ADR 0019, 0022).
+          leaderInstructions(this.roles.implementer.cli),
         ),
         leaderPolicy,
       ),

@@ -26,3 +26,4 @@ Una decisione superata non si cancella: si marca "Sostituita da NNNN".
 | [0019](0019-skills-questions-visible-turn.md)     | Skill, domande del leader e turno visibile                           | Accettata                                     |
 | [0020](0020-role-prompts-brief-report.md)         | Prompt di ruolo, brief e rapporto                                    | Accettata                                     |
 | [0021](0021-auto-mode-ignored-paths-waiting.md)   | Modalità auto di Claude Code, percorsi ignorati, richieste in attesa | Accettata                                     |
+| [0022](0022-providers-per-role.md)                | Qualsiasi provider in qualsiasi ruolo, e le domande di Claude        | Accettata                                     |

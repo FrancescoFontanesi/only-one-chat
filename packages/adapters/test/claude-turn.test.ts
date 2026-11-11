@@ -12,6 +12,8 @@ import {
   claudeTurnArgs,
   resolveClaudeExecutable,
   startClaudeTurn,
+  type AgentQuestionAnswers,
+  type AgentUserQuestion,
   type ClaudeEvent,
   type ClaudeTurnOptions,
   isOfficialAnthropicUrl,
@@ -444,5 +446,63 @@ describe('the user’s text to Claude (ADR 0019)', () => {
   it('invokes a skill the user named as /name, then the text', () => {
     expect(claudePrompt('aggiungi i test', { name: 'tdd' })).toBe('/tdd aggiungi i test');
     expect(claudePrompt('', { name: 'tdd' })).toBe('/tdd');
+  });
+});
+
+describe('Claude’s questions in its turn (ADR 0022)', () => {
+  const turnArgv = () => fakeLog().find((entry) => entry.argv?.includes('-p'))?.argv ?? [];
+  const questions = (answer: AgentQuestionAnswers) => ({
+    denyMessage: 'Negato dal ruolo.',
+    onQuestion: (asked: readonly AgentUserQuestion[]) => {
+      expect(asked).toEqual([
+        {
+          id: '0',
+          header: 'Formato',
+          question: 'Quale formato?',
+          options: [
+            { label: 'CSV', description: 'semplice' },
+            { label: 'JSON', description: 'annidato' },
+          ],
+          other: true,
+          secret: false,
+        },
+      ]);
+      return Promise.resolve(answer);
+    },
+  });
+
+  it('offers the tool with Claude Code’s SDK host, answers it and denies the rest as the role', async () => {
+    const result = await startClaudeTurn(
+      options(['--ask'], { readOnlyShell: true, questions: questions({ '0': ['CSV', 'JSON'] }) })
+        .options,
+    ).done;
+    const argv = turnArgv();
+    expect(argv[argv.indexOf('--tools') + 1]).toBe('Read,Grep,Glob,Bash,AskUserQuestion');
+    expect(argv[argv.indexOf('--permission-prompt-tool') + 1]).toBe('stdio');
+    expect(argv).not.toContain('--permission-prompts');
+    const { bash, ask } = JSON.parse(result.text) as { bash: unknown; ask: unknown };
+    expect(bash).toEqual({ behavior: 'deny', message: 'Negato dal ruolo.' });
+    expect(ask).toEqual({
+      behavior: 'allow',
+      updatedInput: {
+        questions: [expect.objectContaining({ question: 'Quale formato?' }) as unknown],
+        answers: { 'Quale formato?': 'CSV, JSON' },
+      },
+    });
+  });
+
+  it('denies the question when nobody answers', async () => {
+    const result = await startClaudeTurn(
+      options(['--ask'], { readOnlyShell: true, questions: questions(null) }).options,
+    ).done;
+    expect((JSON.parse(result.text) as { ask: { behavior: string } }).ask.behavior).toBe('deny');
+  });
+
+  it('keeps --permission-prompts none and no tool without questions', async () => {
+    await startClaudeTurn(options([], { readOnlyShell: true }).options).done;
+    const argv = turnArgv();
+    expect(argv[argv.indexOf('--permission-prompts') + 1]).toBe('none');
+    expect(argv).not.toContain('--permission-prompt-tool');
+    expect(argv.join(' ')).not.toContain('AskUserQuestion');
   });
 });

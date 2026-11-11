@@ -87,6 +87,7 @@ export {
   type SkillInfo,
 } from './models.js';
 export { claudePrompt, claudeToolStep } from './claude/agent.js';
+export { QUESTION_TOOL, claudeAnswers, claudeQuestions } from './claude/questions.js';
 export {
   startPermissionBridge,
   summarizeToolCall,

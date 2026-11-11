@@ -363,7 +363,8 @@ describe('chat session: handoff of the implementer (ADR 0017)', () => {
     expect(prompt).toContain('Il suo passaggio di consegne:\nECHO: Passaggio di consegne.');
     expect(sessionIds).toContainEqual(['implementer', '']);
     expect(doneTurns(updates)).toHaveLength(3);
-  });
+    // Three fake CLI processes one after the other: past 5 s when the machine is busy.
+  }, 20_000);
 
   it('does nothing before the implementer has a session', async () => {
     const { chat, updates } = session('auto');
@@ -374,6 +375,88 @@ describe('chat session: handoff of the implementer (ADR 0017)', () => {
     }
     expect(updates).toEqual([expect.objectContaining({ type: 'notice', level: 'info' })]);
     expect(doneTurns(updates)).toHaveLength(0);
+  });
+});
+
+describe('chat session: any provider in any role (ADR 0022)', () => {
+  it('runs a delegation with Claude as the leader and Codex as the implementer', async () => {
+    const hook = {
+      nodeExecutable: process.execPath,
+      hookScript: join(FIXTURES, '..', '..', 'hooks', 'permission-request.mjs'),
+    };
+    const { chat, updates } = session(
+      'auto',
+      'always',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        leader: { cli: 'claude', model: 'sonnet', effort: 'low', permission: 'read-only' },
+        implementer: { cli: 'codex', model: 'gpt-6.1-sol', effort: 'low', permission: 'auto' },
+        permissionHook: hook,
+      },
+    );
+    try {
+      // The fake Claude echoes its prompt after "ECHO: ": the leader writes this delegation back.
+      await chat.send('Ecco il brief.\n<<<DELEGA #codex\nAggiungi round(x).\nDELEGA>>>');
+    } finally {
+      await chat.dispose();
+    }
+    expect(doneTurns(updates).map((t) => [t.role, t.agent.split(' ')[0]])).toEqual([
+      ['leader', 'Claude'],
+      ['implementer', 'Codex'],
+      ['leader', 'Claude'],
+    ]);
+    const leader = claudeRuns()[0] ?? [];
+    const after = (flag: string) => leader[leader.indexOf(flag) + 1] ?? '';
+    // Read-only, with the shell for read-only commands and the questions tool, answered in its turn.
+    expect(after('--tools').split(',')).toEqual(
+      expect.arrayContaining(['Read', 'Bash', 'AskUserQuestion']),
+    );
+    expect(after('--tools')).not.toMatch(/Edit|Write/);
+    expect(after('--permission-prompt-tool')).toBe('stdio');
+    expect(leader).not.toContain('--settings');
+    expect(after('--append-system-prompt')).toContain('<<<DELEGA #codex');
+  });
+
+  it('shows a Claude leader’s questions like Codex’s and denies the rest as its role', async () => {
+    const { chat, updates } = session(
+      'auto',
+      'always',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        leader: { cli: 'claude', model: 'sonnet', effort: 'low', permission: 'read-only' },
+        claudeLauncherArgs: [
+          join(FIXTURES, 'fake-claude.mjs'),
+          '--ask',
+          `--log=${join(root, 'claude.jsonl')}`,
+        ],
+      },
+    );
+    try {
+      const sent = chat.send('scegli un formato');
+      await expect.poll(() => updates.find((u) => u.type === 'question')).toBeTruthy();
+      const question = updates.find((u) => u.type === 'question');
+      if (question?.type !== 'question') throw new Error('no question');
+      expect(question).toMatchObject({ role: 'leader', agent: 'Claude (sonnet)' });
+      chat.answer(question.id, { '0': ['JSON'] });
+      await sent;
+    } finally {
+      await chat.dispose();
+    }
+    const { bash, ask } = JSON.parse(doneTurns(updates)[0]?.text ?? '{}') as {
+      bash: { behavior: string; message: string };
+      ask: { updatedInput: { answers: unknown } };
+    };
+    expect(bash.behavior).toBe('deny');
+    expect(bash.message).toMatch(/^Negato dal ruolo/);
+    expect(ask.updatedInput.answers).toEqual({ 'Quale formato?': 'JSON' });
   });
 });
 

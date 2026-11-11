@@ -17,6 +17,8 @@ import { execFile, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { getEnv, withoutApiKeys } from '../environment.js';
 import { OWN_PROCESS_GROUP, terminateTree } from '../process-tree.js';
+import type { AgentQuestionAnswers, AgentUserQuestion } from '../agent.js';
+import { QUESTION_TOOL, claudeAnswers, claudeQuestions } from './questions.js';
 import {
   claudeQuota,
   claudeUsage,
@@ -230,6 +232,18 @@ export interface ClaudeTurnOptions {
    */
   readonly skills?: boolean;
   /**
+   * The AskUserQuestion tool (ADR 0022): the model asks the user while it
+   * works. Claude Code offers it in -p only with an SDK host
+   * (`--permission-prompt-tool stdio`, verified on 2.1.322): its call comes
+   * as a `can_use_tool` control request, answered with `onQuestion`. Any
+   * other request that would ask is denied there, with `denyMessage`, as
+   * --permission-prompts none would deny it. Not with `sandbox` or a hook.
+   */
+  readonly questions?: {
+    readonly onQuestion: (questions: readonly AgentUserQuestion[]) => Promise<AgentQuestionAnswers>;
+    readonly denyMessage: string;
+  };
+  /**
    * Interactive permissions (R9): what would ask goes to the user through a
    * PermissionRequest hook and its bridge (permission.ts), instead of being
    * denied. With `askAll`, nothing is allowed in advance: every edit and
@@ -323,6 +337,7 @@ export function claudeTurnArgs(options: ClaudeTurnOptions): string[] {
       ...(options.sandbox ? SANDBOX_TOOLS : options.readOnlyShell ? ['Bash'] : []),
       ...(options.subagents ? [SUBAGENT_TOOL] : []),
       ...(options.skills ? ['Skill'] : []),
+      ...(options.questions ? [QUESTION_TOOL] : []),
     ].join(','),
     '--disallowedTools',
     (options.sandbox
@@ -341,8 +356,10 @@ export function claudeTurnArgs(options: ClaudeTurnOptions): string[] {
     // What would still ask is denied: no SDK host answers in -p mode. With the
     // hook, this is only what the hook could not decide (verified on 2.1.308:
     // the hook's allow is applied first).
-    '--permission-prompts',
-    'none',
+    // With questions, this process answers on stdio: the question, and a denial for the rest.
+    ...(options.questions
+      ? ['--permission-prompt-tool', 'stdio']
+      : ['--permission-prompts', 'none']),
     // Explicit, so the user's defaultMode (acceptEdits, bypassPermissions, …) never applies.
     '--permission-mode',
     options.sandbox?.auto === true ? AUTO_PERMISSION_MODE : PERMISSION_MODE,
@@ -510,6 +527,55 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
         });
       });
 
+      /**
+       * A request of Claude to its SDK host (ADR 0022): an AskUserQuestion
+       * call goes to the user; anything else that would ask is denied, and so
+       * is every request of a turn without questions.
+       */
+      const answerControl = (message: Json): void => {
+        const id = message['request_id'];
+        const request = isRecord(message['request']) ? message['request'] : {};
+        // Other requests (hooks, MCP) are not ours: left as before.
+        if (typeof id !== 'string' || request['subtype'] !== 'can_use_tool') return;
+        const reply = (response: Json) => {
+          if (spawned.stdin.writable) {
+            const sent = {
+              type: 'control_response',
+              response: { subtype: 'success', request_id: id, response },
+            };
+            options.onWire?.('client', sent);
+            spawned.stdin.write(`${JSON.stringify(sent)}\n`);
+          }
+        };
+        const deny = (text: string) => {
+          reply({ behavior: 'deny', message: text });
+        };
+        const questions = options.questions;
+        const input = request['input'];
+        if (!questions || request['tool_name'] !== QUESTION_TOOL || !isRecord(input)) {
+          deny(questions?.denyMessage ?? 'Denied: nobody answers here.');
+          return;
+        }
+        const asked = claudeQuestions(input);
+        if (asked.length === 0) {
+          deny('Domande non valide.');
+          return;
+        }
+        questions
+          .onQuestion(asked)
+          .then((answers) => {
+            if (answers) {
+              reply({
+                behavior: 'allow',
+                updatedInput: { ...input, answers: claudeAnswers(asked, answers) },
+              });
+            } else deny('L’utente non ha risposto alle domande.');
+          })
+          .catch(() => {
+            deny('Nessuna risposta dall’utente.');
+          });
+      };
+
       createInterface({ input: spawned.stdout, crlfDelay: Infinity }).on('line', (line) => {
         let message: unknown;
         try {
@@ -520,6 +586,10 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
         if (!isRecord(message)) return;
         options.onWire?.('server', message);
         const type = message['type'];
+        if (type === 'control_request') {
+          answerControl(message);
+          return;
+        }
         if (type === 'system' && message['subtype'] === 'init') {
           sessionId = typeof message['session_id'] === 'string' ? message['session_id'] : '';
           const apiKeySource = String(message['apiKeySource']);

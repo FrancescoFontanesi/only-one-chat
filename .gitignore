@@ -56,3 +56,4 @@ ehthumbs.db
 
 # Python caches of the sandbox scenarios (reference implementations)
 __pycache__/
+.mcp.json

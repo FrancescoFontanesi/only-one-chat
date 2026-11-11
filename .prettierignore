@@ -9,3 +9,5 @@ pnpm-lock.yaml
 *.vsix
 # The role prompts are edited by hand, exactly as the models read them (ADR 0020).
 packages/runtime/prompts/
+
+.mcp.json

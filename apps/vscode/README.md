@@ -1,7 +1,11 @@
 # Only One Chat
 
 Development preview. One chat in VS Code with a **leader**, the model you reason with, which
-works with an **implementer** on another subscription (ADR 0010 in the repository).
+works with an **implementer** on another subscription (ADR 0010 in the repository). Either role
+runs on Codex or Claude Code (ADR 0022), and more agents can join on Squad's board as **nodes**,
+Antigravity's Gemini among them (ADR 0023).
+
+![The chat: a delegation, the implementer's report and the leader's review](https://raw.githubusercontent.com/FrancescoFontanesi/only-one-chat/main/docs/images/chat.png)
 
 ## How it works
 
@@ -25,7 +29,8 @@ implementer.
   extension verified (changed files, tests run again). The leader then tells you whether
   everything went well and what does not add up. With `onlyOneChat.leaderReview` set to
   `deferred` it reads them with your next message instead, one leader turn less.
-- **While it works, a Codex leader may ask you questions** (ADR 0019): they take the box's
+- **While it works, the leader may ask you questions** (ADR 0019, 0022), with Codex's or
+  Claude Code's own tool: they take the box's
   place, one at a time, as a choice among its options (with "Altro" for your own words) or as a
   free answer, and its turn goes on with your answers. The implementer does not ask: a decision
   missing from its brief stops it, and it says so in its report.
@@ -64,12 +69,13 @@ The chat opens in an editor tab, which you can move and resize; the layout follo
     `/ferma` while it works), `/squad`, `/impostazioni`. Any other text that starts with `/`
     reaches the agent as text: the CLIs' own commands (`/clear`, `/plan`…) never run from the
     chat.
-- **On a wide panel,** two dials sit beside the box. On the left, who you talk to: click LDR or
-  IMP, or the outer ring. Its sight sets the reasoning (drag, click a segment or use the wheel);
+- **On a wide panel,** two dials sit beside the box. On the left, who you talk to: click LDR,
+  IMP or a node, or the outer ring. Its sight sets the reasoning (drag, click a segment or use the wheel);
   the level reads above the middle line. Under it, for the leader the delivery, AUTO or MANUALE; for the implementer
   its model (↕ moves to the next one) and **HANDOFF**, a new session of the same model that starts
-  from a handoff the current one writes. On the right the usage of the provider of who you talk
-  to: 5 hours and weekly, and when the window resets.
+  from a handoff the current one writes; a node has only its model and reasoning there. On the
+  right the usage of the provider of who you talk to (Codex, Claude, Antigravity): 5 hours and
+  weekly, and when the window resets.
 - **Enter** sends, **Shift+Enter** starts a new line (the other way round in the settings).
 
 A brief written in the ChatGPT web app (it starts with `<<<OOC-BRIEF`) can be pasted into the
@@ -93,6 +99,25 @@ change, in the side column:
 
 Nothing changes the roles automatically.
 
+![Squad: the board with the leader, the implementer and a Gemini node](https://raw.githubusercontent.com/FrancescoFontanesi/only-one-chat/main/docs/images/squad.png)
+
+### Nodes
+
+**+ NODO** adds an agent to the board besides the two roles (ADR 0023): Codex, Claude Code or
+Antigravity, whose CLI speaks the Agent Client Protocol (`agy acp`).
+
+- **Its own thread:** select it, on the board or on the left dial, and the chat shows its
+  conversation; the box writes to it. ← CHAT goes back. A node does not see the leader's thread,
+  nor the leader its; it has no delegation and no review.
+- **Read-only when added:** it reads and answers. Its permissions, model, reasoning and name
+  change in Squad; it is kept in the folder's settings (`onlyOneChat.nodes`), and its thread
+  with the chat.
+- **On Antigravity,** the model's levels are its reasoning (Gemini 3.8 Flash: low, medium, high).
+  Read-only, every permission it asks for is denied by its role; Chiede asks you; Auto is
+  Antigravity's own auto mode.
+
+![A node's own thread: Gemini on Antigravity](https://raw.githubusercontent.com/FrancescoFontanesi/only-one-chat/main/docs/images/node.png)
+
 Some starting points:
 
 | Way of working                                     | Leader                                                              | Implementer                                 |
@@ -113,6 +138,9 @@ The Squad panel shows each subscription's 5-hour and weekly windows.
 - **Codex** is read from Codex itself, without using quota: when the chat opens, every 2 minutes
   while it is in view, and after each turn.
 - **Claude** reports its windows only when a turn starts, so the panel shows the last value seen.
+- **Antigravity** is read with `agy -p /quota`, which agy answers by itself with no turn and no
+  quota, while a node uses it: every 2 minutes and after each of its turns. Its models share
+  limits by group; the dial shows Gemini's, its tooltip every group's.
 
 Nothing is read from credential files or session files.
 

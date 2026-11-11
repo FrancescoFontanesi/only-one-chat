@@ -601,11 +601,10 @@ export function UsageHud({
           </span>
         </span>
       ) : (
-        <span class="hud__fig hud__fig--none">
+        <span class="hud__fig hud__fig--none" title={data?.note || undefined}>
           <span class="hud__k">5H</span>
-          <span class="hud__k">
-            {data?.note || (cli === 'claude' ? 'Dopo un turno' : 'Non letto')}
-          </span>
+          {/* A short word on the dial; the provider's whole note is its tooltip. */}
+          <span class="hud__k hud__fit">{cli === 'claude' ? 'Dopo un turno' : 'Non letto'}</span>
         </span>
       )}
       <div class="hud__ctl hud__ctl--right">

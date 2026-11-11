@@ -172,11 +172,7 @@ function Bar({
 
 function Empty({ session }: { session: SessionInfo | undefined }) {
   return (
-    <section class="turn">
-      <div class="who">
-        <span>00/</span>
-        <b>CHAT NUOVA</b>
-      </div>
+    <section class="empty">
       <div class="tb">
         <h2 class="t-title">Scrivi al leader</h2>
         <p class="t-body mut">

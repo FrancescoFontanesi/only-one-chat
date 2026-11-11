@@ -917,7 +917,8 @@ input:focus-visible {
   padding: 10px 0 10px;
   border-top: var(--stroke-hairline) solid var(--line);
 }
-.cmp__ctx {
+/* The context on the left, after the picks when they are shown; the send on the right. */
+.cmp__send {
   margin-left: auto;
 }
 /* ── Beside the composer (Hud.tsx), on a wide panel: two dials of 216 × 192, 24px from it, each
@@ -1223,6 +1224,14 @@ input:focus-visible {
 .hud__fig--none {
   align-items: flex-end;
   padding-bottom: 4px;
+  min-width: 0;
+}
+/* Never past the dial's edge: it wraps within the figure's two lines. */
+.hud__fit {
+  min-width: 0;
+  max-height: 28px;
+  overflow: hidden;
+  white-space: normal;
 }
 .hud__num {
   display: flex;
@@ -2045,4 +2054,8 @@ input:focus-visible {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 12px;
+}
+/* The empty chat: its text only, without a message's rule and author. */
+.empty {
+  padding: var(--space-4) 0;
 }

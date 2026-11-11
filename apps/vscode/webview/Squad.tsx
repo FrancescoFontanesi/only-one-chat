@@ -3,28 +3,46 @@
 // list, the selected role's head and fields, what waits for you, the foot;
 // shared lines, a + at each junction. The agents are panels framed by their
 // vertices on a board that can be moved and zoomed, linked by what passes
-// between them (today the backend's two roles; the board takes more). Data
-// from the host's stores; settings written as the roles view did.
+// between them: the two roles, and the nodes added beside them (ADR 0023),
+// each with its own thread and no link. Selecting an agent makes it the one
+// the chat writes to. Data from the host's stores; settings written as the
+// roles view did.
 
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type {
-  MonitorAgent,
-  MonitorState,
-  RoleInfo,
-  RoleName,
-  RolesState,
-  SessionInfo,
+import {
+  NODE_NAME_LENGTH,
+  type MonitorAgent,
+  type MonitorState,
+  type NodeInfo,
+  type RoleInfo,
+  type RoleName,
+  type RolesState,
+  type SessionInfo,
 } from '../src/webview/protocol.js';
 import { Board } from './board.js';
 import { Crossed, Lattice } from './lattice.js';
 import { Decode, flash, Progress, Reveal } from './motion.js';
 import type { ThreadItem } from './state.js';
 import { waitingItems, type WaitingItem } from './threadModel.js';
-import { clock, kilo, Meter, PERMISSIONS, post, PROVIDER, ROLE, RoleEditor } from './ui.js';
+import {
+  clock,
+  kilo,
+  Meter,
+  PERMISSIONS,
+  post,
+  PROVIDER,
+  ROLE,
+  RoleEditor,
+  RoleFields,
+  writeNode,
+} from './ui.js';
 
 const STATE_TAG = { working: 'LAVORA', waiting: '▲ ASPETTA TE', idle: '○ FERMO' } as const;
 const LEVEL = { info: '■', warn: '▲', error: '×' } as const;
 const INDEX: Record<RoleName, string> = { leader: 'A', implementer: 'B' };
+/** A node's letter on the board: C, D, … after the two roles. */
+const nodeIndex = (index: number) => String.fromCharCode(67 + (index % 24));
+const isRole = (id: string): id is RoleName => id === 'leader' || id === 'implementer';
 
 type Tab = 'events' | 'waiting' | 'changes';
 type Waiting = WaitingItem;
@@ -43,29 +61,33 @@ function percent(agent: MonitorAgent | undefined): number | null {
  * it is set, its context, what it does.
  */
 function Agent({
-  role,
+  title,
+  index,
   info,
   agent,
+  status: own,
   selected,
   locked,
   select,
 }: {
-  role: RoleName;
+  title: string;
+  index: string;
   info: RoleInfo | undefined;
   agent: MonitorAgent | undefined;
+  /** A node's state, which the monitor does not follow. */
+  status?: 'working' | 'waiting' | 'idle';
   selected: boolean;
   locked: boolean;
   select: () => void;
 }) {
   const value = percent(agent);
-  const status = agent?.status ?? 'idle';
+  const status = agent?.status ?? own ?? 'idle';
   return (
     <Crossed class={selected ? 'sq-agent sq-agent--on' : 'sq-agent'}>
-      <section class="sq-agent__in" aria-label={ROLE[role]} onClick={select}>
+      <section class="sq-agent__in" aria-label={title} onClick={select}>
         <button class="xf__h sq-agent__h" type="button" aria-pressed={selected} onClick={select}>
           <span class="cn-tag">
-            <b class={selected ? 'cn-frame__idx cn-accent' : 'cn-frame__idx'}>{INDEX[role]}</b>{' '}
-            {ROLE[role]}
+            <b class={selected ? 'cn-frame__idx cn-accent' : 'cn-frame__idx'}>{index}</b> {title}
           </span>
           <span
             class={
@@ -256,12 +278,60 @@ function Alert({
   );
 }
 
+/** A node's name and fields (ADR 0023): written to the folder's settings as they change. */
+function NodeEditor({ node, roles }: { node: NodeInfo; roles: RolesState }) {
+  const [name, setName] = useState(node.name);
+  const rename = () => {
+    const trimmed = name.trim();
+    if (trimmed !== '' && trimmed !== node.name) writeNode(node, { name: trimmed });
+    else setName(node.name);
+  };
+  return (
+    <>
+      <label class="nd-name">
+        <span class="t-label">Nome</span>
+        <input
+          class="t-data"
+          type="text"
+          value={name}
+          maxLength={NODE_NAME_LENGTH}
+          onInput={(event) => {
+            setName((event.target as HTMLInputElement).value);
+          }}
+          onBlur={rename}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') rename();
+          }}
+        />
+      </label>
+      <RoleFields
+        role="implementer"
+        info={node}
+        catalog={roles.catalog}
+        node={{
+          name: node.name,
+          write: (change) => {
+            writeNode(node, change);
+          },
+        }}
+      />
+      <p class="hint">
+        {PROVIDER[node.cli].toUpperCase()} · UNA CONVERSAZIONE SUA · NESSUNA DELEGA
+      </p>
+    </>
+  );
+}
+
 export function Squad({
   session,
   roles,
   monitor,
   items,
+  nodeItems,
   theme,
+  view,
+  to,
+  select,
   close,
   go,
 }: {
@@ -269,15 +339,24 @@ export function Squad({
   roles: RolesState | undefined;
   monitor: MonitorState;
   items: readonly ThreadItem[];
+  /** The nodes' own threads (ADR 0023). */
+  nodeItems: Readonly<Record<string, readonly ThreadItem[]>>;
   theme: 'dark' | 'light';
+  /** The node whose thread the chat shows, and the role it writes to otherwise. */
+  view: string | null;
+  to: RoleName;
+  /** Makes an agent the one the chat writes to: a role, or a node by id. */
+  select: (target: string) => void;
   close: () => void;
   /** Closes the panel and shows an item of the thread. */
   go: (id: string) => void;
 }) {
-  const [selected, setSelected] = useState<RoleName>('leader');
+  const [selected, setSelected] = useState<string>(view ?? to);
+  const nodes = roles?.nodes ?? [];
+  const allItems = [...items, ...Object.values(nodeItems).flat()];
   // Opened with something waiting: its list first (ADR 0021).
   const [tab, setTab] = useState<Tab>(() =>
-    waitingItems(items).length > 0 ? 'waiting' : 'events',
+    waitingItems(allItems).length > 0 ? 'waiting' : 'events',
   );
 
   useEffect(() => {
@@ -293,7 +372,7 @@ export function Squad({
   // The chat's own roles once it has run, else those of the next chat.
   const shown = (role: RoleName): RoleInfo | undefined => roles?.chat?.[role] ?? roles?.roles[role];
   const started = roles?.chat !== null && roles?.chat !== undefined;
-  const waiting = waitingItems(items);
+  const waiting = waitingItems(allItems);
   const changes = items.filter(
     (i): i is Extract<ThreadItem, { kind: 'changes' }> => i.kind === 'changes',
   );
@@ -312,18 +391,60 @@ export function Squad({
     children: (
       <Reveal delay={role === 'leader' ? 0 : 150}>
         <Agent
-          role={role}
+          title={ROLE[role]}
+          index={INDEX[role]}
           info={shown(role)}
           agent={agentOf(monitor, role)}
           selected={selected === role}
           locked={role === 'leader' && started}
           select={() => {
             setSelected(role);
+            select(role);
           }}
         />
       </Reveal>
     ),
   });
+  // The nodes in a row under the roles, with no link: each talks only to you.
+  const nodeBlock = (node: NodeInfo, index: number) => ({
+    id: node.id,
+    x: index * 500,
+    y: 420,
+    width: 340,
+    children: (
+      <Reveal delay={300 + index * 100}>
+        <Agent
+          title={node.name}
+          index={nodeIndex(index)}
+          info={node}
+          agent={undefined}
+          status={
+            waitingItems(nodeItems[node.id] ?? []).length > 0
+              ? 'waiting'
+              : session?.busyNodes.includes(node.id)
+                ? 'working'
+                : 'idle'
+          }
+          selected={selected === node.id}
+          locked={false}
+          select={() => {
+            setSelected(node.id);
+            select(node.id);
+          }}
+        />
+      </Reveal>
+    ),
+  });
+  const selectedNode = nodes.find((n) => n.id === selected);
+  const selectedIndex = selectedNode ? nodes.indexOf(selectedNode) : -1;
+  /** A new node: Antigravity's first model when it is read, else the implementer's. */
+  const addNode = () => {
+    const agy = roles?.catalog.find((c) => c.cli === 'antigravity');
+    const first = agy?.status === 'ready' ? agy.models[0] : undefined;
+    const fallback = roles?.roles.implementer;
+    if (first) post({ type: 'addNode', cli: 'antigravity', model: first.id });
+    else if (fallback) post({ type: 'addNode', cli: fallback.cli, model: fallback.model });
+  };
   const tabs = [
     ['events', 'Eventi', monitor.events.length],
     ['waiting', 'In attesa', waiting.length],
@@ -353,7 +474,11 @@ export function Squad({
 
         <Board
           label="Lavagna degli agenti"
-          blocks={[agentBlock('leader', 0), agentBlock('implementer', 500)]}
+          blocks={[
+            agentBlock('leader', 0),
+            agentBlock('implementer', 500),
+            ...nodes.map(nodeBlock),
+          ]}
           links={[
             {
               id: 'delegation',
@@ -378,6 +503,15 @@ export function Squad({
               <span class="cn-tag">
                 <b>01/</b> Lavagna
               </span>
+              <button
+                class="cn-btn cn-btn--outline cn-btn--sm"
+                type="button"
+                disabled={!roles}
+                title="Un agente in più, con una conversazione sua: lo selezioni e gli scrivi"
+                onClick={addNode}
+              >
+                <span class="cn-btn__label">+ Nodo</span>
+              </button>
             </>
           }
         />
@@ -474,17 +608,41 @@ export function Squad({
             ))}
         </div>
 
-        <header class="cn-cell cn-cell--row sq-roleh" aria-label="Ruolo selezionato">
-          <span class="cn-tag">
-            <b>{INDEX[selected]}/</b> {ROLE[selected]}
-          </span>
-          <span class="cn-tag">{started ? 'Di questa chat' : 'Prossima chat'}</span>
+        <header class="cn-cell cn-cell--row sq-roleh" aria-label="Agente selezionato">
+          {selectedNode ? (
+            <>
+              <span class="cn-tag">
+                <b>{nodeIndex(selectedIndex)}/</b> Nodo
+              </span>
+              <button
+                class="cn-btn cn-btn--text"
+                type="button"
+                onClick={() => {
+                  post({ type: 'removeNode', id: selectedNode.id });
+                  setSelected('leader');
+                  select('leader');
+                }}
+              >
+                <span class="cn-btn__label">× Rimuovi</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <span class="cn-tag">
+                <b>{INDEX[isRole(selected) ? selected : 'leader']}/</b>{' '}
+                {ROLE[isRole(selected) ? selected : 'leader']}
+              </span>
+              <span class="cn-tag">{started ? 'Di questa chat' : 'Prossima chat'}</span>
+            </>
+          )}
         </header>
         <div class="cn-cell sq-roleb">
-          {roles ? (
-            <RoleEditor role={selected} roles={roles} />
-          ) : (
+          {!roles ? (
             <p class="hint">Lettura dei ruoli…</p>
+          ) : selectedNode ? (
+            <NodeEditor key={selectedNode.id} node={selectedNode} roles={roles} />
+          ) : (
+            <RoleEditor role={isRole(selected) ? selected : 'leader'} roles={roles} />
           )}
         </div>
 

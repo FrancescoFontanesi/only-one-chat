@@ -1,6 +1,12 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { providerOf, readCodexQuota, usageAlerts, UsageStore } from '../../src/session/usage.js';
+import {
+  providerOf,
+  readAntigravityUsage,
+  readCodexQuota,
+  usageAlerts,
+  UsageStore,
+} from '../../src/session/usage.js';
 
 const FAKE_CODEX = join(
   import.meta.dirname,
@@ -73,5 +79,25 @@ describe('usage warnings (ADR 0013)', () => {
     }));
     expect(usageAlerts(next, 80, seen)).toHaveLength(1);
     expect(usageAlerts(next, 0, new Set())).toEqual([]);
+  });
+
+  it('reads Antigravity’s usage with agy, the first group on the dial, all of them in the note', async () => {
+    const fake = FAKE_CODEX.replace('fake-app-server.mjs', 'fake-agy.mjs');
+    const read = await readAntigravityUsage({ executable: process.execPath, launcherArgs: [fake] });
+    expect(read?.quota.windows.map((w) => [w.name, Math.round(w.usedPercent)])).toEqual([
+      ['weekly', 25],
+      ['5h', 10],
+    ]);
+    expect(read?.note).toBe(
+      'Mostra Gemini Models. Gemini Models: 5 ore 10%, settimana 25%. Claude and GPT models: 5 ore 0%, settimana —.',
+    );
+    expect(providerOf('Antigravity')).toBe('antigravity');
+    const store = new UsageStore();
+    store.setProviders(['antigravity']);
+    if (read) store.setQuota('antigravity', read.quota, 1, read.note);
+    expect(store.snapshot()[0]?.note).toContain('senza consumare quota');
+    expect(usageAlerts(store.snapshot(), 20, new Set())).toEqual([
+      'Antigravity: hai usato il 25% della finestra di settimana.',
+    ]);
   });
 });

@@ -8,7 +8,7 @@ import type { Cli, ModelOption, ProviderCatalog } from '../webview/protocol.js';
 
 export type ModelSource = () => Promise<readonly ModelInfo[]>;
 
-const CLIS: readonly Cli[] = ['codex', 'claude'];
+const CLIS: readonly Cli[] = ['codex', 'claude', 'antigravity'];
 
 export class ModelCatalog {
   private readonly entries = new Map<Cli, ProviderCatalog>(

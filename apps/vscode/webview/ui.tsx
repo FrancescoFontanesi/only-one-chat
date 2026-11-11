@@ -2,12 +2,13 @@
 // the theme from VS Code's, number formats,
 // the options as words and the level meter, and the fields of a role.
 
-import { Fragment, type JSX } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { createContext, Fragment, type JSX } from 'preact';
+import { useContext, useEffect, useRef, useState } from 'preact/hooks';
 import {
   EFFORTS,
   effortFor,
   type Cli,
+  type NodeInfo,
   type PermissionLevel,
   type ProviderCatalog,
   type RoleInfo,
@@ -57,8 +58,21 @@ export function clock(ms: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export const PROVIDER: Record<Cli, string> = { codex: 'Codex', claude: 'Claude' };
+export const PROVIDER: Record<Cli, string> = {
+  codex: 'Codex',
+  claude: 'Claude',
+  antigravity: 'Antigravity',
+};
 export const ROLE: Record<RoleName, string> = { leader: 'Leader', implementer: 'Implementatore' };
+
+/** The node whose thread is shown (ADR 0023); null: the chat's own thread. */
+export const ShownNode = createContext<NodeInfo | null>(null);
+
+/** Who wrote or asks, as the thread names it: the role, or the node shown. */
+export function useWho(role: 'leader' | 'implementer'): string {
+  const node = useContext(ShownNode);
+  return node ? node.name.toUpperCase() : role === 'leader' ? 'LEADER' : 'IMPLEMENTATORE';
+}
 
 export const PERMISSIONS: readonly { value: PermissionLevel; label: string; short: string }[] = [
   { value: 'read-only', label: 'Sola lettura', short: 'Lettura' },
@@ -217,7 +231,8 @@ function Fixed({ value, tag }: { value: string; tag: string }) {
  * The fields of a role as a stacked spec list: provider and model as words,
  * reasoning (the model's levels) and permissions as level meters, each with
  * its note. `locked` keeps the model as it is (the leader during a chat);
- * `providerFixed` shows the provider without a choice.
+ * `providerFixed` shows the provider without a choice. A node (ADR 0023) gives
+ * its own name and `write`, and may take Antigravity.
  */
 export function RoleFields({
   role,
@@ -228,6 +243,7 @@ export function RoleFields({
   providerNote,
   still,
   only,
+  node,
 }: {
   role: RoleName;
   info: RoleInfo;
@@ -239,10 +255,20 @@ export function RoleFields({
   still?: boolean;
   /** Only these fields, by name (Provider, Modello, Reasoning, Permessi). */
   only?: readonly string[];
+  /** The fields of a node instead of a role's. */
+  node?: { readonly name: string; readonly write: (change: RoleChange) => void };
 }) {
   const set = (change: RoleChange) => {
-    writeRole(role, info, change);
+    if (node) node.write(change);
+    else writeRole(role, info, change);
   };
+  const name = node?.name ?? ROLE[role];
+  const providers: readonly Option<Cli>[] = [
+    { value: 'codex', label: 'CODEX' },
+    { value: 'claude', label: 'CLAUDE' },
+    ...(node ? [{ value: 'antigravity' as const, label: 'ANTIGRAVITY' }] : []),
+  ];
+  const leader = role === 'leader' && !node;
   const provider = catalog.find((c) => c.cli === info.cli);
   const model = provider?.models.find((m) => m.id === info.model);
   const efforts: readonly string[] = model ? model.efforts : EFFORTS;
@@ -265,12 +291,9 @@ export function RoleFields({
         <Fixed value={PROVIDER[info.cli].toUpperCase()} tag="■ BLOCCATO" />
       ) : (
         <Opts
-          label={`Provider: ${ROLE[role]}`}
+          label={`Provider: ${name}`}
           value={info.cli}
-          options={[
-            { value: 'codex', label: 'CODEX' },
-            { value: 'claude', label: 'CLAUDE' },
-          ]}
+          options={providers}
           onChange={(cli: Cli) => {
             const first = catalog.find((c) => c.cli === cli)?.models[0];
             set({ cli, model: first?.id ?? info.model, effort: effortFor(first, info.effort) });
@@ -285,7 +308,7 @@ export function RoleFields({
         <Fixed value={info.modelName.toUpperCase()} tag="■ BLOCCATO" />
       ) : (
         <Opts
-          label={`Modello: ${ROLE[role]}`}
+          label={`Modello: ${name}`}
           value={info.model}
           options={models}
           onChange={(id) => {
@@ -304,7 +327,7 @@ export function RoleFields({
         ) : (
           <Scale
             still={still === true}
-            label={`Reasoning: ${ROLE[role]}`}
+            label={`Reasoning: ${name}`}
             value={info.effort}
             options={efforts.map((effort) => ({ value: effort, label: effort.toUpperCase() }))}
             onChange={(effort) => {
@@ -316,24 +339,27 @@ export function RoleFields({
     {
       name: 'Permessi',
       // The leader reasons and delegates; it never writes (ADR 0018).
-      note: role === 'leader' ? 'IL LEADER NON SCRIVE CODICE' : 'VALE DAL TURNO SUCCESSIVO',
-      control:
-        role === 'leader' ? (
-          <Fixed value="SOLA LETTURA" tag="■ BLOCCATO" />
-        ) : (
-          <Scale
-            still={still === true}
-            label={`Permessi: ${ROLE[role]}`}
-            value={info.permission}
-            options={PERMISSIONS.map((p) => ({
-              value: p.value,
-              label: p.label.toUpperCase(),
-            }))}
-            onChange={(value) => {
-              set({ permission: value });
-            }}
-          />
-        ),
+      note: leader
+        ? 'IL LEADER NON SCRIVE CODICE'
+        : node
+          ? 'VALE DAL MESSAGGIO SUCCESSIVO'
+          : 'VALE DAL TURNO SUCCESSIVO',
+      control: leader ? (
+        <Fixed value="SOLA LETTURA" tag="■ BLOCCATO" />
+      ) : (
+        <Scale
+          still={still === true}
+          label={`Permessi: ${name}`}
+          value={info.permission}
+          options={PERMISSIONS.map((p) => ({
+            value: p.value,
+            label: p.label.toUpperCase(),
+          }))}
+          onChange={(value) => {
+            set({ permission: value });
+          }}
+        />
+      ),
     },
   ];
   return (
@@ -353,17 +379,34 @@ export function RoleFields({
   );
 }
 
-type RoleChange = Partial<Pick<RoleInfo, 'cli' | 'model' | 'effort' | 'permission'>>;
+export type RoleChange = Partial<Pick<RoleInfo, 'cli' | 'model' | 'effort' | 'permission'>>;
 
 /** Writes a role's settings: `info` as it stands, with `change` over it. */
 export function writeRole(role: RoleName, info: RoleInfo, change: RoleChange) {
+  const cli = change.cli ?? info.cli;
+  // The roles run on Codex or Claude (ADR 0023).
+  if (cli === 'antigravity') return;
   post({
     type: 'setRole',
     role,
-    cli: info.cli,
     model: info.model,
     effort: info.effort,
     permission: info.permission,
+    ...change,
+    cli,
+  });
+}
+
+/** Writes a node's settings (ADR 0023): `node` as it stands, with `change` over it. */
+export function writeNode(node: NodeInfo, change: RoleChange & { name?: string }) {
+  post({
+    type: 'setNode',
+    id: node.id,
+    name: node.name,
+    cli: node.cli,
+    model: node.model,
+    effort: node.effort,
+    permission: node.permission,
     ...change,
   });
 }

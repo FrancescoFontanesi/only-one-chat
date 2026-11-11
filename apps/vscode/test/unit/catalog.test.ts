@@ -18,8 +18,9 @@ describe('model catalog (ADR 0012)', () => {
         return Promise.resolve([SOL]);
       },
       claude: () => Promise.reject(new Error('Claude non trovato')),
+      antigravity: () => Promise.resolve([]),
     });
-    expect(catalog.snapshot().map((c) => c.status)).toEqual(['loading', 'loading']);
+    expect(catalog.snapshot().map((c) => c.status)).toEqual(['loading', 'loading', 'loading']);
     await catalog.load();
     await catalog.load();
     expect(reads).toBe(1);

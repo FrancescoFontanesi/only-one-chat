@@ -6,7 +6,9 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import {
   parseHostMessage,
   type MonitorState,
+  type NodeInfo,
   type ProviderUsage,
+  type RoleName,
   type RolesState,
   type SessionInfo,
 } from '../src/webview/protocol.js';
@@ -16,7 +18,7 @@ import { applyUpdate, type ThreadItem } from './state.js';
 import { Thread } from './Thread.js';
 import { Decode, useHoverScramble } from './motion.js';
 import { delegationNumbers, waitingItems } from './threadModel.js';
-import { post, useTheme } from './ui.js';
+import { post, ShownNode, useTheme } from './ui.js';
 
 function chatDate(ms: number): string {
   return new Date(ms).toLocaleString([], {
@@ -78,10 +80,15 @@ function Bar({
   session,
   waiting,
   openSquad,
+  node,
+  leave,
 }: {
   session: SessionInfo | undefined;
   waiting: number;
   openSquad: () => void;
+  /** The node whose thread is shown (ADR 0023), and the way back to the chat's. */
+  node: NodeInfo | null;
+  leave: () => void;
 }) {
   const [history, setHistory] = useState(false);
   if (!session) {
@@ -106,11 +113,22 @@ function Bar({
           ? `${folderName(session.workspace).toUpperCase()} / `
           : 'NESSUNA CARTELLA / '}
         <b>{(session.title || 'Nuova chat').toUpperCase()}</b>
+        {node && (
+          <>
+            {' / '}
+            <b>{node.name.toUpperCase()}</b>
+          </>
+        )}
         {' / '}
         <Decode class="crumb__st" text={status} />
       </span>
       <div class="bar__r">
         {session.fake && <span class="cn-tag cn-tag--bracket hide-m">SIMULAZIONE</span>}
+        {node && (
+          <button class="cn-btn cn-btn--text" type="button" onClick={leave}>
+            <span class="cn-btn__label">← CHAT</span>
+          </button>
+        )}
         <button
           class="cn-btn cn-btn--text hide-m"
           type="button"
@@ -170,7 +188,20 @@ function Bar({
   );
 }
 
-function Empty({ session }: { session: SessionInfo | undefined }) {
+function Empty({ session, node }: { session: SessionInfo | undefined; node: NodeInfo | null }) {
+  if (node) {
+    return (
+      <section class="empty">
+        <div class="tb">
+          <h2 class="t-title">Scrivi a {node.name}</h2>
+          <p class="t-body mut">
+            Una conversazione sua, nella stessa cartella: il leader e l’implementatore non la
+            vedono, e lui non vede la loro.
+          </p>
+        </div>
+      </section>
+    );
+  }
   return (
     <section class="empty">
       <div class="tb">
@@ -193,6 +224,11 @@ export function App() {
   const theme = useTheme();
   const [session, setSession] = useState<SessionInfo>();
   const [items, setItems] = useState<ThreadItem[]>([]);
+  /** The nodes' own threads (ADR 0023), by node id. */
+  const [nodeItems, setNodeItems] = useState<Readonly<Record<string, ThreadItem[]>>>({});
+  /** The node whose thread is shown; null: the chat's. */
+  const [view, setView] = useState<string | null>(null);
+  const [to, setTo] = useState<RoleName>('leader');
   const [roles, setRoles] = useState<RolesState>();
   const [monitor, setMonitor] = useState<MonitorState>({ agents: [], events: [] });
   const [usage, setUsage] = useState<readonly ProviderUsage[]>([]);
@@ -212,11 +248,19 @@ export function App() {
         case 'session':
           setSession(message.session);
           break;
-        case 'thread':
-          setItems((current) => applyUpdate(current, message.update));
+        case 'thread': {
+          const { node, update } = message;
+          if (node) {
+            setNodeItems((current) => ({
+              ...current,
+              [node]: applyUpdate(current[node] ?? [], update),
+            }));
+          } else setItems((current) => applyUpdate(current, update));
           break;
+        }
         case 'reset':
           setItems([]);
+          setNodeItems({});
           setEpoch((e) => e + 1);
           break;
         case 'roles':
@@ -239,6 +283,19 @@ export function App() {
     };
   }, []);
 
+  // A node taken off the board: its thread is no longer shown.
+  const node = roles?.nodes.find((n) => n.id === view) ?? null;
+  const shown = node ? (nodeItems[node.id] ?? []) : items;
+  const chooseRole = (role: RoleName) => {
+    setView(null);
+    setTo(role);
+  };
+  /** Who you talk to, from Squad or the dial: a role, or a node by id. */
+  const select = (target: string) => {
+    if (target === 'leader' || target === 'implementer') chooseRole(target);
+    else setView(target);
+  };
+
   // To the end once a frame at most: a streamed turn changes the items many times a second.
   const scrolling = useRef(0);
   useEffect(() => {
@@ -247,7 +304,7 @@ export function App() {
       scrolling.current = 0;
       end.current?.scrollIntoView({ block: 'end' });
     });
-  }, [items]);
+  }, [shown]);
   useEffect(
     () => () => {
       cancelAnimationFrame(scrolling.current);
@@ -256,7 +313,11 @@ export function App() {
   );
 
   const numbers = useMemo(() => delegationNumbers(items), [items]);
-  const open = useMemo(() => waitingItems(items), [items]);
+  // What waits for you, in the chat's thread or in a node's.
+  const open = useMemo(
+    () => waitingItems([...items, ...Object.values(nodeItems).flat()]),
+    [items, nodeItems],
+  );
   const waiting = open.length;
 
   // A short notice above the dock when something new waits for you (ADR 0021):
@@ -288,63 +349,89 @@ export function App() {
         openSquad={() => {
           setSquad(true);
         }}
-      />
-      <main class="thread" ref={thread}>
-        <div class="colw">
-          {/* The thread reaches 15% of the composer's column past it on each side. */}
-          <div class="thread__col">
-            {session && (session.workspace === null || !session.trusted) && (
-              <NotReady session={session} />
-            )}
-            {items.length === 0 && <Empty session={session} />}
-            <Thread items={items} numbers={numbers} session={session} epoch={epoch} />
-            <div ref={end} />
-          </div>
-        </div>
-      </main>
-      {/* Takes no room: the notice floats over the end of the thread, above the dock. */}
-      <div class="toast-slot" aria-live="polite">
-        {toast && !squad && waiting > 0 && (
-          <button
-            class="toast"
-            type="button"
-            onClick={() => {
-              setToast(false);
-              setSquad(true);
-            }}
-          >
-            <b>▲</b> Azione richiesta{waiting > 1 ? ` · ${String(waiting)}` : ''}
-            <span class="toast__go">Apri Squad ↗</span>
-          </button>
-        )}
-      </div>
-      <Dock
-        session={session}
-        items={items}
-        numbers={numbers}
-        theme={theme}
-        roles={roles}
-        monitor={monitor}
-        usage={usage}
-        openSquad={() => {
-          setSquad(true);
+        node={node}
+        leave={() => {
+          setView(null);
         }}
       />
+      <ShownNode.Provider value={node}>
+        <main class="thread" ref={thread}>
+          <div class="colw">
+            {/* The thread reaches 15% of the composer's column past it on each side. */}
+            <div class="thread__col">
+              {session && (session.workspace === null || !session.trusted) && (
+                <NotReady session={session} />
+              )}
+              {shown.length === 0 && <Empty session={session} node={node} />}
+              <Thread
+                key={node?.id ?? 'chat'}
+                items={shown}
+                numbers={numbers}
+                session={session}
+                epoch={epoch}
+              />
+              <div ref={end} />
+            </div>
+          </div>
+        </main>
+        {/* Takes no room: the notice floats over the end of the thread, above the dock. */}
+        <div class="toast-slot" aria-live="polite">
+          {toast && !squad && waiting > 0 && (
+            <button
+              class="toast"
+              type="button"
+              onClick={() => {
+                setToast(false);
+                setSquad(true);
+              }}
+            >
+              <b>▲</b> Azione richiesta{waiting > 1 ? ` · ${String(waiting)}` : ''}
+              <span class="toast__go">Apri Squad ↗</span>
+            </button>
+          )}
+        </div>
+        <Dock
+          session={session}
+          items={shown}
+          numbers={numbers}
+          theme={theme}
+          roles={roles}
+          monitor={monitor}
+          usage={usage}
+          openSquad={() => {
+            setSquad(true);
+          }}
+          to={to}
+          setTo={chooseRole}
+          select={select}
+        />
+      </ShownNode.Provider>
       {squad && (
         <Squad
           session={session}
           roles={roles}
           monitor={monitor}
           items={items}
+          nodeItems={nodeItems}
           theme={theme}
+          view={view}
+          to={to}
+          select={select}
           close={() => {
             setSquad(false);
           }}
           go={(id) => {
             setSquad(false);
-            // What waits is in the dock; anything else is in the thread.
-            const target = document.getElementById(`item-${id}`);
-            (target ?? end.current)?.scrollIntoView({ block: 'center' });
+            // The thread that holds it is shown first: the chat's, or a node's.
+            const owner = Object.entries(nodeItems).find(([, list]) =>
+              list.some((item) => item.id === id),
+            )?.[0];
+            setView(owner ?? null);
+            // What waits is in the dock; anything else is in the thread, drawn on the next frame.
+            requestAnimationFrame(() => {
+              const target = document.getElementById(`item-${id}`);
+              (target ?? end.current)?.scrollIntoView({ block: 'center' });
+            });
           }}
         />
       )}

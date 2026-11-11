@@ -7,7 +7,7 @@
 // skill of the recipient's CLI (ADR 0019), `/` lists the commands. On a wide panel, beside the composer, the two dials (Hud.tsx):
 // who you talk to, and the providers' usage.
 
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useContext, useEffect, useRef, useState } from 'preact/hooks';
 import {
   parseHostMessage,
   type ApprovalMode,
@@ -26,7 +26,7 @@ import { RoleHud, UsageHud } from './Hud.js';
 import { flash, Progress } from './motion.js';
 import type { ThreadItem } from './state.js';
 import { wordAt } from './threadModel.js';
-import { Meter, Pick, post } from './ui.js';
+import { Meter, Pick, post, ShownNode, useWho } from './ui.js';
 
 type Item<K extends ThreadItem['kind']> = Extract<ThreadItem, { kind: K }>;
 
@@ -52,6 +52,7 @@ function PermissionSlab({ item, theme }: { item: Item<'permission'>; theme: 'dar
     };
   });
   const file = /^(Edit|Write|NotebookEdit|MultiEdit):/.test(item.summary);
+  const who = useWho(item.role);
   return (
     <section
       ref={slab}
@@ -61,7 +62,7 @@ function PermissionSlab({ item, theme }: { item: Item<'permission'>; theme: 'dar
     >
       <div class="pslab__m">
         <span class="cn-tag cn-tag--live">
-          ▲ PERMESSO · {item.role === 'leader' ? 'LEADER' : 'IMPLEMENTATORE'} · {item.agent}
+          ▲ PERMESSO · {who} · {item.agent}
         </span>
         <h2 class="t-title">{file ? 'Vuole modificare un file' : 'Vuole eseguire un comando'}</h2>
         <code class="t-data pslab__c">
@@ -159,13 +160,14 @@ function QuestionFrame({ item }: { item: Item<'question'> }) {
       window.removeEventListener('keydown', onKey);
     };
   });
+  const who = useWho(item.role);
   if (!q) return null;
   const freeOpen = !q.options || picked[q.id] === OTHER;
   return (
     <section class="cn-frame cn-frame--ink apr qst" aria-label="Domanda del leader">
       <header class="cn-frame__head cn-accent">
         <span class="cn-tag">
-          <b>▲ DOMANDA</b> · {item.role === 'leader' ? 'LEADER' : 'IMPLEMENTATORE'} · {item.agent}
+          <b>▲ DOMANDA</b> · {who} · {item.agent}
         </span>
         {total > 1 && (
           <span class="cn-tag">
@@ -459,7 +461,9 @@ function Composer({
   const [pop, setPop] = useState<Pop | null>(null);
   const [choice, setChoice] = useState(0);
   const box = useRef<HTMLTextAreaElement>(null);
-  const busy = session?.busy ?? false;
+  /** A node's thread is shown (ADR 0023): the message goes to it, on its own. */
+  const node = useContext(ShownNode);
+  const busy = node ? (session?.busyNodes ?? []).includes(node.id) : (session?.busy ?? false);
   const ready = session !== undefined && session.workspace !== null && session.trusted;
   const canSend = ready && !busy && text.trim() !== '';
   const enterSends = session?.enterSends ?? true;
@@ -636,8 +640,8 @@ function Composer({
     post({
       type: 'send',
       text: mentions ? `${text.trimEnd()}\n\n${mentions}` : text,
-      ...(to === 'implementer' ? { to } : {}),
-      ...(skill ? { skill } : {}),
+      ...(node ? { node: node.id } : to === 'implementer' ? { to } : {}),
+      ...(skill && !node ? { skill } : {}),
     });
     setText('');
     setAttachments([]);
@@ -654,7 +658,7 @@ function Composer({
     },
   });
 
-  const context = session?.context[to];
+  const context = node ? undefined : session?.context[to];
   const percent = context?.window ? context.used / context.window : null;
   return (
     <Lattice
@@ -752,9 +756,11 @@ function Composer({
             placeholder={
               !ready
                 ? 'Invio non disponibile finché la chat non è pronta.'
-                : to === 'leader'
-                  ? 'Scrivi al leader · @ allega un file · $ skill · / comandi'
-                  : 'Scrivi all’implementatore · il leader leggerà il rapporto dopo'
+                : node
+                  ? `Scrivi a ${node.name} · una conversazione sua, il leader non la vede`
+                  : to === 'leader'
+                    ? 'Scrivi al leader · @ allega un file · $ skill · / comandi'
+                    : 'Scrivi all’implementatore · il leader leggerà il rapporto dopo'
             }
             onInput={(event) => {
               const area = event.target as HTMLTextAreaElement;
@@ -795,15 +801,22 @@ function Composer({
         <div class="cmp__foot">
           {/* Who and how, here only when the dials beside the composer are not shown. */}
           <span class="cmp__to">
-            <Pick
-              short="A"
-              label="Destinatario"
-              value={to}
-              options={RECIPIENTS}
-              disabled={!ready}
-              onChange={setTo}
-            />
-            {to === 'leader' ? (
+            {node ? (
+              <span class="pk pk--off">
+                <span class="pk__k">A</span>
+                <span class="pk__v">{node.name.toUpperCase()}</span>
+              </span>
+            ) : (
+              <Pick
+                short="A"
+                label="Destinatario"
+                value={to}
+                options={RECIPIENTS}
+                disabled={!ready}
+                onChange={setTo}
+              />
+            )}
+            {to === 'leader' && !node ? (
               <Pick
                 compact
                 label="Consegna"
@@ -844,7 +857,7 @@ function Composer({
                   type="button"
                   aria-label="Ferma tutto e nega le richieste in attesa"
                   onClick={() => {
-                    post({ type: 'stop' });
+                    post(node ? { type: 'stop', node: node.id } : { type: 'stop' });
                   }}
                 >
                   <span class="cn-btn__label">FERMA</span>
@@ -904,6 +917,9 @@ export function Dock({
   monitor,
   usage,
   openSquad,
+  to,
+  setTo,
+  select,
 }: {
   session: SessionInfo | undefined;
   items: readonly ThreadItem[];
@@ -913,14 +929,20 @@ export function Dock({
   monitor: MonitorState;
   usage: readonly ProviderUsage[];
   openSquad: () => void;
+  /** Who the composer writes to; choosing a role shows the chat's thread again. */
+  to: RoleName;
+  setTo: (to: RoleName) => void;
+  /** Chooses who you talk to from the dial: a role, or a node by id (ADR 0023). */
+  select: (target: string) => void;
 }) {
   const permission = items.find(
     (i): i is Item<'permission'> => i.kind === 'permission' && !i.closed,
   );
   const approval = items.find((i): i is Item<'approval'> => i.kind === 'approval' && !i.closed);
   const question = items.find((i): i is Item<'question'> => i.kind === 'question' && !i.closed);
-  const [to, setTo] = useState<RoleName>('leader');
-  const recipient = roles ? (roles.chat?.[to] ?? roles.roles[to]) : undefined;
+  const node = useContext(ShownNode);
+  const recipient = node ?? (roles ? (roles.chat?.[to] ?? roles.roles[to]) : undefined);
+  const waitingWho = useWho(permission?.role ?? 'leader');
   return (
     <footer class="dock">
       <div class="dock__in">
@@ -929,10 +951,11 @@ export function Dock({
             roles={roles}
             monitor={monitor}
             to={to}
-            setTo={setTo}
+            node={node}
+            select={select}
             mode={session?.mode ?? 'manual'}
             setMode={setMode}
-            busy={session?.busy ?? false}
+            busy={node ? (session?.busyNodes ?? []).includes(node.id) : (session?.busy ?? false)}
           />
         </aside>
         <div class="colw">
@@ -941,15 +964,19 @@ export function Dock({
               <PermissionSlab item={permission} theme={theme} />
               <div class="below">
                 <span class="hint">
-                  {permission.role === 'leader' ? 'IL LEADER' : 'L’IMPLEMENTATORE'} ASPETTA LA TUA
-                  RISPOSTA · L’INVIO RIPRENDE DOPO
+                  {node
+                    ? waitingWho
+                    : permission.role === 'leader'
+                      ? 'IL LEADER'
+                      : 'L’IMPLEMENTATORE'}{' '}
+                  ASPETTA LA TUA RISPOSTA · L’INVIO RIPRENDE DOPO
                 </span>
                 <button
                   class="cn-btn cn-btn--outline cn-btn--sm"
                   type="button"
                   aria-label="Ferma tutto e nega le richieste in attesa"
                   onClick={() => {
-                    post({ type: 'stop' });
+                    post(node ? { type: 'stop', node: node.id } : { type: 'stop' });
                   }}
                 >
                   <span class="cn-btn__label">FERMA</span>
@@ -971,7 +998,7 @@ export function Dock({
               openSquad={openSquad}
               to={to}
               setTo={setTo}
-              cli={recipient?.cli}
+              cli={node ? undefined : recipient?.cli}
             />
           )}
         </div>

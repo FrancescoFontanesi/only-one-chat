@@ -5,7 +5,7 @@
 // rhythm. A block that arrives while the chat is open enters with Construct.
 
 import { Fragment, type ComponentChildren } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useContext, useRef, useState } from 'preact/hooks';
 import type { SessionInfo } from '../src/webview/protocol.js';
 import { refTokens } from '../src/webview/refs.js';
 import { Progress, Reveal } from './motion.js';
@@ -20,7 +20,7 @@ import {
   withoutDelegation,
   type Op,
 } from './threadModel.js';
-import { duration, kilo, post } from './ui.js';
+import { duration, kilo, post, ShownNode, useWho } from './ui.js';
 
 type Item<K extends ThreadItem['kind']> = Extract<ThreadItem, { kind: K }>;
 
@@ -80,12 +80,13 @@ function Linked({ text, refs }: { text: string; refs: readonly string[] | undefi
 
 function User({ item, index, busy }: { item: Item<'user'>; index: number; busy: boolean }) {
   const message = readUserMessage(item.text, item.attachments, item.to);
+  const recipient = useWho(message.to);
   return (
     <section class="turn turn--you">
       <div class="who">
         <span>{String(index).padStart(2, '0')}/</span>
         <b>TU</b>
-        <span>→ {message.to === 'leader' ? 'LEADER' : 'IMPLEMENTATORE'}</span>
+        <span>→ {recipient}</span>
         <span class="who__acts">
           <Copy text={message.text} />
           {item.checkpoint && (
@@ -451,10 +452,11 @@ function Turn({ item }: { item: Item<'turn'> }) {
   const [provider, model] = identity(item);
   const usage = item.usage;
   const running = item.status === 'running';
+  const who = useWho(item.role);
   return (
     <section class={running ? 'turn turn--live' : 'turn'}>
       <div class="who">
-        <b>{item.role === 'leader' ? 'LEADER' : 'IMPLEMENTATORE'}</b>
+        <b>{who}</b>
         {provider && <span>{provider}</span>}
         {model && <span>{model}</span>}
         {running ? (
@@ -558,11 +560,12 @@ const ASKED: Record<string, string> = {
 
 /** An agent's questions, once closed: each question and the answer given (ADR 0019). */
 function Asked({ item }: { item: Item<'question'> }) {
+  const who = useWho(item.role);
   return (
     <div class="hand asked">
       <div class="hand__l">
         <span class="cn-tag">
-          <b>▲ DOMANDA</b> · {item.role === 'leader' ? 'LEADER' : 'IMPLEMENTATORE'}
+          <b>▲ DOMANDA</b> · {who}
         </span>
         <span class="cn-tag">{ASKED[item.closed ?? ''] ?? item.closed}</span>
       </div>
@@ -587,12 +590,12 @@ const PERMIT: Record<string, string> = {
 
 function Permission({ item }: { item: Item<'permission'> }) {
   const allowed = item.closed === 'accept' || item.closed === 'acceptForSession';
+  const who = useWho(item.role);
   return (
     <div class="hand">
       <div class="hand__l">
         <span class="cn-tag">
-          <b>{allowed ? '■' : '×'} PERMESSO</b>{' '}
-          {item.role === 'leader' ? 'LEADER' : 'IMPLEMENTATORE'}
+          <b>{allowed ? '■' : '×'} PERMESSO</b> {who}
         </span>
         <span class="t-data">{item.summary}</span>
       </div>
@@ -800,14 +803,15 @@ export function Thread({
   /** Changes when the thread is loaded again. */
   epoch: number;
 }) {
-  const busy = session?.busy ?? false;
+  const node = useContext(ShownNode);
+  const busy = node ? (session?.busyNodes ?? []).includes(node.id) : (session?.busy ?? false);
   const arrivals = useArrivals(items, epoch);
   let users = 0;
   const lastUser = [...items].reverse().find((i): i is Item<'user'> => i.kind === 'user');
   const retry =
     lastUser && !busy
       ? () => {
-          post({ type: 'send', text: lastUser.text });
+          post({ type: 'send', text: lastUser.text, ...(node ? { node: node.id } : {}) });
         }
       : null;
   const enter = (id: string, node: ComponentChildren) =>

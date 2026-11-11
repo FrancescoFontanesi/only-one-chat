@@ -18,8 +18,10 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type {
+  Cli,
   ApprovalMode,
   MonitorState,
+  NodeInfo,
   PermissionLevel,
   ProviderUsage,
   RoleName,
@@ -39,7 +41,16 @@ import {
   steps,
 } from './hudGeometry.js';
 import { Counter, Decode, reducedMotion } from './motion.js';
-import { clock, editableRole, PERMISSIONS, post, PROVIDER, writeRole } from './ui.js';
+import {
+  clock,
+  editableRole,
+  PERMISSIONS,
+  post,
+  PROVIDER,
+  writeNode,
+  writeRole,
+  type RoleChange,
+} from './ui.js';
 
 const FPS = 24;
 
@@ -311,14 +322,16 @@ function stepAt(y: number, count: number): number {
 /**
  * Who you talk to; its reasoning on the sight, and the leader's delivery or the
  * implementer's model and handoff. The sight sets the reasoning (drag, click
- * on a segment, wheel, arrows); the role is chosen on its label or on the
- * outer ring (click, wheel).
+ * on a segment, wheel, arrows); the agent is chosen on its label or on the
+ * outer ring (click, wheel): the two roles, then the nodes (ADR 0023), which
+ * have only their model and reasoning here.
  */
 export function RoleHud({
   roles,
   monitor,
   to,
-  setTo,
+  node,
+  select,
   mode,
   setMode,
   busy,
@@ -326,22 +339,41 @@ export function RoleHud({
   roles: RolesState | undefined;
   monitor: MonitorState;
   to: RoleName;
-  setTo: (to: RoleName) => void;
+  /** The node the chat shows, if any: the dial is its. */
+  node: NodeInfo | null;
+  /** Chooses who you talk to: a role, or a node by id. */
+  select: (target: string) => void;
   /** How the leader's delegations are delivered. */
   mode: ApprovalMode;
   setMode: (mode: ApprovalMode) => void;
-  /** A message is running: no handoff now. */
+  /** A message of who is shown is running: no handoff now. */
   busy: boolean;
 }) {
-  const selected = ROLES.findIndex((r) => r.id === to);
+  const items = [
+    ...ROLES,
+    ...(roles?.nodes ?? []).map((n) => ({
+      id: n.id,
+      name: n.name,
+      short: n.name.slice(0, 3).toUpperCase(),
+    })),
+  ];
+  const selected = Math.max(
+    0,
+    items.findIndex((item) => item.id === (node?.id ?? to)),
+  );
   const go = (index: number) => {
-    const role = ROLES[(index + ROLES.length) % ROLES.length];
-    if (role) setTo(role.id);
+    const item = items[(index + items.length) % items.length];
+    if (item) select(item.id);
   };
   const rot = useTween(selected, 1 / 8);
 
-  const edit = roles ? editableRole(to, roles) : null;
-  const info = edit?.info;
+  const edit = roles && !node ? editableRole(to, roles) : null;
+  const info = node ?? edit?.info;
+  /** A node's settings go to its entry, a role's to its keys. */
+  const write = (change: RoleChange) => {
+    if (node) writeNode(node, change);
+    else if (info) writeRole(to, info, change);
+  };
   const provider = roles?.catalog.find((c) => c.cli === info?.cli);
   const model = provider?.models.find((m) => m.id === info?.model);
   const efforts: readonly string[] = model?.efforts ?? [];
@@ -354,7 +386,7 @@ export function RoleHud({
   const rsn = steps('left', R.outer, Math.max(1, efforts.length), ra);
   const setStep = (index: number) => {
     const level = efforts[Math.max(0, Math.min(efforts.length - 1, index))];
-    if (info && level && level !== info.effort) writeRole(to, info, { effort: level });
+    if (info && level && level !== info.effort) write({ effort: level });
   };
   const local = (event: PointerEvent | MouseEvent) =>
     event.clientY - (event.currentTarget as Element).getBoundingClientRect().top;
@@ -366,25 +398,29 @@ export function RoleHud({
     fn();
   };
 
-  const status = monitor.agents.find((a) => a.role === to)?.status ?? 'idle';
+  const status = node
+    ? busy
+      ? 'working'
+      : 'idle'
+    : (monitor.agents.find((a) => a.role === to)?.status ?? 'idle');
   const models = provider?.models ?? [];
-  const isLeader = to === 'leader';
-  const canModel = !isLeader && edit !== null && models.length > 1;
+  const isLeader = to === 'leader' && !node;
+  const canModel = !isLeader && info !== undefined && models.length > 1;
   const nextModel = () => {
     if (!info || !canModel) return;
     const at = models.findIndex((m) => m.id === info.model);
     const next = models[(at + 1) % models.length];
     if (!next) return;
     const keep = next.efforts.includes(info.effort) ? info.effort : (next.efforts[0] ?? '');
-    writeRole(to, info, { model: next.id, effort: keep });
+    write({ model: next.id, effort: keep });
   };
   const started = roles?.chat !== null && roles?.chat !== undefined;
-  const current = ROLES[selected] ?? ROLES[0];
+  const current = items[selected] ?? ROLES[0];
   const level = efforts[shownStep];
 
   return (
     <div class="hud hud--left">
-      <Instrument side="left" rot={rot} count={ROLES.length}>
+      <Instrument side="left" rot={rot} count={items.length}>
         <path class="hud__dots" d={gauge('left', R.inner, 1)} />
         <path class="hud__strong" d={rsn.off} />
         <path class="hud__ink hud__w3" d={rsn.on} />
@@ -393,7 +429,7 @@ export function RoleHud({
       <div
         class="hud__ring"
         aria-hidden="true"
-        title="Cambia ruolo"
+        title="Cambia agente"
         onClick={() => {
           go(selected + 1);
         }}
@@ -441,7 +477,7 @@ export function RoleHud({
           event.preventDefault();
         }}
       />
-      <Labels side="left" items={ROLES} rot={rot} selected={selected} pick={go} />
+      <Labels side="left" items={items} rot={rot} selected={selected} pick={go} />
       <span class="cn-tag hud__key hud__key--left">
         <b>R/</b> Parli con
       </span>
@@ -477,7 +513,10 @@ export function RoleHud({
         <span aria-hidden="true">{canModel ? '↕' : '■'}</span>
       </button>
       <div class="hud__act">
-        {isLeader ? (
+        {node ? (
+          // A node has no role: no delivery, permissions or handoff here (Squad sets them).
+          <span class="hud__k">Nodo · senza ruolo</span>
+        ) : isLeader ? (
           <Switch label="Consegna" value={mode} options={DELIVERY} onChange={setMode} />
         ) : (
           <>
@@ -487,7 +526,7 @@ export function RoleHud({
                 value={info.permission}
                 options={PERMISSION_OPTIONS}
                 onChange={(permission) => {
-                  writeRole(to, info, { permission });
+                  write({ permission });
                 }}
               />
             )}
@@ -521,7 +560,18 @@ export function RoleHud({
 const PROVIDERS = [
   { id: 'codex', name: 'Codex', short: 'CDX' },
   { id: 'claude', name: 'Claude', short: 'CLD' },
+  { id: 'antigravity', name: 'Antigravity', short: 'AGY' },
 ] as const;
+
+/** Why a provider's 5-hour window shows no number. */
+const NO_WINDOW: Record<Cli, { word: string; note: string }> = {
+  codex: { word: 'Non letto', note: 'L’utilizzo di Codex non è ancora stato letto.' },
+  claude: { word: 'Dopo un turno', note: 'Claude riporta l’utilizzo alla fine di un turno.' },
+  antigravity: {
+    word: 'Non letto',
+    note: 'Letto da agy (/quota) senza consumare quota, quando un nodo usa Antigravity.',
+  },
+};
 
 const windowOf = (usage: ProviderUsage | undefined, name: '5h' | 'weekly') =>
   usage?.windows.find((w) => w.name === name);
@@ -536,7 +586,7 @@ export function UsageHud({
   /** From which percentage a window is shown as over; 0 for none. */
   threshold: number;
   /** The provider of who you talk to: the one shown until you turn the dial. */
-  active: 'codex' | 'claude';
+  active: Cli;
 }) {
   const [chosen, setChosen] = useState<number | null>(null);
   useEffect(() => {
@@ -593,7 +643,7 @@ export function UsageHud({
         {over ? ' ▲ Soglia' : ''}
       </span>
       {five ? (
-        <span class="hud__fig">
+        <span class="hud__fig" title={data?.note || undefined}>
           <span class="hud__k">5H</span>
           <span class="hud__num">
             <Counter value={Math.round(five.usedPercent)} format={(v) => String(Math.round(v))} />
@@ -601,10 +651,10 @@ export function UsageHud({
           </span>
         </span>
       ) : (
-        <span class="hud__fig hud__fig--none" title={data?.note || undefined}>
+        <span class="hud__fig hud__fig--none" title={data?.note || NO_WINDOW[cli].note}>
           <span class="hud__k">5H</span>
           {/* A short word on the dial; the provider's whole note is its tooltip. */}
-          <span class="hud__k hud__fit">{cli === 'claude' ? 'Dopo un turno' : 'Non letto'}</span>
+          <span class="hud__k hud__fit">{NO_WINDOW[cli].word}</span>
         </span>
       )}
       <div class="hud__ctl hud__ctl--right">

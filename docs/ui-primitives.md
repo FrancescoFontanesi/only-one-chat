@@ -45,7 +45,9 @@ La scelta va nell'ADR.
 | Quote di Codex lette dai file di rollout sotto `$CODEX_HOME/sessions` (`codexUsageReader.ts`)                                                                 | per noi è vietato            |
 | "Sempre" con chiave il primo token del comando                                                                                                                | troppo ampio (threat T5)     |
 
-Le nostre fonti delle quote restano due, e nessuna delle due consuma quota:
+Le nostre fonti delle quote sono tre, e nessuna consuma quota:
 
 - **Codex:** `account/rateLimits/read`.
 - **Claude:** il `rate_limit_event` di ogni turno.
+- **Antigravity:** `agy -p /quota --output-format json`, a cui `agy` risponde senza turno
+  (ADR 0023).

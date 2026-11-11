@@ -6,8 +6,11 @@
 import * as vscode from 'vscode';
 import type { AgentChoice } from './session/chat.js';
 import type { ModelCatalog } from './session/catalog.js';
+import { nodesOf, type NodeChoice } from './session/node.js';
+import { PROVIDERS, type ProviderChoice } from './session/providers.js';
 import {
   EFFORTS,
+  type NodeInfo,
   type PermissionLevel,
   type RoleInfo,
   type RoleName,
@@ -54,7 +57,7 @@ export class RoleSettings implements vscode.Disposable {
 
   constructor(private readonly catalog: ModelCatalog) {
     this.subscription = vscode.workspace.onDidChangeConfiguration((event) => {
-      const touched = (['leader', 'implementer'] as const).some((role) =>
+      const touched = (['leader', 'implementer', 'nodes'] as const).some((role) =>
         event.affectsConfiguration(`onlyOneChat.${role}`),
       );
       if (touched && this.writing === 0) this.emitter.fire();
@@ -71,7 +74,7 @@ export class RoleSettings implements vscode.Disposable {
   }
 
   /** A role as the views show it, with its model's name when the catalog is read. */
-  info(choice: AgentChoice): RoleInfo {
+  info(choice: ProviderChoice): RoleInfo {
     return {
       ...choice,
       modelName: this.catalog.find(choice.cli, choice.model)?.name ?? choice.model,
@@ -79,9 +82,9 @@ export class RoleSettings implements vscode.Disposable {
   }
 
   /** Why a choice cannot be taken, or undefined. */
-  problem(choice: AgentChoice): string | undefined {
+  problem(choice: ProviderChoice): string | undefined {
     if (this.catalog.rejects(choice.cli, choice.model)) {
-      return `${choice.cli === 'codex' ? 'Codex' : 'Claude'} non offre il modello ${choice.model}.`;
+      return `${PROVIDERS[choice.cli].name} non offre il modello ${choice.model}.`;
     }
     const model = this.catalog.find(choice.cli, choice.model);
     const efforts: readonly string[] = model ? model.efforts : EFFORTS;
@@ -100,8 +103,53 @@ export class RoleSettings implements vscode.Disposable {
         ? { leader: this.info(chat.leader), implementer: this.info(chat.implementer) }
         : null,
       catalog: this.catalog.snapshot(),
+      nodes: this.nodes().map((node): NodeInfo => ({
+        ...this.info(node),
+        id: node.id,
+        name: node.name,
+      })),
       fake,
     };
+  }
+
+  /** The nodes on Squad's board, from the settings (ADR 0023). */
+  nodes(): NodeChoice[] {
+    return nodesOf(vscode.workspace.getConfiguration('onlyOneChat').get('nodes'));
+  }
+
+  /**
+   * Writes the nodes where they are defined, else in the folder's settings
+   * (ADR 0023), then announces it once. A node whose model its CLI does not
+   * offer is not written, and the user is told why.
+   */
+  async setNodes(nodes: readonly NodeChoice[]): Promise<boolean> {
+    for (const node of nodes) {
+      const problem = this.problem(node);
+      if (problem) {
+        void vscode.window.showWarningMessage(problem);
+        return false;
+      }
+    }
+    const settings = vscode.workspace.getConfiguration('onlyOneChat');
+    const where = settings.inspect('nodes');
+    const target =
+      where?.workspaceFolderValue !== undefined
+        ? vscode.ConfigurationTarget.WorkspaceFolder
+        : where?.workspaceValue !== undefined || vscode.workspace.workspaceFolders?.length
+          ? vscode.ConfigurationTarget.Workspace
+          : vscode.ConfigurationTarget.Global;
+    this.writing++;
+    try {
+      await settings.update(
+        'nodes',
+        nodes.map((node) => ({ ...node })),
+        target,
+      );
+    } finally {
+      this.writing--;
+    }
+    this.emitter.fire();
+    return true;
   }
 
   /** A role chosen in a view: written if the CLI offers it, else the user is told why not. */

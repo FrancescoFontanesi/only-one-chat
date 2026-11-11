@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { withoutApiKeys } from './environment.js';
 import { connectCodex } from './codex/session.js';
+import { runAgy } from './acp/antigravity.js';
 
 export interface ModelInfo {
   /** What the CLI takes as its model: a Codex model id, a Claude alias or id. */
@@ -268,4 +269,61 @@ export async function listCodexSkills(
   } finally {
     await session.close();
   }
+}
+
+const LEVELS = ['low', 'medium', 'high'] as const;
+const LEVEL_ID = /^(.+)-(low|medium|high)$/;
+const LEVEL_NAME = /^(.+?)\s*\((low|medium|high)\)$/i;
+
+/** An Antigravity model id split into the model and its level: `gemini-3.8-flash-low`. */
+export function antigravityLevel(id: string): { model: string; effort: string } | null {
+  const match = LEVEL_ID.exec(id);
+  return match?.[1] && match[2] ? { model: match[1], effort: match[2] } : null;
+}
+
+/** The id `agy` takes: the model with its level, as `agy models` lists it. */
+export function antigravityModelId(model: string, effort: string): string {
+  return effort ? `${model}-${effort}` : model;
+}
+
+/**
+ * Antigravity's models, from `agy models`: one `id<TAB>name` line each, no
+ * turn. An id with its level (`gemini-3.8-flash-low`, "Gemini 3.8 Flash
+ * (Low)") is one level of a model, so the levels are shown as reasoning
+ * (ADR 0023); `antigravityModelId` puts them back together.
+ */
+export function antigravityModels(output: string): ModelInfo[] {
+  const models = new Map<string, { id: string; name: string; efforts: string[] }>();
+  for (const line of output.split(/\r?\n/)) {
+    const [rawId, rawName] = line.split('\t');
+    const id = rawId?.trim() ?? '';
+    const name = rawName?.trim() ?? '';
+    if (!id || !name || /\s/.test(id)) continue;
+    const level = antigravityLevel(id);
+    const named = LEVEL_NAME.exec(name);
+    const key = level && named?.[1] ? level.model : id;
+    const entry = models.get(key) ?? {
+      id: key,
+      name: named?.[1] && level ? named[1] : name,
+      efforts: [],
+    };
+    if (level && named) entry.efforts.push(level.effort);
+    models.set(key, entry);
+  }
+  return [...models.values()].map(({ id, name, efforts }) => {
+    const ordered = LEVELS.filter((l) => efforts.includes(l));
+    return {
+      id,
+      name,
+      efforts: ordered,
+      defaultEffort: ordered.includes('medium') ? 'medium' : (ordered[0] ?? null),
+      isDefault: false,
+    };
+  });
+}
+
+export async function listAntigravityModels(options: ListModelsOptions): Promise<ModelInfo[]> {
+  const models = antigravityModels(await runAgy(options, ['models']));
+  if (models.length === 0) throw new Error('agy models listed no model');
+  return models;
 }

@@ -5,6 +5,8 @@ import { getRuntimeInfo } from '@only-one-chat/runtime';
 import { cliLaunch, isFake } from '../clis.js';
 import type { ChatRoles, RoleSettings, Roles } from '../roles.js';
 import { ChatSession } from '../session/chat.js';
+import { NodeSession, type NodeChoice } from '../session/node.js';
+import { PROVIDERS } from '../session/providers.js';
 import { CheckpointStore } from '../session/checkpoints.js';
 import { SKIPPED } from '../session/facts.js';
 import { ignoredPaths } from '../session/ignore.js';
@@ -18,8 +20,11 @@ import { notifyChat } from '../notifications.js';
 import { providerOf, type UsageStore } from '../session/usage.js';
 import { createNonce, renderWebviewHtml, STYLESHEETS } from './html.js';
 import {
+  effortFor,
+  NODE_NAME_LENGTH,
   parseWebviewMessage,
   type ApprovalMode,
+  type Cli,
   type HostToWebviewMessage,
   type SessionInfo,
   type ThreadUpdate,
@@ -28,6 +33,14 @@ import {
 import { CODEX_INTERVAL_MS } from '../usageReader.js';
 
 const TITLE = 'Only One Chat';
+
+/** A chat worth keeping: a message to the leader, the implementer or a node. */
+function hasContent(record: ChatRecord): boolean {
+  return (
+    record.updates.length > 0 ||
+    Object.values(record.nodes ?? {}).some((thread) => thread.updates.length > 0)
+  );
+}
 
 /**
  * The folder the agents work in: the first workspace folder (ADR 0010), in
@@ -68,7 +81,7 @@ export interface PanelServices {
   readonly catalog: ModelCatalog;
   /** The CLIs' skills for `$` (ADR 0019). */
   readonly skills: SkillCatalog;
-  readonly refreshCodexUsage: () => Promise<void>;
+  readonly refreshUsage: () => Promise<void>;
 }
 
 /** Single editor panel hosting the chat with the leader. */
@@ -158,6 +171,8 @@ export class OnlyOneChatPanel {
 
   private readonly disposables: vscode.Disposable[] = [];
   private chat: ChatSession | undefined;
+  /** The nodes spoken to in the chat shown (ADR 0023), opened on their first message. */
+  private readonly nodes = new Map<string, NodeSession>();
   /** The chats of this folder (R5), and the one shown: saved after each update. */
   private readonly history: ChatHistory;
   private record: ChatRecord;
@@ -252,6 +267,16 @@ export class OnlyOneChatPanel {
 
   /** The roles changed in the roles view: the chat takes what stays on its providers. */
   private applyRoles(): void {
+    const settings = new Map(this.services.roles.nodes().map((node) => [node.id, node]));
+    for (const [id, session] of this.nodes) {
+      const node = settings.get(id);
+      if (node) void session.configure(node);
+      else {
+        // Removed from the board: its session ends.
+        this.nodes.delete(id);
+        void session.close();
+      }
+    }
     const chat = this.chat;
     if (chat) {
       const next = this.services.roles.get();
@@ -284,6 +309,7 @@ export class OnlyOneChatPanel {
       mode: this.mode,
       fake: isFake(this.context),
       busy: this.chat?.busy ?? false,
+      busyNodes: [...this.nodes].filter(([, node]) => node.busy).map(([id]) => id),
       title: this.record.title,
       chats: this.history.list(),
       chatId: this.record.id,
@@ -318,7 +344,7 @@ export class OnlyOneChatPanel {
   private watchUsage(): void {
     clearInterval(this.usageTimer);
     this.usageTimer = this.panel.visible
-      ? setInterval(() => void this.services.refreshCodexUsage(), CODEX_INTERVAL_MS)
+      ? setInterval(() => void this.services.refreshUsage(), CODEX_INTERVAL_MS)
       : undefined;
   }
 
@@ -335,14 +361,17 @@ export class OnlyOneChatPanel {
     };
   }
 
-  /** Keeps an update of the shown chat; written to disk shortly after (R5). */
-  private remember(update: ThreadUpdate): void {
+  /** Keeps an update of the shown chat, or of one of its nodes; written to disk shortly after (R5). */
+  private remember(update: ThreadUpdate, node?: string): void {
     const record = this.record;
     if (update.type === 'user' && record.title === '') {
       record.title = update.text.replace(/^(@impl|\/(fai|delega|chiedi))\b\s*/i, '').slice(0, 60);
       void this.postSession();
     }
-    record.updates.push(update);
+    if (node) {
+      record.nodes ??= {};
+      (record.nodes[node] ??= { updates: [] }).updates.push(update);
+    } else record.updates.push(update);
     record.updatedAt = Date.now();
     this.scheduleSave();
   }
@@ -354,7 +383,7 @@ export class OnlyOneChatPanel {
       return;
     }
     try {
-      if (record.updates.length > 0) this.history.save(record);
+      if (hasContent(record)) this.history.save(record);
     } catch {
       // The chat is no longer shown; the next change to it tries again.
     }
@@ -371,7 +400,7 @@ export class OnlyOneChatPanel {
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
     // An empty chat is not kept.
-    if (this.record.updates.length === 0) return;
+    if (!hasContent(this.record)) return;
     try {
       this.history.save(this.record);
     } catch (error) {
@@ -399,6 +428,11 @@ export class OnlyOneChatPanel {
       const card: ThreadUpdate = { type: 'approval', kind: 'delegation', ...draft };
       await this.post({ type: 'thread', update: cwd ? withRefs(card, cwd) : card });
     }
+    for (const [node, thread] of Object.entries(this.record.nodes ?? {})) {
+      for (const update of forReplay(thread.updates)) {
+        await this.post({ type: 'thread', update, node });
+      }
+    }
   }
 
   /** Shows another chat: the current one is saved and its agents closed. */
@@ -406,6 +440,7 @@ export class OnlyOneChatPanel {
     this.saveNow();
     await this.chat?.dispose();
     this.chat = undefined;
+    await this.closeNodes();
     this.services.monitor.reset();
     this.record = record;
     this.showRoles();
@@ -444,13 +479,17 @@ export class OnlyOneChatPanel {
         OnlyOneChatPanel.readyEmitter.fire();
         // The models and Codex's usage windows are read when the chat opens: no turn, no quota.
         void this.services.catalog.load();
-        void this.services.refreshCodexUsage();
+        void this.services.refreshUsage();
         this.watchUsage();
         break;
       case 'ping':
         void this.post({ type: 'pong', id: message.id, receivedAt: new Date().toISOString() });
         break;
       case 'send': {
+        if (message.node !== undefined) {
+          await this.sendToNode(message.node, message.text, message.skill);
+          break;
+        }
         if (!(await this.saveBeforeSend())) break;
         const chat = await this.ensureChat();
         if (!chat) break;
@@ -496,12 +535,29 @@ export class OnlyOneChatPanel {
         break;
       case 'permit':
         this.chat?.permit(message.id, message.decision);
+        for (const node of this.nodes.values()) node.permit(message.id, message.decision);
         break;
       case 'answer':
         this.chat?.answer(message.id, message.answers);
         break;
       case 'stop':
-        await this.chat?.stop();
+        if (message.node !== undefined) await this.nodes.get(message.node)?.stop();
+        else await this.chat?.stop();
+        break;
+      case 'addNode':
+        await this.addNode(message.cli, message.model);
+        break;
+      case 'setNode': {
+        const { id, name, cli, model, effort, permission } = message;
+        const node = { id, name, cli, model, effort, permission };
+        const nodes = this.services.roles.nodes();
+        if (!nodes.some((n) => n.id === node.id)) break;
+        const next = nodes.map((n) => (n.id === node.id ? node : n));
+        if (!(await this.services.roles.setNodes(next))) void this.postSquad('roles');
+        break;
+      }
+      case 'removeNode':
+        await this.removeNode(message.id);
         break;
       case 'setMode':
         this.mode = message.mode;
@@ -527,7 +583,7 @@ export class OnlyOneChatPanel {
         await this.services.catalog.load(true);
         break;
       case 'refreshUsage':
-        await this.services.refreshCodexUsage();
+        await this.services.refreshUsage();
         break;
       case 'copy':
         await vscode.env.clipboard.writeText(message.text);
@@ -566,6 +622,13 @@ export class OnlyOneChatPanel {
   /** The chat, created on the first message once folder, trust and consent are in place. */
   private async ensureChat(): Promise<ChatSession | undefined> {
     if (this.chat) return this.chat;
+    const cwd = await this.agentsFolder();
+    if (!cwd) return undefined;
+    return this.createChat(cwd);
+  }
+
+  /** The folder the agents may work in: open, trusted, and agreed to by the user. */
+  private async agentsFolder(): Promise<string | undefined> {
     const cwd = workspaceFolder();
     if (!cwd) {
       this.notice('error', 'Apri la cartella in cui gli agenti devono lavorare.');
@@ -588,6 +651,19 @@ export class OnlyOneChatPanel {
       if (answer !== 'Continua') return undefined;
       this.confirmedFolder = cwd;
     }
+    return cwd;
+  }
+
+  /** The PermissionRequest hook script, run by the editor's own Node (R9). */
+  private permissionHook() {
+    return {
+      nodeExecutable: process.execPath,
+      nodeEnv: { ELECTRON_RUN_AS_NODE: '1' },
+      hookScript: path.join(this.context.extensionPath, 'dist', 'hooks', 'permission-request.mjs'),
+    };
+  }
+
+  private async createChat(cwd: string): Promise<ChatSession | undefined> {
     const settings = vscode.workspace.getConfiguration('onlyOneChat');
     // The chat's own record: a turn that ends after a switch must not write into another chat.
     const record = this.record;
@@ -626,17 +702,7 @@ export class OnlyOneChatPanel {
         ...(claude.launcherArgs.length > 0 ? { claudeLauncherArgs: claude.launcherArgs } : {}),
         allowedCommands: settings.get<string[]>('allowedCommands') ?? [],
         verifyCommand: settings.get<string[]>('verifyCommand') ?? [],
-        // The editor's own Node runs the PermissionRequest hook script (R9).
-        permissionHook: {
-          nodeExecutable: process.execPath,
-          nodeEnv: { ELECTRON_RUN_AS_NODE: '1' },
-          hookScript: path.join(
-            this.context.extensionPath,
-            'dist',
-            'hooks',
-            'permission-request.mjs',
-          ),
-        },
+        permissionHook: this.permissionHook(),
         mode: this.mode,
         // A reopened chat continues the CLIs' own sessions; Codex keeps its threads.
         resume: { ...record.sessions },
@@ -715,8 +781,133 @@ export class OnlyOneChatPanel {
     return this.chat;
   }
 
+  /** A node added on the board (ADR 0023): named after its model, read-only. */
+  private async addNode(cli: Cli, model: string): Promise<void> {
+    const option = this.services.catalog.find(cli, model);
+    const nodes = this.services.roles.nodes();
+    const base = option?.name ?? PROVIDERS[cli].name;
+    const name = nodes.some((n) => n.name === base) ? `${base} ${String(nodes.length + 1)}` : base;
+    const added: NodeChoice = {
+      id: `n-${Date.now().toString(36)}`,
+      name: name.slice(0, NODE_NAME_LENGTH),
+      cli,
+      model,
+      effort: effortFor(option, 'medium'),
+      // A new node reads and answers; it writes only once the user says so.
+      permission: 'read-only',
+    };
+    if (!(await this.services.roles.setNodes([...nodes, added]))) void this.postSquad('roles');
+  }
+
+  /** A node taken off the board: its session ends and its thread is dropped from the chat. */
+  private async removeNode(id: string): Promise<void> {
+    const nodes = this.services.roles.nodes();
+    await this.services.roles.setNodes(nodes.filter((n) => n.id !== id));
+    await this.nodes.get(id)?.close();
+    this.nodes.delete(id);
+    const threads = this.record.nodes;
+    if (threads?.[id]) {
+      this.record.nodes = Object.fromEntries(Object.entries(threads).filter(([key]) => key !== id));
+      this.keep(this.record);
+    }
+  }
+
+  /**
+   * The user's message to a node of the board (ADR 0023): its session opens
+   * on its first message, in the folder the chat's agents use, with the same
+   * consent; its updates go to its own thread.
+   */
+  private async sendToNode(id: string, text: string, skill: string | undefined): Promise<void> {
+    if (skill !== undefined) {
+      this.notice('warn', 'Le skill non si inviano ai nodi: messaggio non inviato.');
+      return;
+    }
+    if (!(await this.saveBeforeSend())) return;
+    const node = await this.ensureNode(id);
+    if (!node) return;
+    const cwd = workspaceFolder();
+    const expanded = cwd ? expandMentions(text, cwd) : undefined;
+    await node.send(
+      text,
+      expanded && expanded.mentions.length > 0 ? { text: expanded.attachments } : undefined,
+    );
+  }
+
+  private async ensureNode(id: string): Promise<NodeSession | undefined> {
+    const open = this.nodes.get(id);
+    if (open) return open;
+    const choice = this.services.roles.nodes().find((n) => n.id === id);
+    if (!choice) {
+      this.notice('warn', 'Il nodo non è più sulla lavagna.');
+      return undefined;
+    }
+    const cwd = await this.agentsFolder();
+    if (!cwd) return undefined;
+    let launch;
+    try {
+      launch = await cliLaunch(this.context, choice.cli);
+    } catch (error) {
+      this.notice('error', error instanceof Error ? error.message : String(error));
+      return undefined;
+    }
+    const settings = vscode.workspace.getConfiguration('onlyOneChat');
+    const record = this.record;
+    const args = launch.launcherArgs.length > 0 ? launch.launcherArgs : undefined;
+    const node: NodeSession = new NodeSession(
+      {
+        cwd,
+        node: choice,
+        codexExecutable: choice.cli === 'codex' ? launch.executable : '',
+        claudeExecutable: choice.cli === 'claude' ? launch.executable : '',
+        antigravityExecutable: choice.cli === 'antigravity' ? launch.executable : '',
+        ...(args && choice.cli === 'codex' ? { codexLauncherArgs: args } : {}),
+        ...(args && choice.cli === 'claude' ? { claudeLauncherArgs: args } : {}),
+        ...(args && choice.cli === 'antigravity' ? { antigravityLauncherArgs: args } : {}),
+        allowedCommands: settings.get<string[]>('allowedCommands') ?? [],
+        persistent: true,
+        permissionHook: this.permissionHook(),
+        ignoredPaths: settings.get<string[]>('ignoredPaths') ?? [],
+        ...(record.nodes?.[id]?.session ? { resume: record.nodes[id].session } : {}),
+      },
+      {
+        update: (raw) => {
+          if (record !== this.record) return;
+          const update = withRefs(raw, cwd);
+          this.remember(update, id);
+          if (update.type === 'permission') {
+            this.notifyIfAway('waiting', `${choice.name} chiede il permesso: ${update.summary}`);
+          }
+          void this.post({ type: 'thread', update, node: id });
+        },
+        busy: (busy) => {
+          void this.postSession();
+          if (!busy && record === this.record) {
+            this.notifyIfAway('turnEnd', `${choice.name} ha finito.`);
+          }
+          // A node's turn used its provider's quota: read anew, still with no turn (ADR 0023).
+          if (!busy && choice.cli === 'antigravity') void this.services.refreshUsage();
+        },
+        sessionId: (session) => {
+          record.nodes ??= {};
+          const thread = (record.nodes[id] ??= { updates: [] });
+          if (thread.session === session) return;
+          thread.session = session;
+          this.keep(record);
+        },
+      },
+    );
+    this.nodes.set(id, node);
+    return node;
+  }
+
+  private async closeNodes(): Promise<void> {
+    const open = [...this.nodes.values()];
+    this.nodes.clear();
+    await Promise.allSettled(open.map((node) => node.close()));
+  }
+
   /** A CLI's skills for the open folder, read from the CLI the first time (ADR 0019). */
-  private async postSkills(cli: 'codex' | 'claude', again: boolean): Promise<void> {
+  private async postSkills(cli: Cli, again: boolean): Promise<void> {
     const cwd = workspaceFolder();
     if (!cwd) {
       await this.post({
@@ -964,6 +1155,7 @@ export class OnlyOneChatPanel {
     OnlyOneChatPanel.current = undefined;
     void this.chat?.dispose();
     this.chat = undefined;
+    void this.closeNodes();
     this.services.monitor.reset();
     OnlyOneChatPanel.rolesEmitter.fire();
     for (const disposable of this.disposables.splice(0)) disposable.dispose();

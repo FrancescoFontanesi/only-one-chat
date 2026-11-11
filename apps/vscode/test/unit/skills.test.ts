@@ -14,6 +14,7 @@ describe('skill catalog', () => {
         ]);
       },
       claude: () => Promise.reject(new Error('Claude non risponde')),
+      antigravity: () => Promise.reject(new Error('non lette')),
     });
     expect(await catalog.load('codex', 'F:/x')).toEqual({
       status: 'ready',

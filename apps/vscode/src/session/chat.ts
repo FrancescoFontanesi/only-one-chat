@@ -39,7 +39,6 @@ import {
 import type {
   ApprovalAction,
   ApprovalMode,
-  PermissionLevel,
   PermitDecision,
   ThreadUpdate,
   TurnRole,
@@ -49,13 +48,11 @@ import type { Checkpoint, CheckpointStore } from './checkpoints.js';
 import { changes, snapshot, verifiedFacts } from './facts.js';
 import { ignoredPaths, type Ignored } from './ignore.js';
 import { plainRefs } from './mentions.js';
-import { PROVIDERS } from './providers.js';
+import { PROVIDERS, type ProviderChoice } from './providers.js';
 
-export interface AgentChoice {
+/** A role's choice: the leader and the implementer run on Codex or Claude (ADR 0022, 0023). */
+export interface AgentChoice extends ProviderChoice {
   readonly cli: 'codex' | 'claude';
-  readonly model: string;
-  readonly effort: string;
-  readonly permission: PermissionLevel;
 }
 
 export interface ChatConfig {
@@ -70,9 +67,12 @@ export interface ChatConfig {
   };
   readonly codexExecutable: string;
   readonly claudeExecutable: string;
+  /** For the nodes on Antigravity (ADR 0023); absent: `agy` on the PATH. */
+  readonly antigravityExecutable?: string;
   /** Arguments before each CLI's own: the fake CLIs' scripts in fake mode. */
   readonly codexLauncherArgs?: readonly string[];
   readonly claudeLauncherArgs?: readonly string[];
+  readonly antigravityLauncherArgs?: readonly string[];
   /** Commands Claude may run without asking (ADR 0008). */
   readonly allowedCommands: readonly string[];
   /** Run again by the runtime after each delegation; empty: none. */
@@ -163,7 +163,7 @@ export interface ChatEvents {
   ): void;
 }
 
-function summarize(usage: TurnUsage | undefined): TurnUsageSummary | undefined {
+export function summarize(usage: TurnUsage | undefined): TurnUsageSummary | undefined {
   if (!usage) return undefined;
   const models = Object.values(usage.byModel);
   return {

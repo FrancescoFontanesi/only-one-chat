@@ -6,16 +6,41 @@
 import {
   CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
   CODEX_SUBAGENT_FORBIDDEN_NAMES,
+  antigravityModelId,
+  createAcpAgentFactory,
   createClaudeAgentFactory,
   createCodexAgentFactory,
   type PermissionBridge,
 } from '@only-one-chat/adapters';
 import type { AgentFactory } from '@only-one-chat/runtime';
-import type { AgentChoice, ChatConfig } from './chat.js';
+import type { Cli, PermissionLevel } from '../webview/protocol.js';
+import type { ChatConfig } from './chat.js';
+
+/** An agent's provider, model, reasoning and permission: a role's or a node's (ADR 0023). */
+export interface ProviderChoice {
+  readonly cli: Cli;
+  readonly model: string;
+  readonly effort: string;
+  readonly permission: PermissionLevel;
+}
+
+/** What the providers read of the chat's configuration. */
+export type ProviderConfig = Pick<
+  ChatConfig,
+  | 'cwd'
+  | 'codexExecutable'
+  | 'claudeExecutable'
+  | 'antigravityExecutable'
+  | 'codexLauncherArgs'
+  | 'claudeLauncherArgs'
+  | 'antigravityLauncherArgs'
+  | 'allowedCommands'
+  | 'persistent'
+>;
 
 /** A role as the chat needs it, without naming a provider. */
 export interface RoleSpec {
-  readonly choice: AgentChoice;
+  readonly choice: ProviderChoice;
   /**
    * The leader (ADR 0018, 0019): read-only, it still runs commands to search
    * and check, and asks the user while it works.
@@ -31,14 +56,23 @@ export interface Provider {
    */
   readonly bridged: boolean;
   readonly subagentForbiddenNames: readonly string[];
-  factory(config: ChatConfig, role: RoleSpec, bridge: PermissionBridge | undefined): AgentFactory;
+  /**
+   * The model id the CLI takes, when the reasoning level is part of it
+   * (Antigravity); absent: the model, with the level set apart.
+   */
+  modelId?(choice: ProviderChoice): string;
+  factory(
+    config: ProviderConfig,
+    role: RoleSpec,
+    bridge: PermissionBridge | undefined,
+  ): AgentFactory;
 }
 
 /** Said to a read-only role whose action would need a permission: the role's rule, not the user's answer. */
 export const READ_ONLY_DENIAL =
   'Negato dal ruolo: in Only One Chat questo ruolo è in sola lettura e non modifica nulla; l’utente non è stato interpellato.';
 
-export const PROVIDERS: Readonly<Record<AgentChoice['cli'], Provider>> = {
+export const PROVIDERS: Readonly<Record<Cli, Provider>> = {
   /**
    * `read-only` in its read-only sandbox; `ask` asks before any command it does
    * not know to be safe; `auto` writes in the folder and asks to go beyond it.
@@ -97,5 +131,28 @@ export const PROVIDERS: Readonly<Record<AgentChoice['cli'], Provider>> = {
           : {}),
       });
     },
+  },
+  /**
+   * Over ACP (ADR 0023): `read-only` declines every permission request with
+   * nobody asked; `ask` is its default mode, which asks before edits and
+   * commands; `auto` is its own auto mode, which still asks before what it
+   * cannot undo. The model id carries the reasoning level. Not a leader yet:
+   * ACP has no questions.
+   */
+  antigravity: {
+    name: 'Antigravity',
+    bridged: false,
+    subagentForbiddenNames: [],
+    modelId: (choice) => antigravityModelId(choice.model, choice.effort),
+    factory: (config, { choice }) =>
+      createAcpAgentFactory({
+        executable: config.antigravityExecutable ?? 'agy',
+        args: [...(config.antigravityLauncherArgs ?? []), 'acp'],
+        provider: 'Antigravity',
+        cwd: config.cwd,
+        ...(choice.model ? { model: antigravityModelId(choice.model, choice.effort) } : {}),
+        ...(choice.permission === 'auto' ? { mode: 'auto' } : {}),
+        readOnly: choice.permission === 'read-only',
+      }),
   },
 };

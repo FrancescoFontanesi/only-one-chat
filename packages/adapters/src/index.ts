@@ -8,9 +8,12 @@
 export {
   AppServerError,
   startAppServer,
+  startJsonRpc,
   type AppServerClient,
   type AppServerErrorKind,
   type AppServerOptions,
+  type JsonRpcClient,
+  type JsonRpcOptions,
   type ClientInfo,
   type ExitInfo,
   type ForcedShutdownReport,
@@ -74,6 +77,25 @@ export {
 } from './codex/agent.js';
 export { createClaudeAgentFactory, type ClaudeAgentConfig } from './claude/agent.js';
 export {
+  acpOption,
+  acpTokens,
+  acpToolStep,
+  createAcpAgentFactory,
+  type AcpAgentConfig,
+} from './acp/agent.js';
+export {
+  answersQuota,
+  antigravityQuota,
+  readAntigravityQuota,
+  runAgy,
+  type AgyOptions,
+  type AntigravityQuotaGroup,
+} from './acp/antigravity.js';
+export {
+  antigravityLevel,
+  antigravityModelId,
+  antigravityModels,
+  listAntigravityModels,
   claudeModels,
   claudeSkills,
   codexModels,

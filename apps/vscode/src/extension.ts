@@ -2,6 +2,7 @@ import * as os from 'node:os';
 import * as vscode from 'vscode';
 import {
   checkClaudeBilling,
+  listAntigravityModels,
   listClaudeModels,
   listClaudeSkills,
   listCodexModels,
@@ -17,7 +18,7 @@ import { UsageStore } from './session/usage.js';
 import { usageWarnings } from './notifications.js';
 import { CheckpointContentProvider, CHECKPOINT_SCHEME } from './webview/checkpointContent.js';
 import { OnlyOneChatPanel } from './webview/panel.js';
-import { CodexUsageReader } from './usageReader.js';
+import { UsageReader } from './usageReader.js';
 
 /**
  * Value returned by `activate`. Only the integration tests use it; it is not
@@ -30,7 +31,7 @@ export interface OnlyOneChatExports {
 
 export function activate(context: vscode.ExtensionContext): OnlyOneChatExports {
   const usage = new UsageStore();
-  usage.setProviders(['codex', 'claude']);
+  usage.setProviders(['codex', 'claude', 'antigravity']);
   const monitor = new MonitorStore();
   // The models are read from the CLIs themselves: no model turn, no quota.
   // Claude starts in a temporary folder, away from the project's own settings.
@@ -45,14 +46,20 @@ export function activate(context: vscode.ExtensionContext): OnlyOneChatExports {
       await checkClaudeBilling({ ...launch, cwd: os.tmpdir(), prompt: '' });
       return listClaudeModels({ ...launch, cwd: os.tmpdir() });
     },
+    // `agy models`: the list only, no turn (ADR 0023).
+    antigravity: async () => listAntigravityModels(await cliLaunch(context, 'antigravity')),
   });
   // The skills of the open folder, from the CLIs as well (ADR 0019): no turn, no quota.
   const skills = new SkillCatalog({
     codex: async (cwd) => listCodexSkills({ ...(await cliLaunch(context, 'codex')), cwd }),
     claude: async (cwd) => listClaudeSkills({ ...(await cliLaunch(context, 'claude')), cwd }),
+    // TODO(nodes): Antigravity's skills are not read; a node takes none (ADR 0023).
+    antigravity: () => Promise.reject(new Error('Le skill di Antigravity non sono lette.')),
   });
   const roles = new RoleSettings(catalog);
-  const codexUsage = new CodexUsageReader(context, usage);
+  const usageReader = new UsageReader(context, usage, () =>
+    roles.nodes().some((node) => node.cli === 'antigravity'),
+  );
   context.subscriptions.push(
     roles,
     vscode.workspace.registerTextDocumentContentProvider(
@@ -66,7 +73,7 @@ export function activate(context: vscode.ExtensionContext): OnlyOneChatExports {
     roles,
     catalog,
     skills,
-    refreshCodexUsage: () => codexUsage.refresh(),
+    refreshUsage: () => usageReader.refresh(),
   };
   registerCommands(context, services);
   context.subscriptions.push(

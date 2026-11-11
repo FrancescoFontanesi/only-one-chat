@@ -1,6 +1,8 @@
 // Client for `codex app-server` over stdio. Wire format and behaviour are
 // described in docs/codex-app-server.md: one JSON object per line, JSON-RPC 2.0
 // shapes without the "jsonrpc" field, `initialize` then `initialized`.
+// `startJsonRpc` is the same transport with no handshake, for other servers
+// of one JSON-RPC object per line (ACP, ADR 0023).
 //
 // Guarantees: every request settles (result, rpc error, timeout, cancellation,
 // process exit or close); close() resolves only once the child has exited and
@@ -75,16 +77,17 @@ export interface RequestOptions {
   readonly signal?: AbortSignal;
 }
 
-export interface AppServerOptions {
-  /** Absolute path of the Codex executable, see `resolveCodexExecutable`. */
+export interface JsonRpcOptions {
+  /** Absolute path of the executable. */
   readonly executable: string;
-  /** Defaults to `['app-server']`. */
-  readonly args?: readonly string[];
+  readonly args: readonly string[];
+  /** The server's name in error messages. */
+  readonly name: string;
+  /** Write `"jsonrpc": "2.0"` on every message (Codex leaves it out). */
+  readonly jsonrpc?: boolean;
   readonly cwd?: string;
   /** Child environment; defaults to `process.env`. */
   readonly env?: NodeJS.ProcessEnv;
-  readonly clientInfo: ClientInfo;
-  readonly capabilities?: Readonly<Record<string, unknown>>;
   /** Default 60 s. */
   readonly requestTimeoutMs?: number;
   /**
@@ -111,12 +114,24 @@ export interface AppServerOptions {
   ) => void;
 }
 
-export interface AppServerClient {
+export interface AppServerOptions extends Omit<JsonRpcOptions, 'args' | 'name' | 'jsonrpc'> {
+  /** Absolute path of the Codex executable, see `resolveCodexExecutable`. */
+  readonly executable: string;
+  /** Defaults to `['app-server']`. */
+  readonly args?: readonly string[];
+  readonly clientInfo: ClientInfo;
+  readonly capabilities?: Readonly<Record<string, unknown>>;
+}
+
+export interface JsonRpcClient {
   readonly pid: number;
-  readonly initializeResponse: InitializeResponse;
   request(method: string, params?: unknown, options?: RequestOptions): Promise<unknown>;
   notify(method: string, params?: unknown): void;
   close(): Promise<void>;
+}
+
+export interface AppServerClient extends JsonRpcClient {
+  readonly initializeResponse: InitializeResponse;
 }
 
 type Id = number | string;
@@ -162,13 +177,37 @@ function message(error: unknown): string {
 }
 
 export async function startAppServer(options: AppServerOptions): Promise<AppServerClient> {
+  const client = await startJsonRpc({
+    ...options,
+    args: options.args ?? ['app-server'],
+    name: 'codex app-server',
+  });
+  try {
+    const params = {
+      clientInfo: options.clientInfo,
+      ...(options.capabilities ? { capabilities: options.capabilities } : {}),
+    };
+    const result = await client.request('initialize', params);
+    if (!isRecord(result) || typeof result['userAgent'] !== 'string') {
+      throw new AppServerError('protocol', 'Invalid initialize response from app-server');
+    }
+    client.notify('initialized');
+    return { ...client, initializeResponse: result as unknown as InitializeResponse };
+  } catch (error) {
+    await client.close();
+    throw error;
+  }
+}
+
+/** A JSON-RPC server over the stdio of a child process, started with no handshake. */
+export async function startJsonRpc(options: JsonRpcOptions): Promise<JsonRpcClient> {
   const requestTimeoutMs = checkTimeout('requestTimeoutMs', options.requestTimeoutMs ?? 60_000);
   const shutdownTimeoutMs = checkTimeout('shutdownTimeoutMs', options.shutdownTimeoutMs ?? 5_000);
 
   // Taken before the spawn: on Windows, orphans are recognised by being created
   // between this moment and the observed exit.
   const startedAtMs = Date.now();
-  const child = spawn(options.executable, options.args ?? ['app-server'], {
+  const child = spawn(options.executable, options.args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
     stdio: 'pipe',
@@ -213,9 +252,14 @@ export async function startAppServer(options: AppServerOptions): Promise<AppServ
     options.onProtocolError?.(new AppServerError('protocol', message));
   }
 
+  function stamped(message: Record<string, unknown>): Record<string, unknown> {
+    return options.jsonrpc ? { jsonrpc: '2.0', ...message } : message;
+  }
+
   function write(message: Record<string, unknown>): void {
-    options.onWire?.('client', message);
-    child.stdin.write(`${JSON.stringify(message)}\n`);
+    const sent = stamped(message);
+    options.onWire?.('client', sent);
+    child.stdin.write(`${JSON.stringify(sent)}\n`);
   }
 
   child.on('error', (error) => {
@@ -235,7 +279,7 @@ export async function startAppServer(options: AppServerOptions): Promise<AppServ
     fail(
       new AppServerError(
         'exited',
-        `codex app-server exited with ${status}${detail ? `:\n${detail}` : ''}`,
+        `${options.name} exited with ${status}${detail ? `:\n${detail}` : ''}`,
       ),
     );
   });
@@ -312,7 +356,7 @@ export async function startAppServer(options: AppServerOptions): Promise<AppServ
       if (signal?.aborted) throw new AppServerError('cancelled', `${method} was cancelled`);
 
       const id = nextId++;
-      const message = params === undefined ? { id, method } : { id, method, params };
+      const message = stamped(params === undefined ? { id, method } : { id, method, params });
       // Serialize first: unserializable params reject here, before anything is registered.
       const line = JSON.stringify(message);
       const settleLocally = (error: AppServerError) => {
@@ -386,7 +430,7 @@ export async function startAppServer(options: AppServerOptions): Promise<AppServ
   let closing: Promise<void> | undefined;
   function close(): Promise<void> {
     closing ??= (async () => {
-      fail(new AppServerError('closed', 'The app-server client was closed'));
+      fail(new AppServerError('closed', `The ${options.name} client was closed`));
       const pid = child.pid;
       if (pid === undefined || !stdioOpen) return; // never started, or already fully ended
       if (running) {
@@ -408,28 +452,13 @@ export async function startAppServer(options: AppServerOptions): Promise<AppServ
     });
   });
 
-  try {
-    const params = {
-      clientInfo: options.clientInfo,
-      ...(options.capabilities ? { capabilities: options.capabilities } : {}),
-    };
-    const result = await request('initialize', params);
-    if (!isRecord(result) || typeof result['userAgent'] !== 'string') {
-      throw new AppServerError('protocol', 'Invalid initialize response from app-server');
-    }
-    write({ method: 'initialized' });
-    return {
-      pid: child.pid ?? -1,
-      initializeResponse: result as unknown as InitializeResponse,
-      request,
-      notify(method, params) {
-        if (ended) throw ended;
-        write(params === undefined ? { method } : { method, params });
-      },
-      close,
-    };
-  } catch (error) {
-    await close();
-    throw error;
-  }
+  return {
+    pid: child.pid ?? -1,
+    request,
+    notify(method, params) {
+      if (ended) throw ended;
+      write(params === undefined ? { method } : { method, params });
+    },
+    close,
+  };
 }

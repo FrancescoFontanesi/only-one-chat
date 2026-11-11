@@ -1,18 +1,33 @@
 // What the usage view shows: the subscriptions, with the usage windows their
 // CLIs report. Sources that use no
-// quota only (docs/ui-primitives.md): Codex's account/rateLimits/read, and the
-// rate limit Claude reports at each turn; never credential or session files.
+// quota only (docs/ui-primitives.md): Codex's account/rateLimits/read, the
+// rate limit Claude reports at each turn, and Antigravity's `agy -p /quota`
+// (ADR 0023); never credential or session files.
 // Node only, no `vscode`.
 
-import { codexQuota, connectCodex, type QuotaSnapshot } from '@only-one-chat/adapters';
-import type { ProviderUsage } from '../webview/protocol.js';
+import {
+  codexQuota,
+  connectCodex,
+  readAntigravityQuota,
+  type AgyOptions,
+  type QuotaSnapshot,
+} from '@only-one-chat/adapters';
+import type { Cli, ProviderUsage } from '../webview/protocol.js';
 
-type Provider = 'codex' | 'claude';
+type Provider = Cli;
 
 const NOTES: Record<Provider, string> = {
   codex: 'Letto da Codex senza consumare quota, ogni 2 minuti e dopo ogni turno.',
   claude:
     'Aggiornato a ogni turno di Claude: non si può leggere senza un turno, quindi è l’ultimo valore visto.',
+  antigravity:
+    'Letto da agy (/quota) senza consumare quota, ogni 2 minuti e dopo ogni turno di un nodo.',
+};
+
+const NAMES: Record<Provider, string> = {
+  codex: 'Codex',
+  claude: 'Claude',
+  antigravity: 'Antigravity',
 };
 
 interface Entry {
@@ -42,12 +57,13 @@ export class UsageStore {
     this.changed();
   }
 
-  setQuota(provider: Provider, quota: QuotaSnapshot, at = Date.now()): void {
+  /** `note`: what the windows leave out, before where they come from. */
+  setQuota(provider: Provider, quota: QuotaSnapshot, at = Date.now(), note?: string): void {
     const entry = this.entries.get(provider);
     if (!entry) return;
     entry.windows = quota.windows;
     entry.updatedAt = at;
-    entry.note = NOTES[provider];
+    entry.note = note ? `${note} ${NOTES[provider]}` : NOTES[provider];
     this.changed();
   }
 
@@ -82,7 +98,31 @@ export class UsageStore {
 export function providerOf(identityProvider: string): Provider | null {
   if (identityProvider.startsWith('Codex')) return 'codex';
   if (identityProvider.startsWith('Claude')) return 'claude';
+  if (identityProvider.startsWith('Antigravity')) return 'antigravity';
   return null;
+}
+
+/**
+ * Antigravity's usage windows (ADR 0023), from `agy -p /quota`: no model turn,
+ * no quota, the login inside agy. Its models share limits by group; the dial
+ * shows the first group's (Gemini), the note every group's.
+ */
+export async function readAntigravityUsage(
+  options: AgyOptions,
+): Promise<{ quota: QuotaSnapshot; note: string } | null> {
+  const groups = await readAntigravityQuota(options);
+  const first = groups[0];
+  if (!first) return null;
+  const used = (windows: QuotaSnapshot['windows'], name: string) => {
+    const window = windows.find((w) => w.name === name);
+    return window ? `${String(Math.round(window.usedPercent))}%` : '—';
+  };
+  const note = groups
+    .map(
+      (g) => `${g.name}: 5 ore ${used(g.windows, '5h')}, settimana ${used(g.windows, 'weekly')}.`,
+    )
+    .join(' ');
+  return { quota: { windows: first.windows }, note: `Mostra ${first.name}. ${note}` };
 }
 
 /** Codex's usage windows, read through the app-server: no model turn, no quota. */
@@ -122,7 +162,7 @@ export function usageAlerts(
       const key = `${provider.provider}:${window.name}:${String(window.resetsAt)}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const name = provider.provider === 'codex' ? 'Codex' : 'Claude';
+      const name = NAMES[provider.provider];
       const span = window.name === '5h' ? '5 ore' : 'settimana';
       alerts.push(
         `${name}: hai usato il ${String(Math.round(window.usedPercent))}% della finestra di ${span}.`,

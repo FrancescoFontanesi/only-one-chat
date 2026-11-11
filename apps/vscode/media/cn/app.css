@@ -372,6 +372,25 @@ body {
 .sq-roleb .cn-spec {
   border-top: 0;
 }
+/* A node's name (ADR 0023): a mono line under a rule, like the spec's values. */
+.nd-name {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.nd-name input {
+  all: unset;
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  border-bottom: 1px solid transparent;
+}
+.nd-name input:hover,
+.nd-name input:focus {
+  border-bottom-color: var(--ink);
+}
 .sq-alert {
   grid-area: 4 / 2 / 6 / 3;
   gap: 8px;

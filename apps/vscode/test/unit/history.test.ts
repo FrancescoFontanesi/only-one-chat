@@ -34,6 +34,38 @@ describe('chat history (R5)', () => {
     expect(readdirSync(join(dir, 'chats')).every((name) => name.endsWith('.json'))).toBe(true);
   });
 
+  it('keeps the nodes’ threads and sessions (ADR 0023), compacted, dropping bad entries', () => {
+    const history = new ChatHistory(dir);
+    const turn: ThreadUpdate = {
+      type: 'turn',
+      id: 't-1',
+      role: 'implementer',
+      agent: 'Antigravity (g)',
+      status: 'done',
+      text: 'ciao',
+    };
+    history.save({
+      ...record('chat-n', 1),
+      nodes: {
+        'n-1': {
+          session: 'acp-7',
+          updates: [{ type: 'chunk', turnId: 't-1', text: 'ci' }, turn],
+        },
+      },
+    });
+    expect(history.load('chat-n')?.nodes).toEqual({
+      'n-1': { session: 'acp-7', updates: [turn] },
+    });
+    writeFileSync(
+      join(dir, 'chat-m.json'),
+      JSON.stringify({
+        ...record('chat-m', 2),
+        nodes: { 'N 1': { updates: [] }, 'n-2': { updates: 'x' }, 'n-3': { updates: [] } },
+      }),
+    );
+    expect(history.load('chat-m')?.nodes).toEqual({ 'n-3': { updates: [] } });
+  });
+
   it('keeps the reports the leader has not read, dropping entries of the wrong shape', () => {
     const history = new ChatHistory(dir);
     const report = { source: 'direct', request: 'r', report: 'fatto', facts: 'nessun file' };

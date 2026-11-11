@@ -15,7 +15,9 @@ export type ApprovalMode = 'auto' | 'manual';
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 export type RoleName = 'leader' | 'implementer';
-export type Cli = 'codex' | 'claude';
+export type Cli = 'codex' | 'claude' | 'antigravity';
+/** The CLIs of the leader and the implementer (ADR 0022); Antigravity is a node only (ADR 0023). */
+export type RoleCli = 'codex' | 'claude';
 
 /** What a role may do without asking: nothing, ask first, or act inside the folder. */
 export type PermissionLevel = 'read-only' | 'ask' | 'auto';
@@ -30,6 +32,15 @@ export interface RoleInfo {
   readonly effort: string;
   readonly permission: PermissionLevel;
 }
+
+/** An agent on Squad's board besides the two roles (ADR 0023): its own thread, no delegation. */
+export interface NodeInfo extends RoleInfo {
+  readonly id: string;
+  readonly name: string;
+}
+
+/** Longest name of a node. */
+export const NODE_NAME_LENGTH = 40;
 
 export interface ModelOption {
   readonly id: string;
@@ -67,6 +78,8 @@ export interface RolesState {
   /** The chat shown, if its agents have started: its providers stay its own. */
   readonly chat: { readonly leader: RoleInfo; readonly implementer: RoleInfo } | null;
   readonly catalog: readonly ProviderCatalog[];
+  /** The nodes on the board, from the folder's settings (ADR 0023). */
+  readonly nodes: readonly NodeInfo[];
   /** The models come from the fake CLIs (development host). */
   readonly fake: boolean;
 }
@@ -115,6 +128,8 @@ export interface SessionInfo {
   /** Fake CLIs: no model turn, no quota (development only). */
   readonly fake: boolean;
   readonly busy: boolean;
+  /** The nodes with a turn running now (ADR 0023). */
+  readonly busyNodes: readonly string[];
   /** Title of the chat shown; empty until its first message. */
   readonly title: string;
   /** The chats kept for this folder, most recent first, and the one shown. */
@@ -364,7 +379,8 @@ export type HostToWebviewMessage =
   | { readonly type: 'status'; readonly status: ExtensionStatus }
   | { readonly type: 'pong'; readonly id: number; readonly receivedAt: string }
   | { readonly type: 'session'; readonly session: SessionInfo }
-  | { readonly type: 'thread'; readonly update: ThreadUpdate }
+  /** An update of the chat's thread, or of a node's own thread (ADR 0023). */
+  | { readonly type: 'thread'; readonly update: ThreadUpdate; readonly node?: string }
   | { readonly type: 'reset' }
   | { readonly type: 'usage'; readonly providers: readonly ProviderUsage[] }
   | { readonly type: 'roles'; readonly roles: RolesState }
@@ -396,6 +412,8 @@ export type WebviewToHostMessage =
       readonly text: string;
       /** Default: the leader. */
       readonly to?: RoleName;
+      /** A node of the board instead of a role (ADR 0023). */
+      readonly node?: string;
       /** A skill of the recipient's CLI, named with `$` (ADR 0019). */
       readonly skill?: string;
     }
@@ -405,7 +423,8 @@ export type WebviewToHostMessage =
       readonly action: ApprovalAction;
       readonly text?: string;
     }
-  | { readonly type: 'stop' }
+  /** Stops the chat's turn, or a node's. */
+  | { readonly type: 'stop'; readonly node?: string }
   | { readonly type: 'permit'; readonly id: string; readonly decision: PermitDecision }
   /** The user's answers to an agent's questions, by question id (ADR 0019). */
   | {
@@ -417,11 +436,23 @@ export type WebviewToHostMessage =
   | {
       readonly type: 'setRole';
       readonly role: RoleName;
+      readonly cli: RoleCli;
+      readonly model: string;
+      readonly effort: string;
+      readonly permission: PermissionLevel;
+    }
+  /** A node on the board (ADR 0023): added, changed, removed; the host names a new one. */
+  | { readonly type: 'addNode'; readonly cli: Cli; readonly model: string }
+  | {
+      readonly type: 'setNode';
+      readonly id: string;
+      readonly name: string;
       readonly cli: Cli;
       readonly model: string;
       readonly effort: string;
       readonly permission: PermissionLevel;
     }
+  | { readonly type: 'removeNode'; readonly id: string }
   | { readonly type: 'newChat' }
   | { readonly type: 'openChat'; readonly id: string }
   | { readonly type: 'refreshUsage' }
@@ -489,6 +520,15 @@ const isRole = (value: unknown): value is RoleName => value === 'leader' || valu
 const isPermission = (value: unknown): value is PermissionLevel =>
   value === 'read-only' || value === 'ask' || value === 'auto';
 
+const isCli = (value: unknown): value is Cli =>
+  value === 'codex' || value === 'claude' || value === 'antigravity';
+
+const isId = (value: unknown): value is string =>
+  typeof value === 'string' && ID_PATTERN.test(value);
+
+const isModel = (value: unknown): value is string =>
+  typeof value === 'string' && MODEL_PATTERN.test(value);
+
 /** Validates a message received from a webview; anything unexpected is dropped. */
 export function parseWebviewMessage(value: unknown): WebviewToHostMessage | undefined {
   const msg = asRecord(value);
@@ -503,8 +543,10 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
       const body = text(msg['text']);
       if (body === undefined || body.trim() === '') return undefined;
       const to = msg['to'];
+      const node = msg['node'];
       const skill = msg['skill'];
       if (to !== undefined && !isRole(to)) return undefined;
+      if (node !== undefined && (!isId(node) || to !== undefined)) return undefined;
       if (skill !== undefined && (typeof skill !== 'string' || !SKILL_PATTERN.test(skill))) {
         return undefined;
       }
@@ -512,6 +554,7 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
         type: 'send',
         text: body,
         ...(to ? { to } : {}),
+        ...(node !== undefined ? { node } : {}),
         ...(skill !== undefined ? { skill } : {}),
       };
     }
@@ -525,8 +568,11 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
         ? { type: 'decide', id, action, text: edited }
         : undefined;
     }
-    case 'stop':
-      return { type: 'stop' };
+    case 'stop': {
+      const node = msg['node'];
+      if (node === undefined) return { type: 'stop' };
+      return isId(node) ? { type: 'stop', node } : undefined;
+    }
     case 'permit': {
       const id = msg['id'];
       const decision = msg['decision'];
@@ -551,6 +597,28 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
         isPermission(permission)
         ? { type: 'setRole', role, cli, model, effort, permission }
         : undefined;
+    }
+    case 'addNode': {
+      const { cli, model } = msg;
+      return isCli(cli) && isModel(model) ? { type: 'addNode', cli, model } : undefined;
+    }
+    case 'setNode': {
+      const { id, name, cli, model, effort, permission } = msg;
+      const named = typeof name === 'string' ? name.trim() : '';
+      return isId(id) &&
+        named !== '' &&
+        named.length <= NODE_NAME_LENGTH &&
+        isCli(cli) &&
+        isModel(model) &&
+        typeof effort === 'string' &&
+        EFFORT_PATTERN.test(effort) &&
+        isPermission(permission)
+        ? { type: 'setNode', id, name: named, cli, model, effort, permission }
+        : undefined;
+    }
+    case 'removeNode': {
+      const id = msg['id'];
+      return isId(id) ? { type: 'removeNode', id } : undefined;
     }
     case 'newChat':
       return { type: 'newChat' };
@@ -679,8 +747,13 @@ export function parseHostMessage(value: unknown): HostToWebviewMessage | undefin
     }
     case 'thread': {
       const update = asRecord(msg['update']);
+      const node = msg['node'];
       return typeof update?.['type'] === 'string'
-        ? { type: 'thread', update: update as unknown as ThreadUpdate }
+        ? {
+            type: 'thread',
+            update: update as unknown as ThreadUpdate,
+            ...(typeof node === 'string' ? { node } : {}),
+          }
         : undefined;
     }
     case 'reset':

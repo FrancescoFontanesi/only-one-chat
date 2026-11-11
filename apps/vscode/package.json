@@ -26,6 +26,8 @@
       "restrictedConfigurations": [
         "onlyOneChat.codexPath",
         "onlyOneChat.claudePath",
+        "onlyOneChat.antigravityPath",
+        "onlyOneChat.nodes",
         "onlyOneChat.allowedCommands",
         "onlyOneChat.verifyCommand",
         "onlyOneChat.ignoredPaths"
@@ -177,6 +179,60 @@
           "default": "",
           "scope": "machine",
           "description": "Path of the Claude Code executable; empty: searched on PATH."
+        },
+        "onlyOneChat.antigravityPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Path of the Antigravity CLI (agy), for the nodes on Antigravity; empty: searched on PATH."
+        },
+        "onlyOneChat.nodes": {
+          "type": "array",
+          "default": [],
+          "description": "Agents on Squad's board besides the leader and the implementer (ADR 0023): each has its own thread, and is added and changed from Squad.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "cli",
+              "model"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,64}$"
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 40
+              },
+              "cli": {
+                "type": "string",
+                "enum": [
+                  "codex",
+                  "claude",
+                  "antigravity"
+                ]
+              },
+              "model": {
+                "type": "string"
+              },
+              "effort": {
+                "type": "string",
+                "default": ""
+              },
+              "permission": {
+                "type": "string",
+                "enum": [
+                  "read-only",
+                  "ask",
+                  "auto"
+                ],
+                "default": "read-only"
+              }
+            }
+          }
         },
         "onlyOneChat.allowedCommands": {
           "type": "array",

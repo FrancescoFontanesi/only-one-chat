@@ -4,7 +4,11 @@
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { resolveClaudeExecutable, resolveCodexExecutable } from '@only-one-chat/adapters';
+import {
+  resolveClaudeExecutable,
+  resolveCodexExecutable,
+  resolveNativeExecutable,
+} from '@only-one-chat/adapters';
 import type { Cli } from './webview/protocol.js';
 
 export interface CliLaunch {
@@ -33,17 +37,20 @@ export async function cliLaunch(context: vscode.ExtensionContext, cli: Cli): Pro
       'test',
       'fixtures',
     );
-    return cli === 'codex'
-      ? {
-          executable: 'node',
-          launcherArgs: [path.join(fixtures, 'fake-app-server.mjs'), '--account=chatgpt'],
-        }
-      : { executable: 'node', launcherArgs: [path.join(fixtures, 'fake-claude.mjs'), '--echo'] };
+    const script = {
+      codex: [path.join(fixtures, 'fake-app-server.mjs'), '--account=chatgpt'],
+      claude: [path.join(fixtures, 'fake-claude.mjs'), '--echo'],
+      antigravity: [path.join(fixtures, 'fake-agy.mjs')],
+    }[cli];
+    return { executable: 'node', launcherArgs: script };
   }
   const settings = vscode.workspace.getConfiguration('onlyOneChat');
+  const configuredPath = settings.get<string>(`${cli}Path`) ?? '';
   const executable =
     cli === 'codex'
-      ? await resolveCodexExecutable({ configuredPath: settings.get<string>('codexPath') ?? '' })
-      : await resolveClaudeExecutable({ configuredPath: settings.get<string>('claudePath') ?? '' });
+      ? await resolveCodexExecutable({ configuredPath })
+      : cli === 'claude'
+        ? await resolveClaudeExecutable({ configuredPath })
+        : await resolveNativeExecutable('agy', 'Antigravity', { configuredPath });
   return { executable, launcherArgs: [] };
 }

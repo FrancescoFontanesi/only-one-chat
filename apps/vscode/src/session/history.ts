@@ -29,6 +29,13 @@ export interface ChatRecord {
   /** A delegation waiting for the user when the chat was closed (ADR 0018). */
   draft?: DraftDelegation | null;
   updates: ThreadUpdate[];
+  /** The nodes' own threads, and their providers' sessions to resume (ADR 0023). */
+  nodes?: Record<string, NodeThread>;
+}
+
+export interface NodeThread {
+  session?: string;
+  updates: ThreadUpdate[];
 }
 
 export interface ChatSummary {
@@ -128,6 +135,21 @@ function chatRoles(value: unknown): Partial<Record<TurnRole, AgentChoice>> {
   return roles;
 }
 
+/** The nodes' threads of a record read from disk; an entry of the wrong shape is dropped. */
+function nodeThreads(value: unknown): Record<string, NodeThread> {
+  const nodes: Record<string, NodeThread> = {};
+  if (typeof value !== 'object' || value === null) return nodes;
+  for (const [id, entry] of Object.entries(value as Record<string, unknown>)) {
+    const n = entry as Partial<Record<keyof NodeThread, unknown>> | null;
+    if (!ID.test(id) || typeof n !== 'object' || n === null || !Array.isArray(n.updates)) continue;
+    nodes[id] = {
+      ...(typeof n.session === 'string' ? { session: n.session } : {}),
+      updates: n.updates as ThreadUpdate[],
+    };
+  }
+  return nodes;
+}
+
 export function newChatId(now = Date.now()): string {
   return `chat-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -216,6 +238,7 @@ export class ChatHistory {
             context: contextOf(record.context),
             fileNotes: fileNotesOf(record.fileNotes),
             draft: draftOf(record.draft),
+            nodes: nodeThreads(record.nodes),
           }
         : undefined;
     } catch {
@@ -243,7 +266,16 @@ export class ChatHistory {
     mkdirSync(this.dir, { recursive: true });
     const path = this.file(record.id);
     const temporary = `${path}.${String(process.pid)}.tmp`;
-    writeFileSync(temporary, JSON.stringify({ ...record, updates: compact(record.updates) }));
+    const nodes = Object.fromEntries(
+      Object.entries(record.nodes ?? {}).map(([id, n]) => [
+        id,
+        { ...n, updates: compact(n.updates) },
+      ]),
+    );
+    writeFileSync(
+      temporary,
+      JSON.stringify({ ...record, updates: compact(record.updates), nodes }),
+    );
     renameSync(temporary, path);
     for (const old of this.list().slice(MAX_CHATS)) {
       rmSync(this.file(old.id), { force: true });

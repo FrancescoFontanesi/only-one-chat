@@ -33,7 +33,7 @@ export function registerCommands(
     vscode.commands.registerCommand(CommandId.addSelection, () => {
       OnlyOneChatPanel.insertFromEditor(context, services);
     }),
-    vscode.commands.registerCommand(CommandId.refreshUsage, () => services.refreshCodexUsage()),
+    vscode.commands.registerCommand(CommandId.refreshUsage, () => services.refreshUsage()),
     vscode.commands.registerCommand(CommandId.refreshModels, () => services.catalog.load(true)),
   );
 }

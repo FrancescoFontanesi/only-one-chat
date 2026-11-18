@@ -59,6 +59,15 @@ function handlers(decision: 'accept' | 'acceptForSession' | 'decline' = 'decline
   };
 }
 
+describe('an ACP turn that ends with no answer', () => {
+  it('is an error when the agent gives a reason other than its own end, not an empty answer', async () => {
+    const session = await open();
+    await expect(session.runTurn('RIFIUTO', handlers().handlers).done).rejects.toThrow(
+      /ended without an answer \(refusal\)/,
+    );
+  });
+});
+
 describe('ACP agent (ADR 0023)', () => {
   it('opens a session with the model and mode, instructions in the first prompt only', async () => {
     const session = await open({ model: 'fake-flash-low', mode: 'auto' });

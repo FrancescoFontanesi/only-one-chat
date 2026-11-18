@@ -24,8 +24,8 @@ import type {
   NodeInfo,
   PermissionLevel,
   ProviderUsage,
-  RoleName,
   RolesState,
+  TurnRole,
 } from '../src/webview/protocol.js';
 import {
   bezel,
@@ -52,12 +52,15 @@ import {
   type RoleChange,
 } from './ui.js';
 
+/** The pace the dials were drawn for: `rate` is how far a value moves in one of these frames. */
 const FPS = 24;
 
 /**
- * A value that moves toward `target` by `rate` a frame, at 24 frames a second,
- * only while it is on its way; at once under reduced motion. `hold` shows a
- * value given from outside (a drag) and starts the next move from there.
+ * A value that eases toward `target` on every frame of the display, only
+ * while it is on its way; at once under reduced motion. `rate` sets the pace
+ * (a unit takes about 1/rate frames at 24 fps, as before), the arrival slows
+ * down. `hold` shows a value given from outside (a drag) and starts the next
+ * move from there.
  */
 function useTween(target: number, rate: number, hold: number | null = null): number {
   const current = useRef(target);
@@ -72,14 +75,21 @@ function useTween(target: number, rate: number, hold: number | null = null): num
       setValue(target);
       return;
     }
-    const timer = window.setInterval(() => {
+    // Time constant of the easing: 95% of the way in about the old linear time.
+    const tau = 1000 / (rate * FPS) / 3;
+    let last = performance.now();
+    let frame = 0;
+    const tick = (now: number) => {
       const d = target - current.current;
-      current.current = Math.abs(d) <= rate ? target : current.current + Math.sign(d) * rate;
+      current.current =
+        Math.abs(d) < 1e-3 ? target : current.current + d * (1 - Math.exp(-(now - last) / tau));
+      last = now;
       setValue(current.current);
-      if (current.current === target) window.clearInterval(timer);
-    }, 1000 / FPS);
+      if (current.current !== target) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
     return () => {
-      window.clearInterval(timer);
+      cancelAnimationFrame(frame);
     };
   }, [target, hold]);
   return hold ?? value;
@@ -215,7 +225,14 @@ function Labels({
 const ROLES = [
   { id: 'leader', name: 'Leader', short: 'LDR' },
   { id: 'implementer', name: 'Implementatore', short: 'IMP' },
+  { id: 'reviewer', name: 'Revisore', short: 'REV' },
 ] as const;
+
+/** The reviewer on or off (ADR 0033): the setting, for the chat open and the next. */
+const REVIEWER_ON: readonly { value: 'on' | 'off'; label: string; title: string }[] = [
+  { value: 'on', label: 'Acceso', title: 'Rivede ogni lavoro dell’implementatore' },
+  { value: 'off', label: 'Spento', title: 'Nessuna revisione; il leader legge il rapporto' },
+];
 
 const EFFORT_SHORT: Record<string, string> = {
   minimal: 'MIN',
@@ -331,6 +348,7 @@ export function RoleHud({
   monitor,
   to,
   node,
+  removedNodes,
   select,
   mode,
   setMode,
@@ -338,9 +356,11 @@ export function RoleHud({
 }: {
   roles: RolesState | undefined;
   monitor: MonitorState;
-  to: RoleName;
+  to: TurnRole;
   /** The node the chat shows, if any: the dial is its. */
   node: NodeInfo | null;
+  /** Nodes of this chat off the board: on the ring too, their threads read only. */
+  removedNodes: readonly { readonly id: string; readonly name: string }[];
   /** Chooses who you talk to: a role, or a node by id. */
   select: (target: string) => void;
   /** How the leader's delegations are delivered. */
@@ -349,30 +369,46 @@ export function RoleHud({
   /** A message of who is shown is running: no handoff now. */
   busy: boolean;
 }) {
-  const items = [
-    ...ROLES,
-    ...(roles?.nodes ?? []).map((n) => ({
-      id: n.id,
-      name: n.name,
-      short: n.name.slice(0, 3).toUpperCase(),
-    })),
+  // Two choices (ADR 0028). The label at the top picks the group or the node alone: the pair of
+  // the leader and the implementer, then each node (those off the board, read only, last). The
+  // ring picks the role inside the group; a node alone has no roles, so its ring is empty.
+  const groups = [
+    { id: 'team', name: roles?.team.name ?? 'Team' },
+    ...[...(roles?.nodes ?? []), ...removedNodes].map((n) => ({ id: n.id, name: n.name })),
   ];
+  const at = Math.max(
+    0,
+    groups.findIndex((g) => g.id === node?.id),
+  );
+  const cycle = (step: number) => {
+    const next = groups[(at + step + groups.length) % groups.length];
+    if (next) select(next.id === 'team' ? to : next.id);
+  };
+  const ring = node ? [] : ROLES;
   const selected = Math.max(
     0,
-    items.findIndex((item) => item.id === (node?.id ?? to)),
+    ring.findIndex((role) => role.id === to),
   );
   const go = (index: number) => {
-    const item = items[(index + items.length) % items.length];
-    if (item) select(item.id);
+    const role = ring[(index + ring.length) % ring.length];
+    if (role) select(role.id);
   };
   const rot = useTween(selected, 1 / 8);
 
-  const edit = roles && !node ? editableRole(to, roles) : null;
-  const info = node ?? edit?.info;
-  /** A node's settings go to its entry, a role's to its keys. */
+  const reviewer = to === 'reviewer' && !node ? roles?.reviewer : undefined;
+  const edit = roles && !node && to !== 'reviewer' ? editableRole(to, roles) : null;
+  const info = node ?? reviewer ?? edit?.info;
+  /** A node's settings go to its entry, the reviewer's to its keys, a role's to its keys. */
   const write = (change: RoleChange) => {
     if (node) writeNode(node, change);
-    else if (info) writeRole(to, info, change);
+    else if (reviewer) {
+      post({
+        type: 'setReviewer',
+        cli: change.cli ?? reviewer.cli,
+        model: change.model ?? reviewer.model,
+        effort: change.effort ?? reviewer.effort,
+      });
+    } else if (info && to !== 'reviewer') writeRole(to, info, change);
   };
   const provider = roles?.catalog.find((c) => c.cli === info?.cli);
   const model = provider?.models.find((m) => m.id === info?.model);
@@ -388,8 +424,12 @@ export function RoleHud({
     const level = efforts[Math.max(0, Math.min(efforts.length - 1, index))];
     if (info && level && level !== info.effort) write({ effort: level });
   };
-  const local = (event: PointerEvent | MouseEvent) =>
-    event.clientY - (event.currentTarget as Element).getBoundingClientRect().top;
+  // In the dial's own units: the dock draws the dials smaller (CSS zoom).
+  const local = (event: PointerEvent | MouseEvent) => {
+    const element = event.currentTarget as HTMLElement;
+    const box = element.getBoundingClientRect();
+    return (event.clientY - box.top) * (element.offsetHeight / (box.height || 1));
+  };
   const wheelAt = useRef(0);
   const throttled = (fn: () => void) => {
     const now = Date.now();
@@ -415,12 +455,14 @@ export function RoleHud({
     write({ model: next.id, effort: keep });
   };
   const started = roles?.chat !== null && roles?.chat !== undefined;
-  const current = items[selected] ?? ROLES[0];
+  const current = node
+    ? { name: node.name }
+    : { name: ROLES.find((role) => role.id === to)?.name ?? '' };
   const level = efforts[shownStep];
 
   return (
     <div class="hud hud--left">
-      <Instrument side="left" rot={rot} count={items.length}>
+      <Instrument side="left" rot={rot} count={Math.max(1, ring.length)}>
         <path class="hud__dots" d={gauge('left', R.inner, 1)} />
         <path class="hud__strong" d={rsn.off} />
         <path class="hud__ink hud__w3" d={rsn.on} />
@@ -429,7 +471,7 @@ export function RoleHud({
       <div
         class="hud__ring"
         aria-hidden="true"
-        title="Cambia agente"
+        title="Cambia ruolo"
         onClick={() => {
           go(selected + 1);
         }}
@@ -477,10 +519,27 @@ export function RoleHud({
           event.preventDefault();
         }}
       />
-      <Labels side="left" items={items} rot={rot} selected={selected} pick={go} />
-      <span class="cn-tag hud__key hud__key--left">
-        <b>R/</b> Parli con
-      </span>
+      <Labels side="left" items={ring} rot={rot} selected={selected} pick={go} />
+      <button
+        class="hud__grp"
+        type="button"
+        aria-label={`Gruppo: ${node?.name ?? groups[0]?.name ?? ''}${groups.length > 1 ? '. Cambia' : ''}`}
+        title={groups.length > 1 ? 'Gruppo o nodo: clic o rotella per cambiare' : 'Gruppo'}
+        disabled={groups.length < 2}
+        onClick={() => {
+          cycle(1);
+        }}
+        onWheel={(event: WheelEvent) => {
+          event.preventDefault();
+          throttled(() => {
+            cycle(event.deltaY > 0 ? 1 : -1);
+          });
+        }}
+      >
+        <b>R/</b>
+        <Decode text={node?.name ?? groups[0]?.name ?? ''} />
+        <span aria-hidden="true">{groups.length > 1 ? '↕' : '■'}</span>
+      </button>
       <span class="hud__meta hud__meta--left">
         {info ? PROVIDER[info.cli] : '—'}
         {status === 'working' ? ' · ▶ Lavora' : status === 'waiting' ? ' · ▲ Aspetta te' : ''}
@@ -518,6 +577,15 @@ export function RoleHud({
           <span class="hud__k">Nodo · senza ruolo</span>
         ) : isLeader ? (
           <Switch label="Consegna" value={mode} options={DELIVERY} onChange={setMode} />
+        ) : reviewer ? (
+          <Switch
+            label="Revisione"
+            value={reviewer.enabled ? 'on' : 'off'}
+            options={REVIEWER_ON}
+            onChange={(value) => {
+              post({ type: 'setReviewerOn', enabled: value === 'on' });
+            }}
+          />
         ) : (
           <>
             {info && (
@@ -604,15 +672,14 @@ export function UsageHud({
   const data = usage.find((p) => p.provider === cli);
   const five = windowOf(data, '5h');
   const week = windowOf(data, 'weekly');
-  const v5 = useTween((five?.usedPercent ?? 0) / 100, 0.025);
-  const v1 = useTween((week?.usedPercent ?? 0) / 100, 0.025);
+  // What is left, not what is used: the arcs empty as the windows fill.
+  const left = (w: { usedPercent: number } | undefined) =>
+    w ? Math.max(0, 100 - w.usedPercent) : 0;
+  const v5 = useTween(left(five) / 100, 0.025);
+  const v1 = useTween(left(week) / 100, 0.025);
   const over =
     threshold > 0 && [five, week].some((w) => w !== undefined && w.usedPercent >= threshold);
-  const lit = week
-    ? week.usedPercent > 0
-      ? Math.max(1, Math.round(week.usedPercent / 10))
-      : 0
-    : 0;
+  const lit = week ? Math.round(left(week) / 10) : 0;
 
   return (
     <div class="hud hud--right">
@@ -631,12 +698,12 @@ export function UsageHud({
         aria-valuemin={1}
         aria-valuemax={PROVIDERS.length}
         aria-valuenow={selected + 1}
-        aria-valuetext={`${PROVIDER[cli]}, 5H ${five ? `${String(Math.round(five.usedPercent))}%` : '—'}`}
+        aria-valuetext={`${PROVIDER[cli]}, 5H ${five ? `${String(Math.round(left(five)))}% rimasto` : '—'}`}
         {...turn.handlers}
       />
       <Labels side="right" items={PROVIDERS} rot={rot} selected={selected} pick={setChosen} />
       <span class="cn-tag hud__key hud__key--right">
-        <b>U/</b> Utilizzo
+        <b>U/</b> Rimanente
       </span>
       <span class="hud__meta hud__meta--right">
         {PROVIDER[cli]}
@@ -646,7 +713,7 @@ export function UsageHud({
         <span class="hud__fig" title={data?.note || undefined}>
           <span class="hud__k">5H</span>
           <span class="hud__num">
-            <Counter value={Math.round(five.usedPercent)} format={(v) => String(Math.round(v))} />
+            <Counter value={Math.round(left(five))} format={(v) => String(Math.round(v))} />
             <small>%</small>
           </span>
         </span>
@@ -666,7 +733,7 @@ export function UsageHud({
                 <i key={k} class={k < lit ? 'is-on' : undefined} />
               ))}
             </span>
-            <span>{String(Math.round(week.usedPercent))}%</span>
+            <span>{String(Math.round(left(week)))}%</span>
           </span>
         )}
         {five?.resetsAt && <span class="hud__k">Rinnovo {clock(five.resetsAt * 1000)}</span>}

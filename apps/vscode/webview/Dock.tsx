@@ -17,7 +17,7 @@ import {
   type ProviderUsage,
   type RolesState,
   type PermitDecision,
-  type RoleName,
+  type TurnRole,
   type SessionInfo,
 } from '../src/webview/protocol.js';
 import { matchPaths } from './mentions.js';
@@ -26,7 +26,7 @@ import { RoleHud, UsageHud } from './Hud.js';
 import { flash, Progress } from './motion.js';
 import type { ThreadItem } from './state.js';
 import { wordAt } from './threadModel.js';
-import { Meter, Pick, post, ShownNode, useWho } from './ui.js';
+import { kilo, Meter, Pick, post, ShownNode, useWho } from './ui.js';
 
 type Item<K extends ThreadItem['kind']> = Extract<ThreadItem, { kind: K }>;
 
@@ -429,28 +429,39 @@ interface Pop {
   query: string;
 }
 
-const RECIPIENTS: readonly { value: RoleName; label: string; title: string }[] = [
+const RECIPIENTS: readonly { value: TurnRole; label: string; title: string }[] = [
   { value: 'leader', label: 'LEADER', title: 'Ragioni con il leader; delega quando glielo chiedi' },
   {
     value: 'implementer',
     label: 'IMPLEMENTATORE',
-    title: 'Diretto all’implementatore: il modo più economico quando sai già cosa chiedere',
+    title: 'Diretto all’implementatore: il revisore lo rivede, poi il leader legge la revisione',
+  },
+  {
+    value: 'reviewer',
+    label: 'REVISORE',
+    title:
+      'Chiedi una revisione dell’ultimo lavoro: il leader la legge con il tuo prossimo messaggio',
   },
 ];
 
 function Composer({
   session,
   openSquad,
+  waiting,
   to,
   setTo,
   cli,
+  reviewerOn,
 }: {
   session: SessionInfo | undefined;
   openSquad: () => void;
-  to: RoleName;
-  setTo: (to: RoleName) => void;
+  waiting: number;
+  to: TurnRole;
+  setTo: (to: TurnRole) => void;
   /** The recipient's CLI, whose skills `$` lists. */
   cli: Cli | undefined;
+  /** The reviewer is on (ADR 0033): only then it takes a review request. */
+  reviewerOn: boolean;
 }) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<readonly string[]>([]);
@@ -464,8 +475,13 @@ function Composer({
   /** A node's thread is shown (ADR 0023): the message goes to it, on its own. */
   const node = useContext(ShownNode);
   const busy = node ? (session?.busyNodes ?? []).includes(node.id) : (session?.busy ?? false);
-  const ready = session !== undefined && session.workspace !== null && session.trusted;
-  const canSend = ready && !busy && text.trim() !== '';
+  const ready =
+    session !== undefined &&
+    session.workspace !== null &&
+    session.trusted &&
+    node?.removed !== true;
+  const reviewerOff = !node && to === 'reviewer' && !reviewerOn;
+  const canSend = ready && !busy && !reviewerOff && text.trim() !== '';
   const enterSends = session?.enterSends ?? true;
 
   const attach = (path: string) => {
@@ -526,10 +542,17 @@ function Composer({
       },
     },
     {
-      name: 'allega',
-      hint: 'Allega un file o una cartella',
+      name: 'rev',
+      hint: 'Chiedi una revisione al revisore',
       run: () => {
-        openFiles(null, '');
+        setTo('reviewer');
+      },
+    },
+    {
+      name: 'allega',
+      hint: 'Allega file al contesto',
+      run: () => {
+        post({ type: 'attachFiles' });
       },
     },
     {
@@ -610,6 +633,16 @@ function Composer({
     }
     setPop(null);
   };
+  /** `@path ` in the text where the `@` was typed. */
+  const mention = (start: number, path: string) => {
+    const token = `@${path} `;
+    const rest = text.slice(start + 1 + (pop?.query.length ?? 0));
+    setText(text.slice(0, start) + token + rest.replace(/^ /, ''));
+    requestAnimationFrame(() => {
+      box.current?.setSelectionRange(start + token.length, start + token.length);
+      box.current?.focus();
+    });
+  };
   const removeWord = (start: number, query: string) => {
     const next = text.slice(0, start) + text.slice(start + 1 + query.length);
     setText(next);
@@ -620,11 +653,14 @@ function Composer({
   };
   const pick = (index: number) => {
     if (!pop) return;
-    if (pop.start !== null) removeWord(pop.start, pop.query);
+    if (pop.start !== null && pop.kind !== 'file') removeWord(pop.start, pop.query);
     setPop(null);
     if (pop.kind === 'file') {
+      // `@` names a path in the text, as in Claude Code and Codex; it reaches the agent as the
+      // path. Attaching is the + button's (ADR 0026).
       const path = fileOptions[index];
-      if (path) attach(path);
+      if (path && pop.start !== null) mention(pop.start, path);
+      else if (path) attach(path);
     } else if (pop.kind === 'skill') {
       const chosen = skillOptions[index];
       if (chosen) setSkill(chosen.name);
@@ -635,13 +671,13 @@ function Composer({
   };
   const send = () => {
     if (!canSend) return;
-    // The attachments go as a last line of `@path` mentions, which the host reads (ADR 0015).
-    const mentions = attachments.map((a) => `@${a}`).join(' ');
+    // The attachments go apart from the text: the host adds them to the context (ADR 0026).
     post({
       type: 'send',
-      text: mentions ? `${text.trimEnd()}\n\n${mentions}` : text,
-      ...(node ? { node: node.id } : to === 'implementer' ? { to } : {}),
-      ...(skill && !node ? { skill } : {}),
+      text,
+      ...(attachments.length > 0 ? { attachments } : {}),
+      ...(node ? { node: node.id } : to !== 'leader' ? { to } : {}),
+      ...(skill && !node && to !== 'reviewer' ? { skill } : {}),
     });
     setText('');
     setAttachments([]);
@@ -658,7 +694,7 @@ function Composer({
     },
   });
 
-  const context = node ? undefined : session?.context[to];
+  const context = node ? session?.nodeContext[node.id] : session?.context[to];
   const percent = context?.window ? context.used / context.window : null;
   return (
     <Lattice
@@ -754,13 +790,21 @@ function Composer({
             disabled={!ready}
             value={text}
             placeholder={
-              !ready
-                ? 'Invio non disponibile finché la chat non è pronta.'
-                : node
-                  ? `Scrivi a ${node.name} · una conversazione sua, il leader non la vede`
-                  : to === 'leader'
-                    ? 'Scrivi al leader · @ allega un file · $ skill · / comandi'
-                    : 'Scrivi all’implementatore · il leader leggerà il rapporto dopo'
+              node?.removed
+                ? `${node.name} non è più sulla lavagna: la sua conversazione si legge soltanto.`
+                : !ready
+                  ? 'Invio non disponibile finché la chat non è pronta.'
+                  : node
+                    ? `Scrivi a ${node.name} · una conversazione sua, il leader non la vede`
+                    : to === 'leader'
+                      ? 'Scrivi al leader · @ nomina un file · $ skill · / comandi'
+                      : to === 'reviewer'
+                        ? reviewerOn
+                          ? 'Chiedi una revisione dell’ultimo lavoro · il leader la leggerà dopo'
+                          : 'Il revisore è spento: accendilo da Squad o dalla ghiera'
+                        : reviewerOn
+                          ? 'Scrivi all’implementatore · il revisore lo rivede, il leader legge dopo'
+                          : 'Scrivi all’implementatore · il leader leggerà il rapporto dopo'
             }
             onInput={(event) => {
               const area = event.target as HTMLTextAreaElement;
@@ -830,6 +874,18 @@ function Composer({
               </span>
             )}
           </span>
+          <button
+            class="cn-btn cn-btn--outline cn-btn--sm cmp__add"
+            type="button"
+            title="Allega file al contesto del messaggio"
+            aria-label="Allega file"
+            disabled={!ready}
+            onClick={() => {
+              post({ type: 'attachFiles' });
+            }}
+          >
+            <span class="cn-btn__label">+</span>
+          </button>
           <span
             class="ctx cmp__ctx"
             title={
@@ -844,10 +900,28 @@ function Composer({
                 <Meter value={percent} />
                 <b>{Math.round(percent * 100)}%</b>
               </>
+            ) : context ? (
+              // The model's window is not reported: the tokens alone.
+              <b>{kilo(context.used)}</b>
             ) : (
               <b>—</b>
             )}
           </span>
+          {/* Squad, in the middle of the box: where nodes and groups are made and chosen. */}
+          <button
+            class="cn-btn--bare cn-btn cn-btn--outline cn-btn--sm cmp__squad sq-open"
+            type="button"
+            aria-label={`Apri il pannello Squad${waiting > 0 ? `, ${String(waiting)} richieste in attesa` : ''}`}
+            onClick={openSquad}
+          >
+            <span class="cn-btn__label">SQUAD</span>
+            {/* One per request that waits for you (ADR 0021). */}
+            {waiting > 0 && (
+              <span class="sq-badge" aria-hidden="true">
+                {waiting > 99 ? '99+' : String(waiting)}
+              </span>
+            )}
+          </button>
           <span class="cmp__send">
             {busy ? (
               <>
@@ -866,14 +940,13 @@ function Composer({
               </>
             ) : (
               <button
-                class="cn-btn cn-btn--outline cn-btn--sm"
+                class="cn-btn--bare cn-btn cn-btn--outline cn-btn--sm"
                 type="button"
                 disabled={!canSend}
                 title={enterSends ? 'Invio · Maiusc+Invio a capo' : 'Ctrl+Invio · Invio a capo'}
                 onClick={send}
               >
                 <span class="cn-btn__label">INVIA</span>
-                <span class="cn-btn__icon">↗</span>
               </button>
             )}
           </span>
@@ -895,14 +968,13 @@ export function NotReady({ session }: { session: SessionInfo }) {
           : 'Cartella non attendibile (Workspace Trust): gli agenti possono leggere e modificare file solo in una cartella attendibile.'}
       </span>
       <button
-        class="cn-btn cn-btn--outline cn-btn--sm"
+        class="cn-btn--bare cn-btn cn-btn--outline cn-btn--sm"
         type="button"
         onClick={() => {
           post({ type: noFolder ? 'openFolder' : 'manageTrust' });
         }}
       >
         <span class="cn-btn__label">{noFolder ? 'APRI CARTELLA' : 'GESTISCI ATTENDIBILITÀ'}</span>
-        <span class="cn-btn__icon">↗</span>
       </button>
     </div>
   );
@@ -917,6 +989,7 @@ export function Dock({
   monitor,
   usage,
   openSquad,
+  waiting,
   to,
   setTo,
   select,
@@ -929,9 +1002,11 @@ export function Dock({
   monitor: MonitorState;
   usage: readonly ProviderUsage[];
   openSquad: () => void;
+  /** Requests waiting for you, in the chat and its nodes: the badge on SQUAD (ADR 0021). */
+  waiting: number;
   /** Who the composer writes to; choosing a role shows the chat's thread again. */
-  to: RoleName;
-  setTo: (to: RoleName) => void;
+  to: TurnRole;
+  setTo: (to: TurnRole) => void;
   /** Chooses who you talk to from the dial: a role, or a node by id (ADR 0023). */
   select: (target: string) => void;
 }) {
@@ -941,7 +1016,13 @@ export function Dock({
   const approval = items.find((i): i is Item<'approval'> => i.kind === 'approval' && !i.closed);
   const question = items.find((i): i is Item<'question'> => i.kind === 'question' && !i.closed);
   const node = useContext(ShownNode);
-  const recipient = node ?? (roles ? (roles.chat?.[to] ?? roles.roles[to]) : undefined);
+  const recipient =
+    node ??
+    (!roles
+      ? undefined
+      : to === 'reviewer'
+        ? roles.reviewer
+        : (roles.chat?.[to] ?? roles.roles[to]));
   const waitingWho = useWho(permission?.role ?? 'leader');
   return (
     <footer class="dock">
@@ -952,6 +1033,7 @@ export function Dock({
             monitor={monitor}
             to={to}
             node={node}
+            removedNodes={session?.removedNodes ?? []}
             select={select}
             mode={session?.mode ?? 'manual'}
             setMode={setMode}
@@ -968,7 +1050,9 @@ export function Dock({
                     ? waitingWho
                     : permission.role === 'leader'
                       ? 'IL LEADER'
-                      : 'L’IMPLEMENTATORE'}{' '}
+                      : permission.role === 'reviewer'
+                        ? 'IL REVISORE'
+                        : 'L’IMPLEMENTATORE'}{' '}
                   ASPETTA LA TUA RISPOSTA · L’INVIO RIPRENDE DOPO
                 </span>
                 <button
@@ -996,9 +1080,11 @@ export function Dock({
             <Composer
               session={session}
               openSquad={openSquad}
+              waiting={waiting}
               to={to}
               setTo={setTo}
-              cli={node ? undefined : recipient?.cli}
+              cli={node || to === 'reviewer' ? undefined : recipient?.cli}
+              reviewerOn={roles?.reviewer.enabled ?? false}
             />
           )}
         </div>

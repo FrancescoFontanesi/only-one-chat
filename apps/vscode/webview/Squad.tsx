@@ -18,6 +18,7 @@ import {
   type RoleName,
   type RolesState,
   type SessionInfo,
+  type TurnRole,
 } from '../src/webview/protocol.js';
 import { Board } from './board.js';
 import { Crossed, Lattice } from './lattice.js';
@@ -39,15 +40,15 @@ import {
 
 const STATE_TAG = { working: 'LAVORA', waiting: '▲ ASPETTA TE', idle: '○ FERMO' } as const;
 const LEVEL = { info: '■', warn: '▲', error: '×' } as const;
-const INDEX: Record<RoleName, string> = { leader: 'A', implementer: 'B' };
-/** A node's letter on the board: C, D, … after the two roles. */
-const nodeIndex = (index: number) => String.fromCharCode(67 + (index % 24));
+const INDEX: Record<TurnRole, string> = { leader: 'A', implementer: 'B', reviewer: 'C' };
+/** A node's letter on the board: D, E, … after the three roles. */
+const nodeIndex = (index: number) => String.fromCharCode(68 + (index % 23));
 const isRole = (id: string): id is RoleName => id === 'leader' || id === 'implementer';
 
 type Tab = 'events' | 'waiting' | 'changes';
 type Waiting = WaitingItem;
 
-function agentOf(monitor: MonitorState, role: RoleName): MonitorAgent | undefined {
+function agentOf(monitor: MonitorState, role: TurnRole): MonitorAgent | undefined {
   return monitor.agents.find((a) => a.role === role);
 }
 
@@ -68,6 +69,7 @@ function Agent({
   status: own,
   selected,
   locked,
+  off = false,
   select,
 }: {
   title: string;
@@ -78,6 +80,8 @@ function Agent({
   status?: 'working' | 'waiting' | 'idle';
   selected: boolean;
   locked: boolean;
+  /** Switched off (the reviewer, ADR 0033): shown, does nothing. */
+  off?: boolean;
   select: () => void;
 }) {
   const value = percent(agent);
@@ -98,7 +102,7 @@ function Agent({
                   : 'cn-tag'
             }
           >
-            {STATE_TAG[status]}
+            {off ? '× SPENTO' : STATE_TAG[status]}
           </span>
         </button>
         <div class="xf__b sq-agent__b">
@@ -278,6 +282,39 @@ function Alert({
   );
 }
 
+/** The alias of the group the leader and the implementer form (ADR 0028). */
+function TeamNameField({ roles }: { roles: RolesState }) {
+  const shown = roles.team.alias;
+  const [name, setName] = useState(shown);
+  useEffect(() => {
+    setName(shown);
+  }, [shown]);
+  const commit = () => {
+    const trimmed = name.trim();
+    if (trimmed !== shown) post({ type: 'setTeamName', name: trimmed });
+  };
+  return (
+    <label class="nd-name">
+      <span class="t-label">Gruppo</span>
+      <input
+        class="t-data"
+        type="text"
+        value={name}
+        maxLength={NODE_NAME_LENGTH}
+        placeholder={roles.team.name}
+        title="Un alias per il gruppo di leader e implementatore; vuoto: il provider del leader"
+        onInput={(event) => {
+          setName((event.target as HTMLInputElement).value);
+        }}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') commit();
+        }}
+      />
+    </label>
+  );
+}
+
 /** A node's name and fields (ADR 0023): written to the folder's settings as they change. */
 function NodeEditor({ node, roles }: { node: NodeInfo; roles: RolesState }) {
   const [name, setName] = useState(node.name);
@@ -322,6 +359,38 @@ function NodeEditor({ node, roles }: { node: NodeInfo; roles: RolesState }) {
   );
 }
 
+/**
+ * The reviewer's fields (ADR 0029, 0033): any provider; it writes tests,
+ * never the code, so there is no permission to choose.
+ */
+function ReviewerEditor({ roles }: { roles: RolesState }) {
+  const { reviewer } = roles;
+  return (
+    <>
+      <RoleFields
+        role="implementer"
+        info={reviewer}
+        catalog={roles.catalog}
+        only={['Provider', 'Modello', 'Reasoning']}
+        node={{
+          name: ROLE.reviewer,
+          write: (change) => {
+            post({
+              type: 'setReviewer',
+              cli: change.cli ?? reviewer.cli,
+              model: change.model ?? reviewer.model,
+              effort: change.effort ?? reviewer.effort,
+            });
+          },
+        }}
+      />
+      <p class="hint">
+        RIVEDE OGNI LAVORO · SCRIVE TEST, MAI IL CODICE · IL LEADER LEGGE LA SUA REVISIONE
+      </p>
+    </>
+  );
+}
+
 export function Squad({
   session,
   roles,
@@ -344,7 +413,7 @@ export function Squad({
   theme: 'dark' | 'light';
   /** The node whose thread the chat shows, and the role it writes to otherwise. */
   view: string | null;
-  to: RoleName;
+  to: TurnRole;
   /** Makes an agent the one the chat writes to: a role, or a node by id. */
   select: (target: string) => void;
   close: () => void;
@@ -380,23 +449,25 @@ export function Squad({
     c.files.filter((f) => !c.decisions[f.path]).map((f) => ({ card: c, file: f })),
   );
   const working = monitor.agents.filter((a) => a.status === 'working');
-  const agentStatus = (role: RoleName) => agentOf(monitor, role)?.status ?? 'idle';
+  const agentStatus = (role: TurnRole) => agentOf(monitor, role)?.status ?? 'idle';
   const waitingFor = (approval: 'delegation' | 'report') =>
     waiting.some((w) => w.kind === 'approval' && w.approval === approval);
-  const agentBlock = (role: RoleName, x: number) => ({
+  const reviewerOn = roles?.reviewer.enabled ?? false;
+  const agentBlock = (role: TurnRole, x: number, y = 0) => ({
     id: role,
     x,
-    y: 0,
+    y,
     width: 340,
     children: (
-      <Reveal delay={role === 'leader' ? 0 : 150}>
+      <Reveal delay={role === 'leader' ? 0 : role === 'implementer' ? 150 : 250}>
         <Agent
           title={ROLE[role]}
           index={INDEX[role]}
-          info={shown(role)}
+          info={role === 'reviewer' ? roles?.reviewer : shown(role)}
           agent={agentOf(monitor, role)}
           selected={selected === role}
           locked={role === 'leader' && started}
+          off={role === 'reviewer' && !reviewerOn}
           select={() => {
             setSelected(role);
             select(role);
@@ -405,11 +476,11 @@ export function Squad({
       </Reveal>
     ),
   });
-  // The nodes in a row under the roles, with no link: each talks only to you.
+  // The nodes in a row under the three roles, with no link: each talks only to you.
   const nodeBlock = (node: NodeInfo, index: number) => ({
     id: node.id,
     x: index * 500,
-    y: 420,
+    y: 840,
     width: 340,
     children: (
       <Reveal delay={300 + index * 100}>
@@ -477,6 +548,8 @@ export function Squad({
           blocks={[
             agentBlock('leader', 0),
             agentBlock('implementer', 500),
+            // Under the two, between them: the work goes to it, and its review to the leader.
+            agentBlock('reviewer', 250, 420),
             ...nodes.map(nodeBlock),
           ]}
           links={[
@@ -489,14 +562,42 @@ export function Squad({
               live: agentStatus('implementer') === 'working',
               waiting: waitingFor('delegation'),
             },
-            {
-              id: 'report',
-              from: 'implementer',
-              to: 'leader',
-              label: waitingFor('report') ? '▲ Rapporto' : 'Rapporto',
-              lane: 16,
-              waiting: waitingFor('report'),
-            },
+            ...(reviewerOn
+              ? [
+                  {
+                    id: 'work',
+                    from: 'implementer',
+                    to: 'reviewer',
+                    label: 'Lavoro',
+                    lane: -16,
+                    live: agentStatus('reviewer') === 'working',
+                  },
+                  {
+                    id: 'findings',
+                    from: 'reviewer',
+                    to: 'implementer',
+                    label: 'Rilievi',
+                    lane: 16,
+                  },
+                  {
+                    id: 'review',
+                    from: 'reviewer',
+                    to: 'leader',
+                    label: waitingFor('report') ? '▲ Revisione' : 'Revisione',
+                    lane: 0,
+                    waiting: waitingFor('report'),
+                  },
+                ]
+              : [
+                  {
+                    id: 'report',
+                    from: 'implementer',
+                    to: 'leader',
+                    label: waitingFor('report') ? '▲ Rapporto' : 'Rapporto',
+                    lane: 16,
+                    waiting: waitingFor('report'),
+                  },
+                ]),
           ]}
           legend={
             <>
@@ -626,6 +727,30 @@ export function Squad({
                 <span class="cn-btn__label">× Rimuovi</span>
               </button>
             </>
+          ) : selected === 'reviewer' ? (
+            <>
+              <span class="cn-tag">
+                <b>{INDEX.reviewer}/</b> {ROLE.reviewer}
+              </span>
+              <button
+                class="cn-btn cn-btn--text"
+                type="button"
+                disabled={!roles}
+                aria-pressed={reviewerOn}
+                title={
+                  reviewerOn
+                    ? 'Nessuna revisione: il leader legge il rapporto dell’implementatore'
+                    : 'Rivede ogni lavoro dell’implementatore, anche quello che gli scrivi tu'
+                }
+                onClick={() => {
+                  post({ type: 'setReviewerOn', enabled: !reviewerOn });
+                }}
+              >
+                <span class="cn-btn__label">
+                  {reviewerOn ? '■ Acceso · spegni' : '○ Spento · accendi'}
+                </span>
+              </button>
+            </>
           ) : (
             <>
               <span class="cn-tag">
@@ -641,8 +766,13 @@ export function Squad({
             <p class="hint">Lettura dei ruoli…</p>
           ) : selectedNode ? (
             <NodeEditor key={selectedNode.id} node={selectedNode} roles={roles} />
+          ) : selected === 'reviewer' ? (
+            <ReviewerEditor roles={roles} />
           ) : (
-            <RoleEditor role={isRole(selected) ? selected : 'leader'} roles={roles} />
+            <>
+              <TeamNameField roles={roles} />
+              <RoleEditor role={isRole(selected) ? selected : 'leader'} roles={roles} />
+            </>
           )}
         </div>
 

@@ -14,6 +14,13 @@ import {
   IMPLEMENTER_ROLE_INSTRUCTIONS,
   REPORT_END,
   REPORT_START,
+  REVIEWER_ROLE_INSTRUCTIONS,
+  EMPTY_REVIEW,
+  NO_COMMANDS_NOTE,
+  FINDINGS_END,
+  FINDINGS_START,
+  REVIEW_END,
+  REVIEW_START,
   parseVerdict,
   pendingReportsPreface,
   openEventLog,
@@ -938,7 +945,13 @@ describe('leader mode: one chat across requests', () => {
       status: 'delegated',
       spec: 'Aggiungi round.',
       report: '## Files\nevaluator.py',
-      facts: 'python -m unittest: exit 0',
+      // Not a report: the runtime says so with its facts (ADR 0031).
+      facts: [
+        'python -m unittest: exit 0',
+        '',
+        'Controlli sul rapporto, fatti dal runtime:',
+        '- l’implementatore non ha scritto il rapporto.',
+      ].join('\n'),
     });
     // No review turn: one leader turn only.
     expect(codex.prompts).toHaveLength(1);
@@ -1221,5 +1234,310 @@ describe('the role prompts (ADR 0020)', () => {
     ];
     const positions = order.map(at);
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
+
+  it('the reviewer’s prompt carries both its blocks, and the others name them (ADR 0029)', () => {
+    const at = (text: string) => REVIEWER_ROLE_INSTRUCTIONS.indexOf(`\n${text}\n`);
+    const order = [
+      FINDINGS_START,
+      FINDINGS_END,
+      REVIEW_START,
+      '## Verdetto',
+      '## Criteri',
+      '## Giudizio',
+      '## Modifiche',
+      '## Rilievi',
+      '## Decisioni',
+      '## Sul brief',
+      '## Non verificato',
+      REVIEW_END,
+    ];
+    const positions = order.map(at);
+    expect(Math.min(...positions)).toBeGreaterThan(-1);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    expect(REVIEWER_ROLE_INSTRUCTIONS).not.toMatch(/\{\{\w+\}\}/);
+    // The implementer answers the findings, the leader reads the review.
+    expect(IMPLEMENTER_ROLE_INSTRUCTIONS).toContain(FINDINGS_START);
+    expect(IMPLEMENTER_ROLE_INSTRUCTIONS).toContain('\n## Rilievi\n');
+    expect(leaderInstructions('claude')).toContain(REVIEW_START);
+  });
+});
+
+describe('leader mode with a reviewer (ADR 0029)', () => {
+  const never = () => {
+    throw new Error('not called in autoApprove runs');
+  };
+  const delegation = [
+    '<<<DELEGA @claude',
+    '## Obiettivo',
+    'ans riusa l’ultimo risultato.',
+    '## Criteri di accettazione',
+    'C1. 1 + 2, poi ans * 10 → 30.',
+    'DELEGA>>>',
+  ].join('\n');
+  const report = (outcome: string) =>
+    [
+      REPORT_START,
+      '## Esito',
+      `${outcome} — ans aggiunto.`,
+      '## Verifica',
+      'C1: verificato — `test_ans`.',
+      REPORT_END,
+    ].join('\n');
+  const findingsBlock = [
+    FINDINGS_START,
+    'R1 [bloccante] C1 — ans vale 0 dopo un errore.',
+    'Prova: python calc.py "1/0" "ans" → atteso errore, ottenuto 0.',
+    FINDINGS_END,
+  ].join('\n');
+  const findings = `Ho letto calc.py.\n${findingsBlock}`;
+  const reviewBlock = (verdict: string) =>
+    [
+      REVIEW_START,
+      '## Verdetto',
+      `${verdict} — un giro.`,
+      '## Criteri',
+      'C1 — verificato — `python calc.py`: 30.',
+      '## Giudizio',
+      'Onestà: pulita.',
+      'Sicurezza: pulita.',
+      'Aggiornamento: pulito.',
+      REVIEW_END,
+    ].join('\n');
+
+  async function reviewedLoop(
+    leader: FakeAgent,
+    worker: FakeAgent,
+    reviewer: FakeAgent,
+    extra: Partial<LoopOptions> = {},
+  ) {
+    const session = await leader.factory({ instructions: leaderInstructions('claude') });
+    return loop(leader, worker, [], [], {
+      request: 'Vorrei riusare l’ultimo risultato.',
+      mode: 'leader',
+      leaderSession: session,
+      reviewer: reviewer.factory,
+      autoApprove: true,
+      intercept: never,
+      onMalformedDelegation: never,
+      facts: () =>
+        Promise.resolve('File cambiati dall’inizio della richiesta:\n- modified calc.py'),
+      ...extra,
+    });
+  }
+
+  it('sends the findings to the implementer, then the review to the leader in place of the report', async () => {
+    const codex = fakeAgent('Codex', [{ answer: delegation }, { answer: 'Rivisto: va bene.' }]);
+    const claude = fakeAgent('Claude', [
+      { answer: report('completato') },
+      { answer: report('completato') },
+    ]);
+    const gemini = fakeAgent('Gemini', [
+      { answer: findings },
+      { answer: `Fatto.\n${reviewBlock('approvato')}` },
+    ]);
+    const { running, harness } = await reviewedLoop(codex, claude, gemini);
+    expect(await running.done).toEqual({
+      status: 'completed',
+      conclusion: 'Rivisto: va bene.',
+      exchanges: 1,
+    });
+    // The reviewer: its own prompt, the brief and the report as data, the rounds it has.
+    expect(gemini.instructions[0]).toContain(REVIEW_START);
+    expect(gemini.prompts[0]).toContain('<<<BRIEF\n## Obiettivo');
+    expect(gemini.prompts[0]).toContain(report('completato'));
+    expect(gemini.prompts[0]).toContain('- modified calc.py');
+    expect(gemini.prompts[0]).toContain('Giri di correzione rimasti: 2.');
+    expect(gemini.prompts[1]).toContain('Giri di correzione rimasti: 1.');
+    // The implementer gets the block alone, as data, not what the reviewer wrote around it.
+    expect(claude.prompts[1]).toContain(`${WORKER_ANSWER_START}\n${findingsBlock}`);
+    expect(claude.prompts[1]).not.toContain('Ho letto calc.py.');
+    // The leader reads the review, not the implementer's report.
+    expect(codex.prompts[1]).toMatch(/^Rapporto di revisione di Gemini\./);
+    expect(codex.prompts[1]).toContain(`${WORKER_ANSWER_START}\n${reviewBlock('approvato')}`);
+    expect(codex.prompts[1]).not.toContain(REPORT_START);
+    expect(codex.prompts[1]).toContain('"Il rapporto di revisione"');
+    expect(harness.events).toContainEqual({
+      type: 'reviewed',
+      reviewer: 'Gemini',
+      implementer: 'Claude',
+      verdict: 'approvato',
+      rounds: 1,
+    });
+    const turns = harness.events.flatMap((e) => (e.type === 'turn_started' ? [e.role] : []));
+    expect(turns).toEqual([
+      'orchestrator',
+      'worker',
+      'reviewer',
+      'worker',
+      'reviewer',
+      'orchestrator',
+    ]);
+    expect(gemini.closed).toBe(true);
+  });
+
+  it('tells a reviewer that cannot run commands so, in its first prompt only', async () => {
+    const codex = fakeAgent('Codex', [{ answer: delegation }, { answer: 'Rivisto.' }]);
+    const claude = fakeAgent('Claude', [
+      { answer: report('completato') },
+      { answer: report('completato') },
+    ]);
+    const gemini = fakeAgent('Gemini', [
+      { answer: findings },
+      { answer: reviewBlock('approvato') },
+    ]);
+    const { running } = await reviewedLoop(codex, claude, gemini, {
+      reviewerNote: NO_COMMANDS_NOTE,
+    });
+    await running.done;
+    expect(gemini.prompts[0]).toMatch(
+      /^Nota del runtime sulla tua sessione: non puoi eseguire comandi/,
+    );
+    expect(gemini.prompts[1]).not.toContain('Nota del runtime');
+  });
+
+  it('does not take a reviewer that wrote nothing for an approval: the leader is told it did not review', async () => {
+    const codex = fakeAgent('Codex', [{ answer: delegation }, { answer: 'Non rivisto.' }]);
+    const claude = fakeAgent('Claude', [{ answer: report('completato') }]);
+    const gemini = fakeAgent('Gemini', [{ answer: '  ' }]);
+    const { running, harness } = await reviewedLoop(codex, claude, gemini);
+    expect(await running.done).toMatchObject({ status: 'completed' });
+    expect(codex.prompts[1]).toContain(EMPTY_REVIEW);
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({ type: 'reviewed', verdict: null, rounds: 0 }),
+    );
+  });
+
+  it('guards each reviewer turn, and tells the implementer and the leader what was put back', async () => {
+    const codex = fakeAgent('Codex', [{ answer: delegation }, { answer: 'Rivisto.' }]);
+    const claude = fakeAgent('Claude', [
+      { answer: report('completato') },
+      { answer: report('completato') },
+    ]);
+    const gemini = fakeAgent('Gemini', [
+      { answer: findings },
+      { answer: reviewBlock('approvato') },
+    ]);
+    let turns = 0;
+    const { running, harness } = await reviewedLoop(codex, claude, gemini, {
+      guardReviewer: () => {
+        turns++;
+        return () => (turns === 1 ? 'Il runtime ha rimesso com’erano: calc.py.' : '');
+      },
+    });
+    await running.done;
+    expect(turns).toBe(2);
+    expect(claude.prompts[1]).toContain('Il runtime ha rimesso com’erano: calc.py.');
+    expect(harness.events).toContainEqual({
+      type: 'contract',
+      role: 'reviewer',
+      message: 'Il runtime ha rimesso com’erano: calc.py.',
+    });
+    expect(codex.prompts[1]).not.toContain('rimesso com’erano');
+  });
+
+  it('in review mode, reviews a message the user sent the implementer, with no leader turn (ADR 0033)', async () => {
+    const codex = fakeAgent('Codex', []);
+    const claude = fakeAgent('Claude', [{ answer: 'Corretto: ora 1/0 dà errore.' }]);
+    const gemini = fakeAgent('Gemini', [
+      { answer: findings },
+      { answer: reviewBlock('approvato') },
+    ]);
+    const workerSession = await claude.factory({ instructions: 'implementer' });
+    const { running, harness } = await loop(codex, claude, [], [], {
+      request: '',
+      mode: 'review',
+      workerSession,
+      reviewOf: { brief: 'Sistema la divisione per zero.', report: 'Fatto.', direct: true },
+      reviewer: gemini.factory,
+      autoApprove: true,
+      intercept: never,
+      onMalformedDelegation: never,
+      facts: () => Promise.resolve('File cambiati:\n- modified calc.py'),
+    });
+    expect(await running.done).toMatchObject({
+      status: 'delegated',
+      spec: 'Sistema la divisione per zero.',
+      report: 'Corretto: ora 1/0 dà errore.',
+      review: expect.stringContaining('approvato') as unknown,
+    });
+    expect(codex.prompts).toEqual([]);
+    expect(gemini.prompts[0]).toContain('direttamente all’implementatore, senza brief del leader');
+    // A free message has no report to hold to a brief: no contract checks.
+    expect(harness.events.filter((e) => e.type === 'contract')).toEqual([]);
+    expect(claude.prompts[0]).toContain('R1 [bloccante] C1');
+  });
+
+  it('in review mode, gives the reviewer the user’s own request, and says when there is no work yet', async () => {
+    const codex = fakeAgent('Codex', []);
+    const claude = fakeAgent('Claude', []);
+    const gemini = fakeAgent('Gemini', [{ answer: reviewBlock('con riserve') }]);
+    const workerSession = await claude.factory({ instructions: 'implementer' });
+    const { running, harness } = await loop(codex, claude, [], [], {
+      request: '',
+      mode: 'review',
+      workerSession,
+      reviewOf: { brief: '', report: '', asked: 'Controlla i percorsi in main.py.' },
+      reviewer: gemini.factory,
+      autoApprove: true,
+      intercept: never,
+      onMalformedDelegation: never,
+    });
+    expect(await running.done).toMatchObject({ status: 'delegated', spec: '' });
+    expect(gemini.prompts[0]).toContain('L’utente ti chiede questa revisione direttamente');
+    expect(gemini.prompts[0]).toContain('Controlla i percorsi in main.py.');
+    expect(gemini.prompts[0]).toContain('Nessun lavoro dell’implementatore in questa chat finora');
+    expect(harness.events.filter((e) => e.type === 'contract')).toEqual([]);
+  });
+
+  it('does not review a report that stopped on a missing decision', async () => {
+    const codex = fakeAgent('Codex', [{ answer: delegation }, { answer: 'Serve una decisione.' }]);
+    const claude = fakeAgent('Claude', [{ answer: report('bloccato') }]);
+    const gemini = fakeAgent('Gemini', []);
+    const { running } = await reviewedLoop(codex, claude, gemini);
+    expect(await running.done).toMatchObject({ status: 'completed' });
+    expect(gemini.prompts).toEqual([]);
+    expect(codex.prompts[1]).toMatch(/^Rapporto finale di Claude\./);
+  });
+
+  it('ends at the last round: findings written then reach the leader as they are', async () => {
+    const codex = fakeAgent('Codex', [{ answer: delegation }, { answer: 'Resta R1.' }]);
+    const claude = fakeAgent('Claude', [
+      { answer: report('completato') },
+      { answer: report('completato') },
+    ]);
+    const gemini = fakeAgent('Gemini', [{ answer: findings }, { answer: findings }]);
+    const { running, harness } = await reviewedLoop(codex, claude, gemini, { reviewRounds: 1 });
+    expect(await running.done).toMatchObject({ status: 'completed', conclusion: 'Resta R1.' });
+    expect(gemini.prompts[1]).toContain('Non restano giri di correzione');
+    expect(claude.prompts).toHaveLength(2);
+    expect(codex.prompts[1]).toContain('R1 [bloccante] C1');
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({ type: 'reviewed', verdict: null, rounds: 1 }),
+    );
+  });
+
+  it('with a deferred review, hands back the review with the last report', async () => {
+    const codex = fakeAgent('Codex', [{ answer: delegation }]);
+    const claude = fakeAgent('Claude', [{ answer: report('completato') }]);
+    const gemini = fakeAgent('Gemini', [{ answer: reviewBlock('con riserve') }]);
+    const { running } = await reviewedLoop(codex, claude, gemini, { review: 'deferred' });
+    expect(await running.done).toMatchObject({
+      status: 'delegated',
+      report: report('completato'),
+      review: reviewBlock('con riserve'),
+    });
+    // The leader then reads the review, not the report.
+    const preface = pendingReportsPreface([
+      {
+        source: 'delegation',
+        request: 'brief',
+        report: 'IL RAPPORTO',
+        facts: '',
+        review: 'LA REVISIONE',
+      },
+    ]);
+    expect(preface).toContain('LA REVISIONE');
+    expect(preface).not.toContain('IL RAPPORTO');
   });
 });

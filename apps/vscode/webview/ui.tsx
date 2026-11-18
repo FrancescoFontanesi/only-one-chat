@@ -14,6 +14,7 @@ import {
   type RoleInfo,
   type RoleName,
   type RolesState,
+  type TurnRole,
   type WebviewToHostMessage,
 } from '../src/webview/protocol.js';
 import { Decode } from './motion.js';
@@ -63,15 +64,19 @@ export const PROVIDER: Record<Cli, string> = {
   claude: 'Claude',
   antigravity: 'Antigravity',
 };
-export const ROLE: Record<RoleName, string> = { leader: 'Leader', implementer: 'Implementatore' };
+export const ROLE: Record<TurnRole, string> = {
+  leader: 'Leader',
+  implementer: 'Implementatore',
+  reviewer: 'Revisore',
+};
 
 /** The node whose thread is shown (ADR 0023); null: the chat's own thread. */
 export const ShownNode = createContext<NodeInfo | null>(null);
 
 /** Who wrote or asks, as the thread names it: the role, or the node shown. */
-export function useWho(role: 'leader' | 'implementer'): string {
+export function useWho(role: TurnRole): string {
   const node = useContext(ShownNode);
-  return node ? node.name.toUpperCase() : role === 'leader' ? 'LEADER' : 'IMPLEMENTATORE';
+  return node ? node.name.toUpperCase() : ROLE[role].toUpperCase();
 }
 
 export const PERMISSIONS: readonly { value: PermissionLevel; label: string; short: string }[] = [

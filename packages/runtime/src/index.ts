@@ -66,11 +66,41 @@ export {
 } from './brief.js';
 export { openEventLog, type EventLog, type LoggedEvent } from './event-log.js';
 export {
+  changedFiles,
+  checkReport,
+  checkReview,
+  contractFacts,
+  criteriaOf,
+  criterionStatuses,
+  type ContractIssue,
+} from './contract.js';
+export {
+  FINDINGS_END,
+  FINDINGS_START,
+  REVIEW_END,
+  REVIEW_START,
+  parseReviewerTurn,
+  reportOutcome,
+  reviewVerdict,
+  type ReportOutcome,
+  type ReviewVerdict,
+  type ReviewerTurn,
+} from './review.js';
+export {
   APPROVAL_DENIED_MESSAGE,
   BRIEF_AGENT_INSTRUCTIONS,
   IMPLEMENTER_ROLE_INSTRUCTIONS,
   REPORT_END,
   REPORT_START,
+  REVIEWER_ROLE_INSTRUCTIONS,
+  DEFAULT_REVIEW_ROUNDS,
+  EMPTY_REVIEW,
+  NO_COMMANDS_NOTE,
+  MAX_REVIEW_ROUNDS,
+  findingsPrompt,
+  leaderReviewPrompt,
+  reviewFollowUpPrompt,
+  reviewRequestPrompt,
   IMPLEMENTER_INSTRUCTIONS,
   LIGHT_IMPLEMENTER_INSTRUCTIONS,
   LIGHT_SECTIONS,

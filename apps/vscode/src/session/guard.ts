@@ -1,0 +1,43 @@
+// The reviewer runs commands and writes tests in the folder, but never changes
+// the code it judges (ADR 0029): the implementer owns the code, the reviewer
+// suggests. The runtime holds it to that whatever the provider's permissions:
+// the folder is recorded before each reviewer turn and, after it, every file
+// the turn changed that is not a test is put back as it was. Node only, no
+// `vscode`.
+
+import type { CheckpointStore } from './checkpoints.js';
+import { isTestFile } from './shortcuts.js';
+
+/**
+ * Records the folder before a reviewer turn; the function it returns puts back
+ * what the turn changed outside the tests, and says what, or '' for nothing.
+ * Null when the folder cannot be recorded: the reviewer must then not write.
+ */
+export function guardReviewerTurn(store: CheckpointStore, id: string): (() => string) | null {
+  const before = store.take(id);
+  if (!before) return null;
+  return () => {
+    const review = store.review(before);
+    if (!review)
+      return 'Il runtime non ha potuto rileggere la cartella dopo il turno del revisore.';
+    const restored: string[] = [];
+    for (const file of review.files) {
+      if (isTestFile(file.path)) continue;
+      store.put(file.path, file.before);
+      restored.push(file.path);
+    }
+    const lines = [
+      ...(restored.length > 0
+        ? [
+            `Il revisore aveva cambiato file che non sono test; il runtime li ha rimessi com’erano: ${restored.join(', ')}.`,
+          ]
+        : []),
+      ...(review.uncovered.length > 0
+        ? [
+            `File troppo grandi per essere rimessi com’erano, cambiati durante il turno del revisore: ${review.uncovered.join(', ')}.`,
+          ]
+        : []),
+    ];
+    return lines.join('\n');
+  };
+}

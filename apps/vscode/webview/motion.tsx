@@ -1,5 +1,7 @@
-// The design system's motion (Cyber Nihilism, bundle.js): stepped, linear,
-// once and then still; only what shows liveness loops. Rebuilt here because
+// The design system's motion (Cyber Nihilism, bundle.js): once and then
+// still; only what shows liveness loops. It runs at the display's frame rate
+// (requestAnimationFrame) over the design's durations, not in the bundle's
+// fixed steps, which looked choppy in the editor. Rebuilt here because
 // the bundle writes inline styles the webview's CSP refuses: these write text
 // nodes, class names, CSSOM properties and canvas pixels only. Everything
 // stays still under prefers-reduced-motion.
@@ -13,25 +15,56 @@ export function reducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-/** fn(0) now, then fn(i/n) every `ms` for i = 1..n, then done; under reduced motion fn(1) at once. */
-export function steps(n: number, ms: number, fn: (p: number) => void, done?: () => void) {
+/**
+ * fn(p) on every frame for p from 0 to 1 over n·ms, then done; under reduced
+ * motion fn(1) at once. `every`: at most one call per that many ms (the last
+ * one, p = 1, always comes).
+ */
+export function steps(
+  n: number,
+  ms: number,
+  fn: (p: number) => void,
+  done?: () => void,
+  every = 0,
+) {
   if (reducedMotion()) {
     fn(1);
     done?.();
     return () => undefined;
   }
   fn(0);
-  let i = 0;
-  const timer = window.setInterval(() => {
-    i++;
-    fn(Math.min(1, i / n));
-    if (i >= n) {
-      window.clearInterval(timer);
-      done?.();
+  const duration = n * ms;
+  const start = performance.now();
+  let last = start;
+  let frame = 0;
+  let ended = false;
+  const end = () => {
+    if (ended) return;
+    ended = true;
+    cancelAnimationFrame(frame);
+    window.clearTimeout(timer);
+    fn(1);
+    done?.();
+  };
+  const tick = (now: number) => {
+    const p = Math.min(1, (now - start) / duration);
+    if (p >= 1) {
+      end();
+      return;
     }
-  }, ms);
+    if (now - last >= every) {
+      last = now;
+      fn(p);
+    }
+    frame = requestAnimationFrame(tick);
+  };
+  frame = requestAnimationFrame(tick);
+  // Frames stop in a hidden panel: the end state comes anyway, never a half-drawn text.
+  const timer = window.setTimeout(end, duration + 50);
   return () => {
-    window.clearInterval(timer);
+    ended = true;
+    cancelAnimationFrame(frame);
+    window.clearTimeout(timer);
   };
 }
 
@@ -49,9 +82,16 @@ export function decodeFrame(text: string, p: number): string {
 
 /** Runs Decode on a text node in place, so Preact keeps owning it. */
 function decodeNode(node: Text, text: string, count: number) {
-  return steps(count, TEMPO.tick, (p) => {
-    node.data = decodeFrame(text, p);
-  });
+  // New glyphs at most 30 times a second: faster is noise, not motion.
+  return steps(
+    count,
+    TEMPO.tick,
+    (p) => {
+      node.data = decodeFrame(text, p);
+    },
+    undefined,
+    33,
+  );
 }
 
 /**
@@ -83,39 +123,6 @@ export function Decode({
       {text}
     </span>
   );
-}
-
-/**
- * Scramble on hover, for every button's label under `root`: 8 steps, then a
- * 600 ms rest per button. One listener for the whole view.
- */
-export function useHoverScramble(root: { current: HTMLElement | null }) {
-  useEffect(() => {
-    const element = root.current;
-    if (!element || reducedMotion()) return;
-    const resting = new WeakSet<Element>();
-    const onOver = (event: PointerEvent) => {
-      const button = (event.target as Element | null)?.closest('.cn-btn');
-      if (!button || resting.has(button) || button.matches(':disabled')) return;
-      // Entering the button, not moving between its parts.
-      const from = event.relatedTarget as Node | null;
-      if (from && button.contains(from)) return;
-      const node = button.querySelector('.cn-btn__label')?.firstChild;
-      if (!(node instanceof Text) || node.data.trim() === '') return;
-      resting.add(button);
-      decodeNode(node, node.data, 8);
-      window.setTimeout(
-        () => {
-          resting.delete(button);
-        },
-        8 * TEMPO.tick + 600,
-      );
-    };
-    element.addEventListener('pointerover', onOver);
-    return () => {
-      element.removeEventListener('pointerover', onOver);
-    };
-  }, []);
 }
 
 /** Flash: the only alert motion; the element's polarity swaps three times. */
@@ -379,7 +386,7 @@ export function Progress({
   );
 }
 
-/** Counter: a number that counts from its last value to the new one in 16 steps. */
+/** Counter: a number that counts from its last value to the new one, easing out. */
 export function Counter({ value, format }: { value: number; format: (value: number) => string }) {
   const [shown, setShown] = useState(0);
   const from = useRef(0);
@@ -389,7 +396,7 @@ export function Counter({ value, format }: { value: number; format: (value: numb
       16,
       TEMPO.tick,
       (p) => {
-        setShown(start + (value - start) * p);
+        setShown(start + (value - start) * (1 - (1 - p) ** 3));
       },
       () => {
         from.current = value;

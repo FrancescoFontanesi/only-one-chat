@@ -57,8 +57,8 @@ export class RoleSettings implements vscode.Disposable {
 
   constructor(private readonly catalog: ModelCatalog) {
     this.subscription = vscode.workspace.onDidChangeConfiguration((event) => {
-      const touched = (['leader', 'implementer', 'nodes'] as const).some((role) =>
-        event.affectsConfiguration(`onlyOneChat.${role}`),
+      const touched = (['leader', 'implementer', 'reviewer', 'nodes', 'team'] as const).some(
+        (role) => event.affectsConfiguration(`onlyOneChat.${role}`),
       );
       if (touched && this.writing === 0) this.emitter.fire();
     });
@@ -108,8 +108,98 @@ export class RoleSettings implements vscode.Disposable {
         id: node.id,
         name: node.name,
       })),
+      team: this.team((chat ?? next).leader.cli),
+      reviewer: (({ enabled, choice }) => ({ ...this.info(choice), enabled }))(this.reviewer()),
       fake,
     };
+  }
+
+  /**
+   * The reviewer (ADR 0029, 0033): any provider; it writes tests, never the
+   * code, whatever `permission` says. `rounds` is how many times its findings
+   * may go back to the implementer.
+   */
+  reviewer(): {
+    enabled: boolean;
+    choice: ProviderChoice;
+    rounds: number;
+  } {
+    const settings = vscode.workspace.getConfiguration('onlyOneChat');
+    const cli = settings.get<string>('reviewer.cli');
+    const rounds = settings.get<number>('reviewer.rounds') ?? 2;
+    return {
+      enabled: settings.get<boolean>('reviewer.enabled') === true,
+      choice: {
+        cli: cli === 'codex' || cli === 'antigravity' ? cli : 'claude',
+        model: settings.get<string>('reviewer.model') ?? '',
+        effort: settings.get<string>('reviewer.effort') ?? 'low',
+        permission: 'read-only',
+      },
+      rounds: Number.isFinite(rounds) ? Math.max(0, Math.min(3, Math.trunc(rounds))) : 2,
+    };
+  }
+
+  /** The reviewer switched on or off from Squad (ADR 0033): where it is set, else the user's. */
+  async setReviewerOn(enabled: boolean): Promise<void> {
+    const settings = vscode.workspace.getConfiguration('onlyOneChat');
+    const where = settings.inspect('reviewer.enabled');
+    const target =
+      where?.workspaceFolderValue !== undefined
+        ? vscode.ConfigurationTarget.WorkspaceFolder
+        : where?.workspaceValue !== undefined
+          ? vscode.ConfigurationTarget.Workspace
+          : vscode.ConfigurationTarget.Global;
+    await settings.update('reviewer.enabled', enabled, target);
+  }
+
+  /** The reviewer chosen in the settings page: written if its CLI offers it, else the user is told. */
+  async setReviewer(choice: Pick<ProviderChoice, 'cli' | 'model' | 'effort'>): Promise<boolean> {
+    const problem = this.problem({ ...choice, permission: 'read-only' });
+    if (problem) {
+      void vscode.window.showWarningMessage(problem);
+      return false;
+    }
+    const settings = vscode.workspace.getConfiguration('onlyOneChat');
+    this.writing++;
+    try {
+      for (const key of ['cli', 'model', 'effort'] as const) {
+        const name = `reviewer.${key}`;
+        const where = settings.inspect(name);
+        const target =
+          where?.workspaceFolderValue !== undefined
+            ? vscode.ConfigurationTarget.WorkspaceFolder
+            : where?.workspaceValue !== undefined
+              ? vscode.ConfigurationTarget.Workspace
+              : vscode.ConfigurationTarget.Global;
+        if (settings.get(name) !== choice[key]) await settings.update(name, choice[key], target);
+      }
+    } finally {
+      this.writing--;
+    }
+    this.emitter.fire();
+    return true;
+  }
+
+  /** The group of the leader and the implementer (ADR 0028): its alias, else the leader's provider. */
+  team(leader: AgentChoice['cli']): { name: string; alias: string } {
+    const alias = (
+      vscode.workspace.getConfiguration('onlyOneChat').get<string>('team.name') ?? ''
+    ).trim();
+    return { name: alias || PROVIDERS[leader].name, alias };
+  }
+
+  /** Writes the alias where nodes are written: the folder's settings, else the user's. */
+  async setTeamName(name: string): Promise<void> {
+    const settings = vscode.workspace.getConfiguration('onlyOneChat');
+    const where = settings.inspect('team.name');
+    const target =
+      where?.workspaceFolderValue !== undefined
+        ? vscode.ConfigurationTarget.WorkspaceFolder
+        : where?.workspaceValue !== undefined || vscode.workspace.workspaceFolders?.length
+          ? vscode.ConfigurationTarget.Workspace
+          : vscode.ConfigurationTarget.Global;
+    await settings.update('team.name', name === '' ? undefined : name, target);
+    this.emitter.fire();
   }
 
   /** The nodes on Squad's board, from the settings (ADR 0023). */

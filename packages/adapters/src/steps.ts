@@ -26,10 +26,14 @@ export class StepStream {
   private readonly pending = new Map<string, AgentTurnStep>();
   private timer: ReturnType<typeof setTimeout> | undefined;
 
-  constructor(
-    private readonly emit: (step: AgentTurnStep) => void,
-    private readonly everyMs = 250,
-  ) {}
+  // Explicit fields, not parameter properties: `pnpm bench` runs this file with Node's type stripping.
+  private readonly emit: (step: AgentTurnStep) => void;
+  private readonly everyMs: number;
+
+  constructor(emit: (step: AgentTurnStep) => void, everyMs = 250) {
+    this.emit = emit;
+    this.everyMs = everyMs;
+  }
 
   /** A step changed; `now` sends it at once (it started or ended). */
   put(step: AgentTurnStep, now = false): void {

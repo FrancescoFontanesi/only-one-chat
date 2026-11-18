@@ -8,7 +8,7 @@ import {
   type MonitorState,
   type NodeInfo,
   type ProviderUsage,
-  type RoleName,
+  type TurnRole,
   type RolesState,
   type SessionInfo,
 } from '../src/webview/protocol.js';
@@ -16,7 +16,7 @@ import { Dock, NotReady } from './Dock.js';
 import { Squad } from './Squad.js';
 import { applyUpdate, type ThreadItem } from './state.js';
 import { Thread } from './Thread.js';
-import { Decode, useHoverScramble } from './motion.js';
+import { Decode } from './motion.js';
 import { delegationNumbers, waitingItems } from './threadModel.js';
 import { post, ShownNode, useTheme } from './ui.js';
 
@@ -57,20 +57,48 @@ function History({ session, close }: { session: SessionInfo; close: () => void }
       </div>
       {session.chats.length === 0 && <p class="hint pop__e">Nessuna chat salvata.</p>}
       {session.chats.map((chat) => (
-        <button
-          key={chat.id}
-          class={chat.id === session.chatId ? 'pick cn-accent' : 'pick'}
-          type="button"
-          aria-current={chat.id === session.chatId}
-          disabled={session.busy}
-          onClick={() => {
-            if (chat.id !== session.chatId) post({ type: 'openChat', id: chat.id });
-            close();
-          }}
-        >
-          <span class="pick__n">{chat.title || 'Senza titolo'}</span>
-          <span class="pick__m">{chatDate(chat.updatedAt)}</span>
-        </button>
+        <div key={chat.id} class="pick-row">
+          <button
+            class={chat.id === session.chatId ? 'pick cn-accent' : 'pick'}
+            type="button"
+            aria-current={chat.id === session.chatId}
+            disabled={session.busy}
+            onClick={() => {
+              if (chat.id !== session.chatId) post({ type: 'openChat', id: chat.id });
+              close();
+            }}
+          >
+            <span class="pick__n">{chat.title || 'Senza titolo'}</span>
+            <span class="pick__m">{chatDate(chat.updatedAt)}</span>
+            {/* Who worked in it (ADR 0027): the leader's block, then the nodes. */}
+            {(chat.leader || chat.nodes.length > 0) && (
+              <span class="pick__r">
+                {chat.leader && <span>LDR {chat.leader}</span>}
+                {chat.implementer && (
+                  <span class={chat.implementerUsed ? undefined : 'mut'}>
+                    IMP {chat.implementer}
+                  </span>
+                )}
+                {chat.nodes.map((name, index) => (
+                  <span key={index}>+ {name}</span>
+                ))}
+              </span>
+            )}
+          </button>
+          {/* The host asks for confirmation before deleting. */}
+          <button
+            class="pick__x"
+            type="button"
+            aria-label={`Elimina la chat ${chat.title || 'senza titolo'}`}
+            title="Elimina la chat"
+            disabled={session.busy && chat.id === session.chatId}
+            onClick={() => {
+              post({ type: 'deleteChat', id: chat.id });
+            }}
+          >
+            ×
+          </button>
+        </div>
       ))}
     </section>
   );
@@ -79,13 +107,11 @@ function History({ session, close }: { session: SessionInfo; close: () => void }
 function Bar({
   session,
   waiting,
-  openSquad,
   node,
   leave,
 }: {
   session: SessionInfo | undefined;
   waiting: number;
-  openSquad: () => void;
   /** The node whose thread is shown (ADR 0023), and the way back to the chat's. */
   node: NodeInfo | null;
   leave: () => void;
@@ -112,7 +138,8 @@ function Bar({
         {session.workspace
           ? `${folderName(session.workspace).toUpperCase()} / `
           : 'NESSUNA CARTELLA / '}
-        <b>{(session.title || 'Nuova chat').toUpperCase()}</b>
+        {/* Settles once when the panel opens (the intro), then on every new title. */}
+        <Decode initial class="crumb__t" text={(session.title || 'Nuova chat').toUpperCase()} />
         {node && (
           <>
             {' / '}
@@ -148,7 +175,7 @@ function Bar({
             post({ type: 'newChat' });
           }}
         >
-          <span class="cn-btn__label">+ NUOVA</span>
+          <span class="cn-btn__label">NUOVA</span>
         </button>
         <button
           class="cn-btn cn-btn--text hide-m"
@@ -158,22 +185,6 @@ function Bar({
           }}
         >
           <span class="cn-btn__label">IMPOSTAZIONI</span>
-        </button>
-        <span class="vsep hide-m" />
-        <button
-          class="cn-btn cn-btn--outline cn-btn--sm sq-open"
-          type="button"
-          aria-label={`Apri il pannello Squad${waiting > 0 ? `, ${String(waiting)} richieste in attesa` : ''}`}
-          onClick={openSquad}
-        >
-          <span class="cn-btn__label">SQUAD</span>
-          <span class="cn-btn__icon">↗</span>
-          {/* One per request that waits for you (ADR 0021). */}
-          {waiting > 0 && (
-            <span class="sq-badge" aria-hidden="true">
-              {waiting > 99 ? '99+' : String(waiting)}
-            </span>
-          )}
         </button>
       </div>
       {history && (
@@ -222,23 +233,30 @@ function Empty({ session, node }: { session: SessionInfo | undefined; node: Node
 
 export function App() {
   const theme = useTheme();
+  /** The panel's entrance, once when it opens: the bar, the dials, the composer, the thread. */
+  const [intro, setIntro] = useState(true);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIntro(false);
+    }, 1600);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, []);
   const [session, setSession] = useState<SessionInfo>();
   const [items, setItems] = useState<ThreadItem[]>([]);
   /** The nodes' own threads (ADR 0023), by node id. */
   const [nodeItems, setNodeItems] = useState<Readonly<Record<string, ThreadItem[]>>>({});
   /** The node whose thread is shown; null: the chat's. */
   const [view, setView] = useState<string | null>(null);
-  const [to, setTo] = useState<RoleName>('leader');
+  const [to, setTo] = useState<TurnRole>('leader');
   const [roles, setRoles] = useState<RolesState>();
   const [monitor, setMonitor] = useState<MonitorState>({ agents: [], events: [] });
   const [usage, setUsage] = useState<readonly ProviderUsage[]>([]);
   const [squad, setSquad] = useState(false);
-  /** Changes when the thread is loaded again: what it brings is not animated. */
-  const [epoch, setEpoch] = useState(0);
   const end = useRef<HTMLDivElement>(null);
   const thread = useRef<HTMLElement>(null);
   const root = useRef<HTMLDivElement>(null);
-  useHoverScramble(root);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<unknown>) => {
@@ -261,7 +279,6 @@ export function App() {
         case 'reset':
           setItems([]);
           setNodeItems({});
-          setEpoch((e) => e + 1);
           break;
         case 'roles':
           setRoles(message.roles);
@@ -284,16 +301,29 @@ export function App() {
   }, []);
 
   // A node taken off the board: its thread is no longer shown.
-  const node = roles?.nodes.find((n) => n.id === view) ?? null;
+  const removed = session?.removedNodes.find((n) => n.id === view);
+  const node =
+    roles?.nodes.find((n) => n.id === view) ??
+    (removed
+      ? {
+          ...removed,
+          model: '',
+          modelName: '—',
+          effort: '',
+          permission: 'read-only' as const,
+          removed: true,
+        }
+      : null);
   const shown = node ? (nodeItems[node.id] ?? []) : items;
-  const chooseRole = (role: RoleName) => {
+  const chooseRole = (role: TurnRole) => {
     setView(null);
     setTo(role);
   };
-  /** Who you talk to, from Squad or the dial: a role, or a node by id. */
+  /** Who you talk to, from Squad or the dial: a role, the reviewer, or a node by id. */
   const select = (target: string) => {
-    if (target === 'leader' || target === 'implementer') chooseRole(target);
-    else setView(target);
+    if (target === 'leader' || target === 'implementer' || target === 'reviewer') {
+      chooseRole(target);
+    } else setView(target);
   };
 
   // To the end once a frame at most: a streamed turn changes the items many times a second.
@@ -342,13 +372,14 @@ export function App() {
   }, [notice]);
 
   return (
-    <div ref={root} class="cn app app--live" data-theme={theme}>
+    <div
+      ref={root}
+      class={intro ? 'cn app app--live app--intro' : 'cn app app--live'}
+      data-theme={theme}
+    >
       <Bar
         session={session}
         waiting={waiting}
-        openSquad={() => {
-          setSquad(true);
-        }}
         node={node}
         leave={() => {
           setView(null);
@@ -363,13 +394,7 @@ export function App() {
                 <NotReady session={session} />
               )}
               {shown.length === 0 && <Empty session={session} node={node} />}
-              <Thread
-                key={node?.id ?? 'chat'}
-                items={shown}
-                numbers={numbers}
-                session={session}
-                epoch={epoch}
-              />
+              <Thread key={node?.id ?? 'chat'} items={shown} numbers={numbers} session={session} />
               <div ref={end} />
             </div>
           </div>
@@ -401,6 +426,7 @@ export function App() {
           openSquad={() => {
             setSquad(true);
           }}
+          waiting={waiting}
           to={to}
           setTo={chooseRole}
           select={select}

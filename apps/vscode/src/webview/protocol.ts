@@ -37,6 +37,8 @@ export interface RoleInfo {
 export interface NodeInfo extends RoleInfo {
   readonly id: string;
   readonly name: string;
+  /** Off the board: its thread in this chat is read only (ADR 0027). */
+  readonly removed?: boolean;
 }
 
 /** Longest name of a node. */
@@ -80,6 +82,10 @@ export interface RolesState {
   readonly catalog: readonly ProviderCatalog[];
   /** The nodes on the board, from the folder's settings (ADR 0023). */
   readonly nodes: readonly NodeInfo[];
+  /** The group of the leader and the implementer (ADR 0028): its alias, else the leader's provider. */
+  readonly team: { readonly name: string; readonly alias: string };
+  /** The reviewer of the next chats (ADR 0029): always read-only; `enabled` says whether it runs. */
+  readonly reviewer: RoleInfo & { readonly enabled: boolean };
   /** The models come from the fake CLIs (development host). */
   readonly fake: boolean;
 }
@@ -104,6 +110,8 @@ export interface SettingItem {
   readonly scope: 'default' | 'user' | 'workspace';
   /** Never from a folder's settings: paths, commands, instructions. */
   readonly userOnly: boolean;
+  /** The path of this CLI's executable (ADR 0025): found or picked from the page. */
+  readonly cli?: Cli;
 }
 
 export interface SettingsSection {
@@ -137,12 +145,25 @@ export interface SessionInfo {
     readonly id: string;
     readonly title: string;
     readonly updatedAt: number;
+    /** Who worked in it (ADR 0027): the models' names; the implementer dim if it took no turn. */
+    readonly leader?: string;
+    readonly implementer?: string;
+    readonly implementerUsed: boolean;
+    readonly nodes: readonly string[];
   }[];
   readonly chatId: string | null;
   /** Enter sends (Shift+Enter: new line); false: Ctrl+Enter sends. */
   readonly enterSends: boolean;
   /** How full each role's session is, after its latest turn. */
   readonly context: Partial<Record<TurnRole, ContextInfo>>;
+  /** The same for the nodes spoken to in this chat, by node id (ADR 0023). */
+  readonly nodeContext: Readonly<Record<string, ContextInfo>>;
+  /** Nodes of this chat taken off the board since: their threads, read only (ADR 0027). */
+  readonly removedNodes: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly cli: Cli;
+  }[];
   /** Usage windows past this percentage are flagged; 0: never. */
   readonly usageThreshold: number;
 }
@@ -153,7 +174,8 @@ export interface ContextInfo {
   readonly window: number | null;
 }
 
-export type TurnRole = 'leader' | 'implementer';
+/** Who takes a turn in the thread: a role of the dial, or the reviewer (ADR 0029). */
+export type TurnRole = RoleName | 'reviewer';
 
 export interface TurnUsageSummary {
   /** Context read in the turn: input, cached input and cache writes. */
@@ -224,7 +246,7 @@ export type ThreadUpdate =
       readonly id: string;
       readonly text: string;
       /** Who it is for; older chats wrote `@impl` at the start of the text instead. */
-      readonly to?: RoleName;
+      readonly to?: TurnRole;
       /** The folder as it was before this message (ADR 0014). */
       readonly checkpoint?: string;
       /** Files and folders named with `@`, as the agents received them (ADR 0015). */
@@ -410,10 +432,12 @@ export type WebviewToHostMessage =
   | {
       readonly type: 'send';
       readonly text: string;
-      /** Default: the leader. */
-      readonly to?: RoleName;
+      /** Default: the leader; the reviewer takes a review request (ADR 0033). */
+      readonly to?: TurnRole;
       /** A node of the board instead of a role (ADR 0023). */
       readonly node?: string;
+      /** Paths in the folder added to the message's context (ADR 0026); `@` in the text only names one. */
+      readonly attachments?: readonly string[];
       /** A skill of the recipient's CLI, named with `$` (ADR 0019). */
       readonly skill?: string;
     }
@@ -453,8 +477,21 @@ export type WebviewToHostMessage =
       readonly permission: PermissionLevel;
     }
   | { readonly type: 'removeNode'; readonly id: string }
+  /** The alias of the leader and implementer's group; empty puts the default back. */
+  | { readonly type: 'setTeamName'; readonly name: string }
+  /** The reviewer switched on or off (ADR 0033), from Squad: the setting, for this chat and the next. */
+  | { readonly type: 'setReviewerOn'; readonly enabled: boolean }
+  /** The reviewer's provider, model and reasoning (ADR 0029), from the settings page. */
+  | {
+      readonly type: 'setReviewer';
+      readonly cli: Cli;
+      readonly model: string;
+      readonly effort: string;
+    }
   | { readonly type: 'newChat' }
   | { readonly type: 'openChat'; readonly id: string }
+  /** Deletes a chat of the history, once the user confirms it in the host. */
+  | { readonly type: 'deleteChat'; readonly id: string }
   | { readonly type: 'refreshUsage' }
   | { readonly type: 'refreshModels' }
   | { readonly type: 'openFolder' }
@@ -467,6 +504,9 @@ export type WebviewToHostMessage =
       readonly target: SettingsTarget;
     }
   | { readonly type: 'openNativeSettings' }
+  /** A CLI's executable for its path setting (ADR 0025): searched for, or in a folder the user picks. */
+  | { readonly type: 'detectCli'; readonly cli: Cli }
+  | { readonly type: 'pickCli'; readonly cli: Cli }
   /** From the settings page: back to the chat. */
   | { readonly type: 'showChat' }
   /** VS Code's Workspace Trust page, for a folder not trusted. */
@@ -484,6 +524,8 @@ export type WebviewToHostMessage =
   /** The implementer's work to a new session of the same model (ADR 0017). */
   | { readonly type: 'handoff' }
   | { readonly type: 'listFiles' }
+  /** The + of the composer: VS Code's file picker, the files it gives as attachments (ADR 0026). */
+  | { readonly type: 'attachFiles' }
   /** The skills of a CLI for `$`; `again` reads them anew. */
   | { readonly type: 'listSkills'; readonly cli: Cli; readonly again?: boolean }
   /** A path the thread links (ADR 0018), opened at its lines; the host checks it is in the folder. */
@@ -517,6 +559,8 @@ function text(value: unknown): string | undefined {
 
 const isRole = (value: unknown): value is RoleName => value === 'leader' || value === 'implementer';
 
+const isTurnRole = (value: unknown): value is TurnRole => isRole(value) || value === 'reviewer';
+
 const isPermission = (value: unknown): value is PermissionLevel =>
   value === 'read-only' || value === 'ask' || value === 'auto';
 
@@ -545,16 +589,32 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
       const to = msg['to'];
       const node = msg['node'];
       const skill = msg['skill'];
-      if (to !== undefined && !isRole(to)) return undefined;
+      if (to !== undefined && !isTurnRole(to)) return undefined;
       if (node !== undefined && (!isId(node) || to !== undefined)) return undefined;
+      const attachments = msg['attachments'];
+      if (
+        attachments !== undefined &&
+        !(
+          Array.isArray(attachments) &&
+          attachments.length <= 20 &&
+          attachments.every(
+            (a) => typeof a === 'string' && a !== '' && a.length <= 1024 && !a.includes('\0'),
+          )
+        )
+      ) {
+        return undefined;
+      }
       if (skill !== undefined && (typeof skill !== 'string' || !SKILL_PATTERN.test(skill))) {
         return undefined;
       }
+      // A review request is words for the reviewer: no skill (ADR 0033).
+      if (skill !== undefined && to === 'reviewer') return undefined;
       return {
         type: 'send',
         text: body,
         ...(to ? { to } : {}),
         ...(node !== undefined ? { node } : {}),
+        ...(attachments !== undefined ? { attachments: attachments as string[] } : {}),
         ...(skill !== undefined ? { skill } : {}),
       };
     }
@@ -616,6 +676,25 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
         ? { type: 'setNode', id, name: named, cli, model, effort, permission }
         : undefined;
     }
+    case 'setTeamName': {
+      const name = typeof msg['name'] === 'string' ? msg['name'].trim() : undefined;
+      return name !== undefined && name.length <= NODE_NAME_LENGTH
+        ? { type: 'setTeamName', name }
+        : undefined;
+    }
+    case 'setReviewerOn': {
+      const enabled = msg['enabled'];
+      return typeof enabled === 'boolean' ? { type: 'setReviewerOn', enabled } : undefined;
+    }
+    case 'setReviewer': {
+      const { cli, model, effort } = msg;
+      return isCli(cli) &&
+        isModel(model) &&
+        typeof effort === 'string' &&
+        EFFORT_PATTERN.test(effort)
+        ? { type: 'setReviewer', cli, model, effort }
+        : undefined;
+    }
     case 'removeNode': {
       const id = msg['id'];
       return isId(id) ? { type: 'removeNode', id } : undefined;
@@ -625,6 +704,10 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
     case 'openChat': {
       const id = msg['id'];
       return typeof id === 'string' && ID_PATTERN.test(id) ? { type: 'openChat', id } : undefined;
+    }
+    case 'deleteChat': {
+      const id = msg['id'];
+      return isId(id) ? { type: 'deleteChat', id } : undefined;
     }
     case 'refreshUsage':
       return { type: 'refreshUsage' };
@@ -648,6 +731,8 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
     }
     case 'listFiles':
       return { type: 'listFiles' };
+    case 'attachFiles':
+      return { type: 'attachFiles' };
     case 'answer': {
       const id = msg['id'];
       const raw = asRecord(msg['answers']);
@@ -704,6 +789,11 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
     }
     case 'openNativeSettings':
       return { type: 'openNativeSettings' };
+    case 'detectCli':
+    case 'pickCli': {
+      const cli = msg['cli'];
+      return isCli(cli) ? { type: msg['type'], cli } : undefined;
+    }
     case 'setSetting': {
       const { key, value, target } = msg;
       if (typeof key !== 'string' || !SETTING_KEY.test(key)) return undefined;

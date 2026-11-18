@@ -5,10 +5,11 @@
 // rhythm. A block that arrives while the chat is open enters with Construct.
 
 import { Fragment, type ComponentChildren } from 'preact';
-import { useContext, useRef, useState } from 'preact/hooks';
+import { useContext, useState } from 'preact/hooks';
 import type { SessionInfo } from '../src/webview/protocol.js';
 import { refTokens } from '../src/webview/refs.js';
-import { Progress, Reveal } from './motion.js';
+import { Markdown } from './markdown.js';
+import { Progress } from './motion.js';
 import type { ThreadItem } from './state.js';
 import {
   isFacts,
@@ -16,6 +17,7 @@ import {
   readFacts,
   readOp,
   readReport,
+  readReviewBlock,
   readUserMessage,
   withoutDelegation,
   type Op,
@@ -269,7 +271,7 @@ function Steps({ item }: { item: Item<'turn'> }) {
           case 'message':
             return (
               <li key={step.id} class="st st--msg">
-                <p class="t-body txt">{step.text}</p>
+                <Markdown class="t-body" text={step.text} />
               </li>
             );
           case 'reasoning':
@@ -442,6 +444,68 @@ function ReportCard({ text, refs }: { text: string; refs: readonly string[] | un
   );
 }
 
+const VERDICT = {
+  approvato: '■ APPROVATO',
+  'con riserve': '▲ CON RISERVE',
+  respinto: '× RESPINTO',
+} as const;
+
+/**
+ * The reviewer's block (ADR 0029) as a card like the report's: its review for
+ * the leader, with the verdict and its sections, or its findings for the
+ * implementer, as it wrote them.
+ */
+function ReviewCard({ text, refs }: { text: string; refs: readonly string[] | undefined }) {
+  const block = readReviewBlock(text);
+  if (!block) return null;
+  const review = block.kind === 'review';
+  const shown = block.sections.filter(
+    (section) => section.body !== '' && !/^nessun[oa]\.?$/i.test(section.body),
+  );
+  return (
+    <>
+      {block.before !== '' && (
+        <p class="t-body txt">
+          <Linked text={block.before} refs={refs} />
+        </p>
+      )}
+      <section
+        class="rep"
+        aria-label={review ? 'Rapporto di revisione' : 'Rilievi per l’implementatore'}
+      >
+        <div class="rep__h">
+          <span class="cn-tag">
+            <b>{review ? 'REVISIONE' : 'RILIEVI'}</b>
+          </span>
+          {block.verdict && <span class="cn-tag">{VERDICT[block.verdict]}</span>}
+          {!review && <span class="cn-tag">→ IMPLEMENTATORE</span>}
+        </div>
+        {shown.length > 0 ? (
+          <dl class="rep__l">
+            {shown.map((section) => (
+              <Fragment key={section.name}>
+                <dt>{section.name.toUpperCase()}</dt>
+                <dd class="txt">
+                  <Linked text={section.body} refs={refs} />
+                </dd>
+              </Fragment>
+            ))}
+          </dl>
+        ) : (
+          <p class="t-body txt">
+            <Linked text={block.body} refs={refs} />
+          </p>
+        )}
+      </section>
+      {block.after !== '' && (
+        <p class="t-body txt">
+          <Linked text={block.after} refs={refs} />
+        </p>
+      )}
+    </>
+  );
+}
+
 function Turn({ item }: { item: Item<'turn'> }) {
   const ops = item.activity.map((line) => ({ line, op: readOp(line) }));
   // A leader's route line of older chats is left out; its delegation block is in its card (ADR 0018).
@@ -475,12 +539,17 @@ function Turn({ item }: { item: Item<'turn'> }) {
         ) : (
           (ops.length > 0 || item.subagents.length > 0) && <ToolLog item={item} ops={ops} />
         )}
-        {body !== '' && !running && readReport(body) ? (
+        {body !== '' && !running && item.role === 'reviewer' && readReviewBlock(body) ? (
+          <ReviewCard text={body} refs={item.refs} />
+        ) : body !== '' && !running && readReport(body) ? (
           <ReportCard text={body} refs={item.refs} />
         ) : body !== '' ? (
-          <p class={running && !writing ? 't-body txt cn-cursor' : 't-body txt'}>
-            <Linked text={body} refs={item.refs} />
-          </p>
+          <Markdown
+            class={running && !writing ? 't-body cn-cursor' : 't-body'}
+            text={body}
+            refs={item.refs}
+            leaf={(text) => <Linked text={text} refs={item.refs} />}
+          />
         ) : (
           running && !writing && <Progress label="LAVORA" />
         )}
@@ -774,38 +843,17 @@ function Notice({ item, retry }: { item: Item<'notice'>; retry: (() => void) | n
   );
 }
 
-/**
- * Which items arrived while the chat was open: those enter with Construct, as
- * the answer to what the user did. What a chat brings when it is loaded
- * (opened, resumed, a new epoch) is just there.
- */
-function useArrivals(items: readonly ThreadItem[], epoch: number): ReadonlyMap<string, boolean> {
-  const seen = useRef(new Map<string, boolean>());
-  const since = useRef({ epoch, at: performance.now() });
-  if (since.current.epoch !== epoch) {
-    since.current = { epoch, at: performance.now() };
-    seen.current.clear();
-  }
-  const settled = performance.now() - since.current.at > 600;
-  for (const item of items) if (!seen.current.has(item.id)) seen.current.set(item.id, settled);
-  return seen.current;
-}
-
 export function Thread({
   items,
   numbers,
   session,
-  epoch,
 }: {
   items: readonly ThreadItem[];
   numbers: ReadonlyMap<string, string>;
   session: SessionInfo | undefined;
-  /** Changes when the thread is loaded again. */
-  epoch: number;
 }) {
   const node = useContext(ShownNode);
   const busy = node ? (session?.busyNodes ?? []).includes(node.id) : (session?.busy ?? false);
-  const arrivals = useArrivals(items, epoch);
   let users = 0;
   const lastUser = [...items].reverse().find((i): i is Item<'user'> => i.kind === 'user');
   const retry =
@@ -814,8 +862,8 @@ export function Thread({
           post({ type: 'send', text: lastUser.text, ...(node ? { node: node.id } : {}) });
         }
       : null;
-  const enter = (id: string, node: ComponentChildren) =>
-    arrivals.get(id) ? <Reveal key={id}>{node}</Reveal> : node;
+  // Items are just there: no entrance draws lines around them (static rules, +------+).
+  const enter = (_id: string, node: ComponentChildren) => node;
   return (
     <>
       {items.map((item) => {

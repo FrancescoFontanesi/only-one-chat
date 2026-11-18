@@ -44,6 +44,7 @@ const GEMINI: NodeChoice = {
 function node(choice: Partial<NodeChoice> = {}, resume?: string) {
   const updates: ThreadUpdate[] = [];
   const sessions: string[] = [];
+  const contexts: { used: number; window: number | null }[] = [];
   const session = new NodeSession(
     {
       cwd,
@@ -63,10 +64,11 @@ function node(choice: Partial<NodeChoice> = {}, resume?: string) {
       },
       busy: () => undefined,
       sessionId: (id) => sessions.push(id),
+      context: (c) => contexts.push(c),
     },
   );
   open.push(session);
-  return { session, updates, sessions };
+  return { session, updates, sessions, contexts };
 }
 
 const done = (updates: readonly ThreadUpdate[]) =>
@@ -76,7 +78,7 @@ const done = (updates: readonly ThreadUpdate[]) =>
 
 describe('a node of the board (ADR 0023)', () => {
   it('answers in its own thread, with its instructions first and its model', async () => {
-    const { session, updates, sessions } = node();
+    const { session, updates, sessions, contexts } = node();
     await session.send('ciao');
     expect(updates[0]).toMatchObject({ type: 'user', text: 'ciao' });
     const [turn] = done(updates);
@@ -84,6 +86,8 @@ describe('a node of the board (ADR 0023)', () => {
     expect(turn?.text).toBe('[fake-flash-low|default|istruzioni] ECHO: ciao');
     expect(turn?.usage).toMatchObject({ context: 140, output: 7 });
     expect(sessions).toEqual(['fake-1']);
+    // CTX: the turn's context, with no window (ACP reports none).
+    expect(contexts).toEqual([{ used: 140, window: null }]);
     await session.send('ancora');
     expect(done(updates)[1]?.text).toBe('[fake-flash-low|default] ECHO: ancora');
   });
@@ -130,6 +134,20 @@ describe('a node of the board (ADR 0023)', () => {
     await session.configure({ ...GEMINI, permission: 'auto' });
     await session.send('nuova');
     expect(done(updates)[1]?.text).toBe('[fake-flash-low|auto|istruzioni] ECHO: nuova');
+  });
+
+  it('starts a new session, and says so, when the saved one no longer opens', async () => {
+    const { session, updates } = node({}, 'gone');
+    await session.send('ciao');
+    expect(updates).toContainEqual(
+      expect.objectContaining({
+        type: 'notice',
+        level: 'warn',
+        text: expect.stringContaining('ne parte una nuova') as unknown,
+      }),
+    );
+    // A new session: the instructions open it again.
+    expect(done(updates)[0]?.text).toBe('[fake-flash-low|default|istruzioni] ECHO: ciao');
   });
 
   it('shows the files it changed', async () => {
@@ -217,6 +235,32 @@ describe('a node of the board (ADR 0023)', () => {
     expect(parseWebviewMessage({ ...set, name: 'x'.repeat(41), permission: 'ask' })).toBe(
       undefined,
     );
+    expect(parseWebviewMessage({ type: 'detectCli', cli: 'antigravity' })).toEqual({
+      type: 'detectCli',
+      cli: 'antigravity',
+    });
+    expect(parseWebviewMessage({ type: 'pickCli', cli: 'codex' })).toEqual({
+      type: 'pickCli',
+      cli: 'codex',
+    });
+    // Only the three providers the extension takes.
+    expect(parseWebviewMessage({ type: 'detectCli', cli: 'cursor' })).toBe(undefined);
+    expect(parseWebviewMessage({ type: 'setTeamName', name: ' Team ' })).toEqual({
+      type: 'setTeamName',
+      name: 'Team',
+    });
+    // Empty puts the default back; a name past the limit is refused.
+    expect(parseWebviewMessage({ type: 'setTeamName', name: '' })).toEqual({
+      type: 'setTeamName',
+      name: '',
+    });
+    expect(parseWebviewMessage({ type: 'setTeamName', name: 'x'.repeat(41) })).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'setTeamName', name: 3 })).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'deleteChat', id: 'chat-a' })).toEqual({
+      type: 'deleteChat',
+      id: 'chat-a',
+    });
+    expect(parseWebviewMessage({ type: 'deleteChat', id: '../chat' })).toBe(undefined);
     expect(parseWebviewMessage({ type: 'removeNode', id: 'n-1' })).toEqual({
       type: 'removeNode',
       id: 'n-1',

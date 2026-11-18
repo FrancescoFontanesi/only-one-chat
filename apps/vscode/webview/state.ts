@@ -5,7 +5,6 @@ import type {
   ChangedFile,
   QuestionItem,
   StepView,
-  RoleName,
   ThreadUpdate,
   TurnRole,
   TurnUsageSummary,
@@ -22,7 +21,7 @@ export type ThreadItem =
       readonly kind: 'user';
       readonly id: string;
       readonly text: string;
-      readonly to?: RoleName;
+      readonly to?: TurnRole;
       readonly checkpoint?: string;
       readonly attachments?: readonly string[];
       /** The `@` paths of the text that exist in the folder (ADR 0018). */

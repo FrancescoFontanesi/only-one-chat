@@ -127,7 +127,7 @@ export function readFacts(text: string): Facts {
 }
 
 export interface UserMessage {
-  readonly to: 'leader' | 'implementer';
+  readonly to: 'leader' | 'implementer' | 'reviewer';
   /** The route older chats asked of the leader with `/fai`, `/delega`, `/chiedi`; no longer shown (ADR 0018). */
   readonly route: 'fai' | 'delega' | 'chiedi' | null;
   readonly text: string;
@@ -255,6 +255,70 @@ export function readReport(text: string): Report | null {
     sections: done,
     after: lines
       .slice(end + 1)
+      .join('\n')
+      .trim(),
+  };
+}
+
+/**
+ * A reviewer's block (ADR 0029) and the text around it: its report for the
+ * leader, with the verdict, or its findings for the implementer.
+ */
+export interface ReviewBlock {
+  readonly kind: 'review' | 'findings';
+  readonly before: string;
+  /** approvato, con riserve, respinto; null for findings, or when the Verdetto does not say. */
+  readonly verdict: 'approvato' | 'con riserve' | 'respinto' | null;
+  /** The `## ` sections of a review; none for findings. */
+  readonly sections: readonly { readonly name: string; readonly body: string }[];
+  /** The block's own text, without its marker lines. */
+  readonly body: string;
+  readonly after: string;
+}
+
+/**
+ * The reviewer's block in a turn's text, if any: the review when it wrote one,
+ * else the findings, as the runtime reads them (review.ts). A block still
+ * open (the turn streams) is not one yet.
+ */
+export function readReviewBlock(text: string): ReviewBlock | null {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const between = (start: string, end: string): [number, number] | null => {
+    const to = lines.findLastIndex((line) => line.trim() === end);
+    const from = lines.findLastIndex((line, at) => at < to && line.trim() === start);
+    return from < 0 ? null : [from, to];
+  };
+  const review = between('<<<REVISIONE', 'REVISIONE>>>');
+  const span = review ?? between('<<<RILIEVI', 'RILIEVI>>>');
+  if (!span) return null;
+  const [from, to] = span;
+  const inner = lines.slice(from + 1, to);
+  const sections: { name: string; body: string[] }[] = [];
+  if (review) {
+    for (const line of inner) {
+      const heading = /^##\s+(.+?)\s*$/.exec(line);
+      if (heading?.[1]) sections.push({ name: heading[1], body: [] });
+      else sections.at(-1)?.body.push(line);
+    }
+  }
+  const done = sections.map((s) => ({ name: s.name, body: s.body.join('\n').trim() }));
+  const said = done.find((s) => /^verdetto$/i.test(s.name))?.body.toLowerCase() ?? '';
+  const word = /^(approvato con riserve|con riserve|approvato|respinto)(?![\p{L}\p{N}])/u.exec(
+    said,
+  )?.[1];
+  return {
+    kind: review ? 'review' : 'findings',
+    before: lines.slice(0, from).join('\n').trim(),
+    verdict:
+      word === undefined
+        ? null
+        : word === 'approvato' || word === 'respinto'
+          ? word
+          : 'con riserve',
+    sections: done,
+    body: inner.join('\n').trim(),
+    after: lines
+      .slice(to + 1)
       .join('\n')
       .trim(),
   };

@@ -33,3 +33,8 @@ Una decisione superata non si cancella: si marca "Sostituita da NNNN".
 | [0026](0026-mention-and-attach.md)                | `@` nomina un file, + lo allega                                      | Accettata                                     |
 | [0027](0027-history-and-blocks.md)                | Lo storico per chat e la ghiera per blocchi                          | Accettata                                     |
 | [0028](0028-groups-on-the-dial.md)                | Gruppi e nodi singoli sulla ghiera, SQUAD nel composer               | Accettata                                     |
+| [0029](0029-reviewer-findings-and-review.md)      | Il revisore: rilievi e rapporto di revisione                         | Accettata                                     |
+| [0030](0030-diff-checks.md)                       | Controlli sul diff fra i fatti verificati                            | Accettata                                     |
+| [0031](0031-role-contract-and-brief.md)           | Il contratto fra i ruoli e la struttura del brief                    | Accettata                                     |
+| [0032](0032-change-risk.md)                       | La stima del rischio di una modifica                                 | Accettata in parte, sostituita da 0033        |
+| [0033](0033-reviewer-always-and-direct.md)        | Il revisore sempre, anche sul lavoro diretto, e dall'interfaccia     | Accettata                                     |

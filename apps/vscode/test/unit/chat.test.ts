@@ -98,6 +98,8 @@ function session(
 describe('chat session: files named with @ (ADR 0015)', () => {
   it('shows the user’s text and hands the agent the attachments after it', async () => {
     const { chat, updates } = session('auto');
+    // `@calc.py` names a file of the folder: the agent reads the plain path (ADR 0026).
+    writeFileSync(join(cwd, 'calc.py'), 'x = 1\n');
     try {
       await chat.send('@impl rivedi @calc.py', {
         text: 'Allegati indicati dall’utente:\n- calc.py',
@@ -113,7 +115,7 @@ describe('chat session: files named with @ (ADR 0015)', () => {
       attachments: ['calc.py'],
     });
     // The fake implementer echoes its prompt.
-    expect(doneTurns(updates)[0]?.text).toContain('rivedi @calc.py\n\nAllegati indicati');
+    expect(doneTurns(updates)[0]?.text).toContain('rivedi calc.py\n\nAllegati indicati');
   });
 });
 
@@ -535,6 +537,219 @@ describe('chat session', () => {
     ]);
     const notices = updates.flatMap((u) => (u.type === 'notice' ? [u.text] : []));
     expect(notices.some((text) => text.startsWith('File cambiati'))).toBe(true);
+  });
+
+  it('adds the checks on the diff to the facts, from the folder as it was before the message (ADR 0030)', async () => {
+    writeFileSync(join(cwd, 'calc.test.ts'), "it('a', () => { expect(1).toBe(1); });\n");
+    const store = new CheckpointStore(join(root, 'checkpoints'), cwd);
+    const { chat, updates } = session('manual', 'always', undefined, undefined, undefined, store);
+    try {
+      const sent = chat.send('[spec] aggiungi una funzione');
+      await expect.poll(() => updates.find((u) => u.type === 'approval')).toBeTruthy();
+      // The implementer's work, as the fake does not write: a test is skipped, and a lockfile changes.
+      writeFileSync(join(cwd, 'calc.test.ts'), "it.skip('a', () => { expect(1).toBe(1); });\n");
+      writeFileSync(join(cwd, 'pnpm-lock.yaml'), 'lock\n');
+      const approval = updates.find((u) => u.type === 'approval');
+      if (approval?.type === 'approval') chat.decide(approval.id, 'approve');
+      await sent;
+    } finally {
+      await chat.dispose();
+    }
+    const facts = updates.flatMap((u) =>
+      u.type === 'notice' && u.text.startsWith('File cambiati') ? [u.text] : [],
+    );
+    expect(facts).toHaveLength(1);
+    expect(facts[0]).toContain('Controlli sul diff, fatti dal runtime');
+    expect(facts[0]).toContain('- calc.test.ts: test saltati o isolati (skip, only) aggiunti: 1');
+    expect(facts[0]).toContain('- lockfile cambiato: pnpm-lock.yaml');
+  });
+
+  it('says the checks on the diff were not made when the folder has no checkpoint', async () => {
+    const { chat, updates } = session('auto');
+    try {
+      await chat.send('@impl aggiungi round');
+    } finally {
+      await chat.dispose();
+    }
+    const facts = updates.flatMap((u) =>
+      u.type === 'notice' && u.text.startsWith('File cambiati') ? [u.text] : [],
+    );
+    expect(facts[0]).toContain('non eseguiti, senza checkpoint della cartella');
+  });
+
+  it('with a reviewer, runs its turn after the implementer’s, read-only, before the leader’s (ADR 0029)', async () => {
+    const { chat, updates, sessionIds, contexts } = session(
+      'auto',
+      'always',
+      undefined,
+      undefined,
+      { reviewer: 'Guarda soprattutto i test.' },
+      undefined,
+      undefined,
+      // Whatever the choice says, the reviewer never writes.
+      {
+        reviewer: {
+          choice: { cli: 'claude', model: 'haiku', effort: 'low', permission: 'auto' },
+          rounds: 1,
+        },
+      },
+    );
+    try {
+      await chat.send('[spec] aggiungi una funzione');
+    } finally {
+      await chat.dispose();
+    }
+    const done = doneTurns(updates);
+    expect(done.map((t) => [t.role, t.agent.split(' ')[0]])).toEqual([
+      ['leader', 'Codex'],
+      ['implementer', 'Claude'],
+      ['reviewer', 'Claude'],
+      ['leader', 'Codex'],
+    ]);
+    // The fake reviewer echoes its prompt: the brief and the report as data, the rounds it has.
+    expect(done[2]?.text).toContain('Revisione del lavoro di Claude');
+    expect(done[2]?.text).toContain('<<<BRIEF');
+    expect(done[2]?.text).toContain('Giri di correzione rimasti: 1.');
+    // It wrote no block, so the review ends there and the thread says how.
+    const notices = updates.flatMap((u) => (u.type === 'notice' ? [u.text] : []));
+    expect(notices.some((text) => /^Revisione di Claude.*SENZA VERDETTO · 0 giri/.test(text))).toBe(
+      true,
+    );
+    // Its session: the reviewer's prompt and the user's instructions for it, no tool that writes.
+    const reviewer = claudeRuns().find((argv) => argv.includes('haiku')) ?? [];
+    const after = (flag: string) => reviewer[reviewer.indexOf(flag) + 1] ?? '';
+    expect(after('--append-system-prompt')).toContain('<<<REVISIONE');
+    expect(after('--append-system-prompt')).toContain('Guarda soprattutto i test.');
+    expect(after('--tools').split(',')).toEqual(expect.arrayContaining(['Read', 'Bash']));
+    expect(after('--tools')).not.toMatch(/Edit|Write/);
+    // Nothing of its session is kept: it lasts one delegation.
+    expect(sessionIds.map(([role]) => role)).not.toContain('reviewer');
+    expect(contexts.map(([role]) => role)).not.toContain('reviewer');
+  });
+
+  it('with the folder recorded, the reviewer may write tests, and each of its turns is guarded', async () => {
+    const store = new CheckpointStore(join(root, 'checkpoints'), cwd);
+    const { chat, updates } = session(
+      'auto',
+      'always',
+      undefined,
+      undefined,
+      undefined,
+      store,
+      undefined,
+      {
+        reviewer: {
+          choice: { cli: 'claude', model: 'haiku', effort: 'low', permission: 'read-only' },
+          rounds: 1,
+        },
+      },
+    );
+    try {
+      await chat.send('[spec] aggiungi una funzione');
+    } finally {
+      await chat.dispose();
+    }
+    expect(doneTurns(updates).map((t) => t.role)).toContain('reviewer');
+    const reviewer = claudeRuns().find((argv) => argv.includes('haiku')) ?? [];
+    const after = (flag: string) => reviewer[reviewer.indexOf(flag) + 1] ?? '';
+    expect(after('--tools')).toMatch(/Edit|Write/);
+    // Its prompt says what it may and may not change.
+    expect(after('--append-system-prompt')).toContain(
+      'Il codice che verifichi non lo modifichi mai',
+    );
+  });
+
+  const haiku = {
+    reviewer: {
+      choice: {
+        cli: 'claude' as const,
+        model: 'haiku',
+        effort: 'high',
+        permission: 'auto' as const,
+      },
+      rounds: 1,
+    },
+  };
+
+  it('reviews what the user sends the implementer too; the leader reads the review (ADR 0033)', async () => {
+    const { chat, updates } = session(
+      'auto',
+      'always',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      haiku,
+    );
+    try {
+      await chat.send('aggiungi round', undefined, 'implementer');
+      await chat.send('com’è andata?');
+    } finally {
+      await chat.dispose();
+    }
+    const done = doneTurns(updates);
+    expect(done.map((t) => t.role)).toEqual(['implementer', 'reviewer', 'leader']);
+    expect(done[1]?.text).toContain('direttamente all’implementatore, senza brief del leader');
+    expect(done[2]?.text).toContain('Un messaggio diretto dell’utente all’implementatore');
+    expect(done[2]?.text).toContain('Il lavoro è stato rivisto');
+  });
+
+  it('takes a review the user asks for, of the last work, back to the leader (ADR 0033)', async () => {
+    const { chat, updates } = session(
+      'auto',
+      'always',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      haiku,
+    );
+    try {
+      await chat.send('aggiungi round', undefined, 'implementer');
+      await chat.send('controlla i casi negativi', undefined, 'reviewer');
+      await chat.send('e quindi?');
+    } finally {
+      await chat.dispose();
+    }
+    const done = doneTurns(updates);
+    expect(done.map((t) => t.role)).toEqual(['implementer', 'reviewer', 'reviewer', 'leader']);
+    expect(updates).toContainEqual(
+      expect.objectContaining({ type: 'user', text: 'controlla i casi negativi', to: 'reviewer' }),
+    );
+    expect(done[2]?.text).toContain('L’utente ti chiede questa revisione direttamente');
+    expect(done[2]?.text).toContain('controlla i casi negativi');
+    expect(done[2]?.text).toContain('aggiungi round');
+    expect(done[3]?.text).toContain(
+      'Una revisione che l’utente ha chiesto direttamente al revisore',
+    );
+  });
+
+  it('with the reviewer switched off, reviews nothing and refuses a review request', async () => {
+    const { chat, updates } = session(
+      'auto',
+      'always',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      haiku,
+    );
+    chat.setReviewer(undefined);
+    try {
+      await chat.send('aggiungi round', undefined, 'implementer');
+      await chat.send('controlla', undefined, 'reviewer');
+    } finally {
+      await chat.dispose();
+    }
+    expect(doneTurns(updates).map((t) => t.role)).toEqual(['implementer']);
+    expect(updates).toContainEqual({
+      type: 'notice',
+      level: 'warn',
+      text: 'Il revisore è spento: accendilo per chiedergli una revisione.',
+    });
   });
 
   it('sends @impl to the implementer alone; the leader reads its report next time', async () => {

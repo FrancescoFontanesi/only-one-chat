@@ -38,6 +38,15 @@ describe('parseWebviewMessage: the chat', () => {
       type: 'send',
       text: 'ciao',
     });
+    // Attachments apart from the text (ADR 0026), and the composer's + for the file picker.
+    expect(
+      parseWebviewMessage({ type: 'send', text: 'vedi', attachments: ['src/a.py', 'b.md#L2-3'] }),
+    ).toEqual({ type: 'send', text: 'vedi', attachments: ['src/a.py', 'b.md#L2-3'] });
+    expect(parseWebviewMessage({ type: 'send', text: 'x', attachments: [1] })).toBeUndefined();
+    expect(
+      parseWebviewMessage({ type: 'send', text: 'x', attachments: Array(21).fill('a') }),
+    ).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'attachFiles' })).toEqual({ type: 'attachFiles' });
     expect(parseWebviewMessage({ type: 'decide', id: 'a-1', action: 'approve' })).toEqual({
       type: 'decide',
       id: 'a-1',
@@ -163,10 +172,28 @@ describe('parseWebviewMessage: composer and roles (ADR 0012)', () => {
     };
     expect(parseWebviewMessage({ ...role, extra: 1 })).toEqual(role);
     expect(parseWebviewMessage({ type: 'refreshModels' })).toEqual({ type: 'refreshModels' });
+    // The reviewer (ADR 0029): any provider, and no permission to choose.
+    const reviewer = { type: 'setReviewer', cli: 'antigravity', model: 'gemini-pro', effort: '' };
+    expect(parseWebviewMessage({ ...reviewer, permission: 'auto' })).toEqual(reviewer);
+    // A review request, and the reviewer switched on and off from Squad (ADR 0033).
+    expect(parseWebviewMessage({ type: 'send', text: 'controlla', to: 'reviewer' })).toEqual({
+      type: 'send',
+      text: 'controlla',
+      to: 'reviewer',
+    });
+    expect(parseWebviewMessage({ type: 'setReviewerOn', enabled: false })).toEqual({
+      type: 'setReviewerOn',
+      enabled: false,
+    });
   });
 
   it.each([
     { type: 'send', text: 'x', to: 'gateway' },
+    { type: 'send', text: 'x', to: 'reviewer', skill: 'review' },
+    { type: 'setReviewerOn', enabled: 'yes' },
+    { type: 'setReviewer', cli: 'gemini', model: 'm', effort: 'low' },
+    { type: 'setReviewer', cli: 'codex', model: '--yolo', effort: 'low' },
+    { type: 'setReviewer', cli: 'codex', model: 'm', effort: 'LOW' },
     { type: 'setRole', role: 'boss', cli: 'codex', model: 'm', effort: 'low', permission: 'auto' },
     {
       type: 'setRole',

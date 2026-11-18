@@ -136,14 +136,45 @@ function Control({ item, write }: { item: SettingItem; write: (value: SettingVal
           </span>
         </label>
       );
-    default:
-      return (
+    default: {
+      const field = (
         <label class={item.kind === 'text' ? 'cn-field sx-area' : 'cn-field'}>
           <span class="cn-field__box">
             <TextField item={item} multiline={item.kind === 'text'} write={write} />
           </span>
         </label>
       );
+      const cli = item.cli;
+      if (!cli) return field;
+      // A CLI's path (ADR 0025): found by the host, or in a folder picked in the explorer.
+      return (
+        <div class="sx-path">
+          {field}
+          <span class="sx-path__acts">
+            <button
+              class="cn-btn cn-btn--outline cn-btn--sm"
+              type="button"
+              title="Cerca l’eseguibile nel PATH e nelle installazioni note"
+              onClick={() => {
+                post({ type: 'detectCli', cli });
+              }}
+            >
+              <span class="cn-btn__label">Rileva</span>
+            </button>
+            <button
+              class="cn-btn cn-btn--outline cn-btn--sm"
+              type="button"
+              title="Scegli la cartella che contiene l’eseguibile"
+              onClick={() => {
+                post({ type: 'pickCli', cli });
+              }}
+            >
+              <span class="cn-btn__label">Seleziona</span>
+            </button>
+          </span>
+        </div>
+      );
+    }
   }
 }
 
@@ -355,6 +386,42 @@ export function SettingsApp() {
       ),
       value: <RoleFields still role={role} info={info} catalog={state.roles.catalog} />,
     };
+  });
+  // The reviewer (ADR 0029, 0033): any provider; switched on below, in Squad or on the dial.
+  const reviewer = state.roles.reviewer;
+  roleEntries.push({
+    key: 'reviewer',
+    name: `C / ${ROLE.reviewer}`,
+    side: <span class="cn-tag">{reviewer.enabled ? PROVIDER[reviewer.cli] : 'SPENTO'}</span>,
+    about: (
+      <>
+        <span class="sl-model">{reviewer.modelName}</span>
+        <p class="sl-d">
+          Rivede ogni lavoro dell’implementatore: lo prova e scrive test, mai il codice. Si accende
+          e si spegne qui sotto, in Squad o sulla ghiera.
+        </p>
+      </>
+    ),
+    value: (
+      <RoleFields
+        still
+        role="implementer"
+        info={reviewer}
+        catalog={state.roles.catalog}
+        only={['Provider', 'Modello', 'Reasoning']}
+        node={{
+          name: ROLE.reviewer,
+          write: (change) => {
+            post({
+              type: 'setReviewer',
+              cli: change.cli ?? reviewer.cli,
+              model: change.model ?? reviewer.model,
+              effort: change.effort ?? reviewer.effort,
+            });
+          },
+        }}
+      />
+    ),
   });
   const total = sections.length;
 

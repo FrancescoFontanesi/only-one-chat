@@ -16,13 +16,16 @@ import {
 } from '@only-one-chat/adapters';
 import {
   IMPLEMENTER_ROLE_INSTRUCTIONS,
+  NO_COMMANDS_NOTE,
   agentLabel,
   agentSessionOptions,
   leaderInstructions,
   openEventLog,
   pendingReportsPreface,
+  reportOutcome,
   runLoop,
   type AgentFactory,
+  type LoopOptions,
   type AgentSession,
   type EventLog,
   type InterceptDecision,
@@ -40,12 +43,16 @@ import type {
   ApprovalAction,
   ApprovalMode,
   PermitDecision,
+  RoleName,
   ThreadUpdate,
   TurnRole,
   TurnUsageSummary,
 } from '../webview/protocol.js';
 import type { Checkpoint, CheckpointStore } from './checkpoints.js';
 import { changes, snapshot, verifiedFacts } from './facts.js';
+import { guardReviewerTurn } from './guard.js';
+import { assessRisk, riskFact } from './risk.js';
+import { shortcutFacts, type TextChange } from './shortcuts.js';
 import { ignoredPaths, type Ignored } from './ignore.js';
 import { plainRefs } from './mentions.js';
 import { PROVIDERS, type ProviderChoice } from './providers.js';
@@ -83,7 +90,7 @@ export interface ChatConfig {
    */
   readonly permissionHook?: PermissionBridgeOptions;
   /** The CLIs' own sessions of a reopened chat, to continue (R5). */
-  readonly resume?: Partial<Record<TurnRole, string>>;
+  readonly resume?: Partial<Record<RoleName, string>>;
   /** Records the folder before each message, for the review and the restore (ADR 0014). */
   readonly checkpoints?: CheckpointStore;
   /** Paths left out of the facts and of the changes shown (ADR 0021). */
@@ -104,8 +111,21 @@ export interface ChatConfig {
    * `deferred`, it reads it with the user's next message (one leader turn less).
    */
   readonly review: 'always' | 'deferred';
+  /**
+   * The reviewer (ADR 0029, 0033), on any provider: after every piece of
+   * implementer work, delegated or sent by the user, it checks it, writing
+   * tests but never the code, and its findings go back to the implementer
+   * `rounds` times at most; the leader reads its review. Absent: no review.
+   * The panel changes it during the chat (setReviewer).
+   */
+  readonly reviewer?: ReviewerConfig;
   /** JSONL event log, outside the workspace. */
   readonly logPath: string;
+}
+
+export interface ReviewerConfig {
+  readonly choice: ProviderChoice;
+  readonly rounds: number;
 }
 
 /** A message for the implementer alone: `@impl` and the text. */
@@ -136,17 +156,23 @@ export interface DraftDelegation {
   readonly to: string;
 }
 
-/** The leader never writes (ADR 0018): whatever the settings say, its session is read-only. */
-const readOnly = (choice: AgentChoice): AgentChoice => ({ ...choice, permission: 'read-only' });
+/**
+ * The leader never writes (ADR 0018), nor does the reviewer (ADR 0029):
+ * whatever the settings say, their sessions are read-only.
+ */
+const readOnly = <T extends ProviderChoice>(choice: T): T => ({
+  ...choice,
+  permission: 'read-only',
+});
 
 /** Notes on files the user put back (ADR 0014), per role, until each receives them. */
-export type FileNotes = Readonly<Record<TurnRole, readonly string[]>>;
+export type FileNotes = Readonly<Record<RoleName, readonly string[]>>;
 
 export interface ChatEvents {
   update(update: ThreadUpdate): void;
   busy(busy: boolean): void;
   /** A role's CLI reported its own session id: to resume the chat later. */
-  sessionId?(role: TurnRole, id: string): void;
+  sessionId?(role: RoleName, id: string): void;
   /** The implementer work the leader has not seen changed: to keep it with the chat. */
   unseen?(reports: readonly PendingReport[]): void;
   /** The notes on files put back that each role has not received yet changed. */
@@ -154,7 +180,7 @@ export interface ChatEvents {
   /** A delegation now waits for the user, or no longer does: to keep it with the chat. */
   draft?(draft: DraftDelegation | null): void;
   /** A role's session context after a turn: how full it is. */
-  context?(role: TurnRole, context: ContextUsage): void;
+  context?(role: RoleName, context: ContextUsage): void;
   /** A turn ended: its CLI, what it used, and the usage windows it reported, if any. */
   turnUsage?(
     provider: string,
@@ -174,8 +200,8 @@ export function summarize(usage: TurnUsage | undefined): TurnUsageSummary | unde
   };
 }
 
-const roleOf = (role: 'orchestrator' | 'worker'): TurnRole =>
-  role === 'orchestrator' ? 'leader' : 'implementer';
+const roleOf = (role: 'orchestrator' | 'worker' | 'reviewer'): TurnRole =>
+  role === 'orchestrator' ? 'leader' : role === 'worker' ? 'implementer' : 'reviewer';
 
 export class ChatSession {
   private mode: ApprovalMode;
@@ -193,7 +219,7 @@ export class ChatSession {
   private readonly currentTurn = new Map<TurnRole, string>();
   private readonly pending = new Map<string, (decision: InterceptDecision) => void>();
   /** The permission bridges of the Claude roles, for the chat. */
-  private readonly bridges = new Map<TurnRole, PermissionBridge>();
+  private readonly bridges = new Map<RoleName, PermissionBridge>();
   /** Agents' permission requests waiting for the user (R9). */
   private readonly permissions = new Map<string, (decision: PermitDecision) => void>();
   /** The leader's questions waiting for the user (ADR 0019), with their secret ids. */
@@ -204,13 +230,13 @@ export class ChatSession {
   /** Implementer work the leader has not seen yet. */
   private unseen: PendingReport[] = [];
   /** Sessions of a reopened chat not resumed yet. */
-  private readonly resumable = new Map<TurnRole, string>();
+  private readonly resumable = new Map<RoleName, string>();
   /** The CLIs' own session of each role, as last reported. */
-  private readonly nativeSessions = new Map<TurnRole, string>();
+  private readonly nativeSessions = new Map<RoleName, string>();
   /** Files the user put back, not told yet to each role. */
-  private readonly fileNotes: Record<TurnRole, string[]>;
+  private readonly fileNotes: Record<RoleName, string[]>;
   /** Roles whose session is reopened with new rules before their next turn. */
-  private readonly reopen = new Set<TurnRole>();
+  private readonly reopen = new Set<RoleName>();
   /** The roles as configured, with the effort the user chose during the chat. */
   private readonly roles: { leader: AgentChoice; implementer: AgentChoice };
   /** The delegation of a reopened chat still waiting for the user; sent from here. */
@@ -220,14 +246,21 @@ export class ChatSession {
   /** The chat is being closed: what waits for the user stays kept with it. */
   private closing = false;
   private readonly ignored: Ignored;
+  /** The folder as it was before the message running now: what the checks on the diff start from. */
+  private inRequest: Checkpoint | null = null;
   /** The latest message between agents the loop showed, for the card of one that went on by itself. */
   private lastIntercepted: { from: string; to: string; text: string } | undefined;
+  /** The reviewer now: the panel switches it on and off during the chat (ADR 0033). */
+  private reviewerConfig: ReviewerConfig | undefined;
+  /** The last implementer work, what a review the user asks for looks at (ADR 0033). */
+  private lastWork: { brief: string; report: string; direct: boolean } | undefined;
 
   constructor(
     private readonly config: ChatConfig,
     private readonly events: ChatEvents,
   ) {
     this.mode = config.mode;
+    this.reviewerConfig = config.reviewer;
     this.roles = { leader: readOnly(config.leader), implementer: config.implementer };
     this.restored = config.draft;
     this.ignored = ignoredPaths(config.ignoredPaths ?? []);
@@ -236,7 +269,7 @@ export class ChatSession {
       leader: [...(config.fileNotes?.leader ?? [])],
       implementer: [...(config.fileNotes?.implementer ?? [])],
     };
-    for (const [role, id] of Object.entries(config.resume ?? {}) as [TurnRole, string][]) {
+    for (const [role, id] of Object.entries(config.resume ?? {}) as [RoleName, string][]) {
       this.resumable.set(role, id);
     }
   }
@@ -251,7 +284,7 @@ export class ChatSession {
    * conversation stays with the model it began with.
    * Returns false when the choice was not applied in full.
    */
-  setRole(role: TurnRole, choice: AgentChoice): boolean {
+  setRole(role: RoleName, choice: AgentChoice): boolean {
     if (role === 'leader') choice = readOnly(choice);
     const before = this.roles[role];
     if (choice.cli !== before.cli) return false;
@@ -266,6 +299,14 @@ export class ChatSession {
     if (choice.model !== before.model) session?.setModel?.(choice.model);
     if (choice.effort !== before.effort) session?.setEffort?.(choice.effort);
     return !locked;
+  }
+
+  /**
+   * The reviewer from the next piece of work on, or none (ADR 0033): its
+   * session lasts one review, so a change takes effect at once.
+   */
+  setReviewer(reviewer: ReviewerConfig | undefined): void {
+    this.reviewerConfig = reviewer;
   }
 
   /** The roles of this chat, with the user's changes. */
@@ -289,7 +330,7 @@ export class ChatSession {
   }
 
   /** A role's CLI reported its own session: to resume it, now or in a reopened chat. */
-  private noteSession(role: TurnRole, id: string): void {
+  private noteSession(role: RoleName, id: string): void {
     if (id === '') return;
     this.nativeSessions.set(role, id);
     this.events.sessionId?.(role, id);
@@ -310,7 +351,7 @@ export class ChatSession {
 
   /** A role's sessions, from its provider (ADR 0022): the leader read-only (ADR 0018). */
   private factory(
-    role: TurnRole,
+    role: RoleName,
     choice: AgentChoice,
     bridge: PermissionBridge | undefined,
   ): AgentFactory {
@@ -325,7 +366,7 @@ export class ChatSession {
    * The permission bridge of a role that may write, when its provider asks
    * through it (R9): one per role, for the chat. A read-only role has none.
    */
-  private async bridgeFor(role: TurnRole): Promise<PermissionBridge | undefined> {
+  private async bridgeFor(role: RoleName): Promise<PermissionBridge | undefined> {
     const choice = this.roles[role];
     const hook = this.config.permissionHook;
     const provider = PROVIDERS[choice.cli];
@@ -361,7 +402,32 @@ export class ChatSession {
   }
 
   /** The session to resume for a role, once: a later reset starts new ones. */
-  private resumeOf(role: TurnRole): { resume?: string } {
+  /**
+   * A role's session: the one a reopened chat saved, resumed; when that one no
+   * longer opens (deleted or expired in its CLI), a new one, and the user is
+   * told it does not remember the conversation (ADR 0027).
+   */
+  private async openSession(
+    role: RoleName,
+    factory: AgentFactory,
+    options: Parameters<AgentFactory>[0],
+  ): Promise<AgentSession> {
+    const { resume } = this.resumeOf(role);
+    if (!resume) return factory(options);
+    try {
+      return await factory({ ...options, resume });
+    } catch (error) {
+      this.events.sessionId?.(role, '');
+      this.events.update({
+        type: 'notice',
+        level: 'warn',
+        text: `La sessione salvata ${role === 'leader' ? 'del leader' : 'dell’implementatore'} non si riapre (${error instanceof Error ? error.message : String(error)}): ne parte una nuova, che non ricorda la conversazione.`,
+      });
+      return factory(options);
+    }
+  }
+
+  private resumeOf(role: RoleName): { resume?: string } {
     const id = this.resumable.get(role);
     this.resumable.delete(role);
     return id ? { resume: id } : {};
@@ -376,17 +442,14 @@ export class ChatSession {
       const brief = this.handoffBrief;
       this.handoffBrief = undefined;
       const instructions = this.withUserInstructions('implementer', IMPLEMENTER_ROLE_INSTRUCTIONS);
-      this.implementerSession = await this.factory(
+      this.implementerSession = await this.openSession(
         'implementer',
-        this.roles.implementer,
-        await this.bridgeFor('implementer'),
-      )({
-        ...agentSessionOptions(
+        this.factory('implementer', this.roles.implementer, await this.bridgeFor('implementer')),
+        agentSessionOptions(
           brief ? `${instructions}\n\n${HANDOFF_PREFACE}\n${brief}` : instructions,
           { ...this.policy(this.roles.implementer), proactive: true },
         ),
-        ...this.resumeOf('implementer'),
-      });
+      );
     }
     return this.implementerSession;
   }
@@ -538,7 +601,7 @@ export class ChatSession {
     return { leader: [...this.fileNotes.leader], implementer: [...this.fileNotes.implementer] };
   }
 
-  private takeNotes(role: TurnRole): string | undefined {
+  private takeNotes(role: RoleName): string | undefined {
     const notes = this.fileNotes[role].splice(0);
     if (notes.length === 0) return undefined;
     this.events.fileNotes?.(this.pendingNotes());
@@ -601,11 +664,11 @@ export class ChatSession {
   async send(
     text: string,
     attached?: { readonly text: string; readonly paths: readonly string[] },
-    to?: 'leader' | 'implementer',
+    to?: TurnRole,
     skill?: SkillRef,
   ): Promise<void> {
-    const direct = to ? to === 'implementer' : DIRECT.test(text);
-    if (!to && direct) text = text.replace(DIRECT, '');
+    const recipient: TurnRole = to ?? (DIRECT.test(text) ? 'implementer' : 'leader');
+    if (!to && recipient === 'implementer') text = text.replace(DIRECT, '');
     const attachments = attached?.text ?? '';
     if (this.running) {
       this.events.update({
@@ -623,22 +686,34 @@ export class ChatSession {
       });
       return;
     }
+    if (recipient === 'reviewer' && !this.reviewerConfig) {
+      this.events.update({
+        type: 'notice',
+        level: 'warn',
+        text: 'Il revisore è spento: accendilo per chiedergli una revisione.',
+      });
+      return;
+    }
     const checkpoint = this.checkpoint();
     this.events.update({
       type: 'user',
       id: this.id('u'),
       text,
-      to: direct ? 'implementer' : 'leader',
+      to: recipient,
       ...(checkpoint ? { checkpoint: checkpoint.id } : {}),
       ...(attached && attached.paths.length > 0 ? { attachments: attached.paths } : {}),
       ...(skill ? { skill: skill.name } : {}),
     });
     // The files the user named reach the agent after the text; the thread shows the text.
-    const prompt = attachments === '' ? text : `${text}\n\n${attachments}`;
+    // `@path` in the text names a file: the agent reads it as the plain path (ADR 0026).
+    const named = plainRefs(text, this.config.cwd);
+    const prompt = attachments === '' ? named : `${named}\n\n${attachments}`;
     await this.run(checkpoint, (baseline, shown) =>
-      direct
+      recipient === 'implementer'
         ? this.toImplementer(prompt, baseline, shown, skill)
-        : this.toLeader(prompt, baseline, shown, undefined, skill),
+        : recipient === 'reviewer'
+          ? this.toReviewer(prompt, baseline, shown)
+          : this.toLeader(prompt, baseline, shown, undefined, skill),
     );
   }
 
@@ -667,6 +742,7 @@ export class ChatSession {
   ): Promise<void> {
     this.running = true;
     this.events.busy(true);
+    this.inRequest = checkpoint;
     const baseline = snapshot(this.config.cwd, this.ignored);
     /** Set once the facts are shown, by the facts callback or the direct turn. */
     const shown = { facts: false };
@@ -683,6 +759,7 @@ export class ChatSession {
     } finally {
       this.running = false;
       this.stopRunning = undefined;
+      this.inRequest = null;
       this.closeRunningTurns('failed');
       const reviewed = checkpoint ? this.review(checkpoint) : false;
       if (!shown.facts && !reviewed) {
@@ -700,14 +777,166 @@ export class ChatSession {
     }
   }
 
-  /** A turn of the implementer alone; its report waits for the leader. */
+  /**
+   * What the runtime verified after an implementer's turn (ADR 0010, 0030): the
+   * changed files and the verification command, then the checks on the diff.
+   */
+  private async facts(baseline: ReturnType<typeof snapshot>): Promise<string> {
+    const { config } = this;
+    const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand, this.ignored);
+    return `${facts}
+
+${this.diffChecks()}`;
+  }
+
+  /** The checks on the diff since the request began; said so when they cannot be made. */
+  private diffChecks(): string {
+    const now = this.changesNow();
+    if (!now) {
+      return 'Controlli sul diff, fatti dal runtime: non eseguiti, senza checkpoint della cartella.';
+    }
+    return [
+      shortcutFacts(now.changed, now.uncovered),
+      riskFact(assessRisk(now.changed, now.store.texts())),
+    ].join('\n');
+  }
+
+  /** What the message changed so far, text before and after; null without a checkpoint. */
+  private changesNow(): {
+    changed: TextChange[];
+    uncovered: readonly string[];
+    store: CheckpointStore;
+  } | null {
+    const store = this.config.checkpoints;
+    const review = this.inRequest ? store?.review(this.inRequest) : undefined;
+    if (!store || !review) return null;
+    const text = (hash: string | null) =>
+      hash === null ? null : store.content(hash).toString('utf8');
+    const changed: TextChange[] = review.files
+      .filter((file) => !file.binary)
+      .map((file) => ({ path: file.path, before: text(file.before), after: text(file.after) }));
+    return { changed, uncovered: review.uncovered, store };
+  }
+
+  /**
+   * The reviewer's part of a loop (ADR 0029, 0033), or nothing when it is off.
+   * A session per review: it runs commands and writes tests in the folder,
+   * with its provider's own permissions; the code it never changes: each of
+   * its turns is guarded by a checkpoint, and what it changed outside the
+   * tests is put back. A folder that cannot be recorded leaves it read-only,
+   * like the leader.
+   */
+  private reviewerOptions(
+    baseline: ReturnType<typeof snapshot>,
+  ): { options: Partial<LoopOptions>; policy?: SubagentPolicy } | undefined {
+    const { config } = this;
+    const current = this.reviewerConfig;
+    if (!current) return undefined;
+    const store = config.checkpoints;
+    const guardable = store !== undefined && baseline !== 'unavailable';
+    const reviewer = guardable
+      ? { ...current.choice, permission: 'auto' as const }
+      : readOnly(current.choice);
+    const factory = PROVIDERS[reviewer.cli].factory(
+      config,
+      { choice: reviewer, leader: !guardable },
+      undefined,
+    );
+    const reviewerNote = !guardable
+      ? `la tua sessione è in sola lettura: non puoi scrivere file, nemmeno test.${
+          reviewer.cli === 'antigravity' ? ` Inoltre ${NO_COMMANDS_NOTE}` : ''
+        }`
+      : undefined;
+    return {
+      options: {
+        reviewer: (options) =>
+          factory({
+            ...options,
+            instructions: this.withUserInstructions('reviewer', options.instructions),
+          }),
+        reviewRounds: current.rounds,
+        ...(reviewerNote ? { reviewerNote } : {}),
+        ...(store && guardable
+          ? { guardReviewer: () => guardReviewerTurn(store, this.id('rev')) }
+          : {}),
+      },
+      // Antigravity has no sub-agents to rule (ADR 0023).
+      ...(reviewer.cli !== 'antigravity'
+        ? { policy: { ...this.policy({ ...reviewer, cli: reviewer.cli }), proactive: true } }
+        : {}),
+    };
+  }
+
+  /**
+   * A review of work the leader did not delegate (ADR 0033), in the runtime's
+   * `review` mode: the findings go back to the implementer, and what the
+   * leader will read comes back. Undefined when it did not end.
+   */
+  private async reviewWork(
+    of: NonNullable<LoopOptions['reviewOf']>,
+    baseline: ReturnType<typeof snapshot>,
+    shown: { facts: boolean },
+  ): Promise<{ report: string; facts: string; review: string } | undefined> {
+    const { config } = this;
+    const reviewer = this.reviewerOptions(baseline);
+    if (!reviewer) return undefined;
+    const loop = runLoop({
+      request: '',
+      mode: 'review',
+      reviewOf: of,
+      relay: (message) => plainRefs(message, config.cwd),
+      log: this.log ?? (await openEventLog(config.logPath, config.cwd)),
+      onEvent: (event) => {
+        this.onEvent(event);
+      },
+      workerSession: await this.implementer(),
+      ...reviewer.options,
+      orchestrator: () => Promise.reject(new Error('no leader turn in a review')),
+      worker: () => Promise.reject(new Error('the implementer session is given')),
+      subagents: {
+        worker: { ...this.policy(this.roles.implementer), proactive: true },
+        ...(reviewer.policy ? { reviewer: reviewer.policy } : {}),
+      },
+      onApproval: ({ role, agent, request }, signal) =>
+        this.askPermission(roleOf(role), agent, request.summary, signal),
+      facts: async () => {
+        const facts = await this.facts(baseline);
+        shown.facts = true;
+        this.events.update({ type: 'notice', level: 'info', text: facts });
+        return facts;
+      },
+      // The messages of a review go on by themselves, shown in the thread (ADR 0029).
+      intercept: () => Promise.reject(new Error('a review passes its messages on')),
+      onMalformedDelegation: () => Promise.reject(new Error('no delegation in a review')),
+    });
+    this.stopRunning = () => loop.stop();
+    const outcome = await loop.done;
+    return outcome.status === 'delegated' && outcome.review !== undefined
+      ? { report: outcome.report, facts: outcome.facts, review: outcome.review }
+      : undefined;
+  }
+
+  /** Work the leader has not seen, kept for the user's next message to it. */
+  private keepForLeader(pending: PendingReport, what: string): void {
+    this.unseen.push(pending);
+    this.events.unseen?.(this.unseen);
+    this.events.update({
+      type: 'notice',
+      level: 'info',
+      text: `Il leader leggerà ${what} con il tuo prossimo messaggio.`,
+    });
+  }
+
+  /**
+   * A turn of the implementer alone; reviewed when the reviewer is on (ADR
+   * 0033), then its report, or the review in its place, waits for the leader.
+   */
   private async toImplementer(
     text: string,
     baseline: ReturnType<typeof snapshot>,
     shown: { facts: boolean },
     skill?: SkillRef,
   ): Promise<void> {
-    const { config } = this;
     const session = await this.implementer();
     const notes = this.takeNotes('implementer');
     const result = await this.implementerTurn(
@@ -716,16 +945,52 @@ export class ChatSession {
       true,
       skill,
     );
-    const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand, this.ignored);
+    this.lastWork = { brief: text, report: result.text, direct: true };
+    // A report that stopped on a missing decision goes to the leader as it is.
+    const judged =
+      this.reviewerConfig && reportOutcome(result.text) !== 'bloccato'
+        ? await this.reviewWork({ brief: text, report: result.text, direct: true }, baseline, shown)
+        : undefined;
+    if (judged) {
+      this.lastWork = { brief: text, report: judged.report, direct: true };
+      this.keepForLeader(
+        { source: 'direct', request: text, ...judged },
+        'questo lavoro e la sua revisione',
+      );
+      return;
+    }
+    const facts = await this.facts(baseline);
     shown.facts = true;
     this.events.update({ type: 'notice', level: 'info', text: facts });
-    this.unseen.push({ source: 'direct', request: text, report: result.text, facts });
-    this.events.unseen?.(this.unseen);
-    this.events.update({
-      type: 'notice',
-      level: 'info',
-      text: 'Il leader leggerà questo rapporto con il tuo prossimo messaggio.',
-    });
+    this.keepForLeader(
+      { source: 'direct', request: text, report: result.text, facts },
+      'questo rapporto',
+    );
+  }
+
+  /**
+   * A review the user asks the reviewer for (ADR 0033): of the last work, if
+   * any, with the user's words; it waits for the leader like a direct report.
+   */
+  private async toReviewer(
+    text: string,
+    baseline: ReturnType<typeof snapshot>,
+    shown: { facts: boolean },
+  ): Promise<void> {
+    const work = this.lastWork;
+    const judged = await this.reviewWork(
+      {
+        brief: work?.brief ?? '',
+        report: work?.report ?? '',
+        ...(work?.direct ? { direct: true } : {}),
+        asked: text,
+      },
+      baseline,
+      shown,
+    );
+    if (!judged) return;
+    if (work) this.lastWork = { ...work, report: judged.report };
+    this.keepForLeader({ source: 'review', request: text, ...judged }, 'la revisione');
   }
 
   /** A message to the leader; with `draft`, a delegation already approved goes straight on. */
@@ -739,12 +1004,10 @@ export class ChatSession {
     const { config } = this;
     const leaderPolicy = { ...this.policy(this.roles.leader), proactive: true };
     // Read-only (ADR 0018): it reasons, searches and delegates; it never writes.
-    this.leaderSession ??= await this.factory(
+    this.leaderSession ??= await this.openSession(
       'leader',
-      this.roles.leader,
-      await this.bridgeFor('leader'),
-    )({
-      ...agentSessionOptions(
+      this.factory('leader', this.roles.leader, await this.bridgeFor('leader')),
+      agentSessionOptions(
         this.withUserInstructions(
           'leader',
           // Every leader has the questions tool, Codex's or Claude's (ADR 0019, 0022).
@@ -752,8 +1015,7 @@ export class ChatSession {
         ),
         leaderPolicy,
       ),
-      ...this.resumeOf('leader'),
-    });
+    );
     // A draft sent later has no message of the user: what the leader has not seen waits for one.
     const unseen = draft === undefined ? this.unseen : [];
     if (draft === undefined) this.unseen = [];
@@ -764,6 +1026,7 @@ export class ChatSession {
       .filter(Boolean)
       .join('\n\n');
     const manual = this.mode === 'manual';
+    const reviewer = this.reviewerOptions(baseline);
     const loop = runLoop({
       request: text,
       ...(preface !== '' ? { preface } : {}),
@@ -779,19 +1042,21 @@ export class ChatSession {
       leaderSession: this.leaderSession,
       workerSession: await this.implementer(),
       review: config.review,
+      ...(reviewer?.options ?? {}),
       autoApprove: !manual,
       orchestrator: () => Promise.reject(new Error('the leader session is given')),
       worker: () => Promise.reject(new Error('the implementer session is given')),
       subagents: {
         orchestrator: leaderPolicy,
         worker: { ...this.policy(this.roles.implementer), proactive: true },
+        ...(reviewer?.policy ? { reviewer: reviewer.policy } : {}),
       },
       onApproval: ({ role, agent, request }, signal) =>
         this.askPermission(roleOf(role), agent, request.summary, signal),
       onQuestion: ({ role, agent, questions }, signal) =>
         this.ask(roleOf(role), agent, questions, signal),
       facts: async () => {
-        const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand, this.ignored);
+        const facts = await this.facts(baseline);
         shown.facts = true;
         this.events.update({ type: 'notice', level: 'info', text: facts });
         return facts;
@@ -833,6 +1098,7 @@ export class ChatSession {
         request: outcome.spec,
         report: outcome.report,
         facts: outcome.facts,
+        ...(outcome.review !== undefined ? { review: outcome.review } : {}),
       });
       this.events.update({
         type: 'notice',
@@ -1006,6 +1272,11 @@ export class ChatSession {
           ...(usage ? { usage } : {}),
         });
         this.events.turnUsage?.(event.identity.provider, usage, event.quota ?? null);
+        if (role === 'implementer' && this.lastWork) {
+          this.lastWork = { ...this.lastWork, report: event.text };
+        }
+        // The reviewer's session lasts one review: nothing of it is kept to resume.
+        if (role === 'reviewer') break;
         if (event.context) this.events.context?.(role, event.context);
         this.noteSession(role, event.identity.sessionId);
         break;
@@ -1050,8 +1321,15 @@ export class ChatSession {
         break;
       case 'intercepted':
         this.lastIntercepted = event.message;
+        // The last work a review the user asks for looks at (ADR 0033).
+        if (event.message.kind === 'delegation') {
+          this.lastWork = { brief: event.message.text, report: '', direct: false };
+        }
         break;
       case 'decision': {
+        if (event.kind === 'delegation' && event.text !== undefined && this.lastWork) {
+          this.lastWork = { ...this.lastWork, brief: event.text };
+        }
         // A delegation that went on by itself still has its card, closed at once (ADR 0018).
         const message = this.lastIntercepted;
         if (event.action !== 'auto_approve' || event.kind !== 'delegation' || !message) break;
@@ -1067,6 +1345,19 @@ export class ChatSession {
         update({ type: 'approval_closed', id, action: 'sent' });
         break;
       }
+      case 'reviewed': {
+        const verdict = event.verdict ? event.verdict.toUpperCase() : 'SENZA VERDETTO';
+        const rounds = event.rounds === 1 ? '1 giro' : `${String(event.rounds)} giri`;
+        update({
+          type: 'notice',
+          level: event.verdict === 'respinto' || event.verdict === null ? 'warn' : 'info',
+          text: `Revisione di ${event.reviewer}: ${verdict} · ${rounds} di correzione`,
+        });
+        break;
+      }
+      case 'contract':
+        update({ type: 'notice', level: 'warn', text: event.message });
+        break;
       case 'delegation_invalid':
         update({
           type: 'notice',

@@ -10,13 +10,18 @@ import type {
   MonitorState,
   RoleInfo,
   ThreadUpdate,
+  RoleName,
   TurnRole,
 } from '../webview/protocol.js';
 
 /** At most this many log entries, the latest. */
 const MAX_EVENTS = 200;
 
-const ROLE: Record<TurnRole, string> = { leader: 'Leader', implementer: 'Implementatore' };
+const ROLE: Record<TurnRole, string> = {
+  leader: 'Leader',
+  implementer: 'Implementatore',
+  reviewer: 'Revisore',
+};
 
 const PERMIT: Record<string, string> = {
   accept: 'consentito',
@@ -46,10 +51,12 @@ interface AgentState {
 }
 
 export class MonitorStore {
-  private roles: Record<TurnRole, RoleInfo> | undefined;
+  private roles: Record<RoleName, RoleInfo> | undefined;
   private readonly agents: Record<TurnRole, AgentState> = {
     leader: { turns: new Set(), activity: null, subagents: new Map() },
     implementer: { turns: new Set(), activity: null, subagents: new Map() },
+    // Logged like the others; the board shows the two roles of the dial (ADR 0029).
+    reviewer: { turns: new Set(), activity: null, subagents: new Map() },
   };
   /** Turn id → role, for the updates that name only the turn. */
   private readonly turnRole = new Map<string, TurnRole>();
@@ -61,7 +68,7 @@ export class MonitorStore {
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  setRoles(roles: Record<TurnRole, RoleInfo>): void {
+  setRoles(roles: Record<RoleName, RoleInfo>): void {
     this.roles = roles;
     this.changed();
   }

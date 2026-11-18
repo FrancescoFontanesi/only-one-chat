@@ -102,6 +102,7 @@ async function prompt(sessionId, text) {
     say(`${tag} permesso: ${JSON.stringify(answer.outcome)}`);
     return { stopReason: 'end_turn' };
   }
+  if (text.includes('RIFIUTO')) return { stopReason: 'refusal' };
   if (text.includes('LENTO')) {
     say(`${tag} inizio`);
     await new Promise((resolve) => (cancel = resolve));

@@ -84,14 +84,15 @@ export function lineCounts(before: string, after: string): { added: number; remo
 export class CheckpointStore {
   private readonly blobs: string;
   private readonly manifests: string;
+  // Explicit fields, not parameter properties: the bench runs this file with Node's type stripping.
+  private readonly cwd: string;
+  /** Paths left out of every checkpoint (ADR 0021). */
+  private readonly ignored: Ignored;
 
   /** `root`: this chat's folder in the extension's storage; `cwd`: the folder the agents work in. */
-  constructor(
-    root: string,
-    private readonly cwd: string,
-    /** Paths left out of every checkpoint (ADR 0021). */
-    private readonly ignored: Ignored = NOTHING_IGNORED,
-  ) {
+  constructor(root: string, cwd: string, ignored: Ignored = NOTHING_IGNORED) {
+    this.cwd = cwd;
+    this.ignored = ignored;
     this.blobs = join(root, 'blobs');
     this.manifests = join(root, 'checkpoints');
   }
@@ -229,6 +230,16 @@ export class CheckpointStore {
       files: files.sort((x, y) => x.path.localeCompare(y.path)),
       uncovered: [...uncovered].sort(),
     };
+  }
+
+  /** The folder's text files now, by path, for who depends on what (ADR 0032); empty when unreadable. */
+  texts(): Map<string, string> {
+    const now = this.read();
+    const out = new Map<string, string>();
+    for (const [path, content] of now?.files ?? []) {
+      if (!isBinary(content)) out.set(path, content.toString('utf8'));
+    }
+    return out;
   }
 
   /** The file's content hash now; null when it does not exist. */

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { isFake } from '../clis.js';
 import type { ChatRoles, RoleSettings } from '../roles.js';
 import type { ModelCatalog } from '../session/catalog.js';
+import { cliLabel, detectCli, findInFolder } from '../detect.js';
 import { settingsSections, writeSetting } from '../settings.js';
 import { createNonce, renderWebviewHtml, STYLESHEETS } from './html.js';
 import { parseWebviewMessage, type WebviewToHostMessage } from './protocol.js';
@@ -96,6 +97,11 @@ export class SettingsPanel {
         if (!(await this.roles.choose(role, { cli, model, effort, permission }))) this.show();
         break;
       }
+      case 'setReviewer': {
+        const { cli, model, effort } = message;
+        if (!(await this.roles.setReviewer({ cli, model, effort }))) this.show();
+        break;
+      }
       case 'setSetting': {
         const problem = await writeSetting(
           this.context,
@@ -112,6 +118,43 @@ export class SettingsPanel {
       case 'showChat':
         await vscode.commands.executeCommand('onlyOneChat.openPanel');
         break;
+      case 'detectCli':
+      case 'pickCli': {
+        const { cli } = message;
+        let found: string | undefined;
+        if (message.type === 'detectCli') {
+          found = await detectCli(cli);
+          if (!found) {
+            void vscode.window.showWarningMessage(
+              `${cliLabel(cli)} non trovato: usa SELEZIONA per indicarne la cartella, o scrivi il percorso.`,
+            );
+          }
+        } else {
+          const picked = await vscode.window.showOpenDialog({
+            canSelectFolders: true,
+            canSelectFiles: false,
+            canSelectMany: false,
+            openLabel: 'Usa questa cartella',
+            title: `Cartella di ${cliLabel(cli)}`,
+          });
+          const folder = picked?.[0]?.fsPath;
+          if (!folder) break;
+          found = await findInFolder(cli, folder);
+          if (!found) {
+            void vscode.window.showWarningMessage(
+              `In ${folder} (e nella sua bin) non c’è l’eseguibile di ${cliLabel(cli)}.`,
+            );
+          }
+        }
+        if (found) {
+          // A path is the user's, never a folder's (machine scope).
+          const problem = await writeSetting(this.context, `${cli}Path`, found, 'user');
+          if (problem) void vscode.window.showWarningMessage(problem);
+          else void vscode.window.showInformationMessage(`${cliLabel(cli)}: ${found}`);
+        }
+        this.show();
+        break;
+      }
       case 'openNativeSettings':
         await vscode.commands.executeCommand(
           'workbench.action.openSettings',

@@ -307,6 +307,16 @@ export function createAcpAgentFactory(config: AcpAgentConfig): AgentFactory {
           ),
         )
         .then((result) => {
+          // A turn that ends with no text for any reason but its own end is an error, not an empty answer.
+          const stopReason = isRecord(result) ? text(result['stopReason']) : '';
+          if (
+            turn.text.trim() === '' &&
+            stopReason !== '' &&
+            stopReason !== 'end_turn' &&
+            stopReason !== 'cancelled'
+          ) {
+            throw new Error(`${config.provider}: the turn ended without an answer (${stopReason})`);
+          }
           const tokens = isRecord(result) ? acpTokens(result['usage']) : null;
           const usage: TurnUsage = {
             byModel: tokens ? { [model || config.provider]: tokens } : {},

@@ -1,6 +1,7 @@
 # 0020. Prompt di ruolo, brief e rapporto
 
-Stato: Accettata (iterazione 3). Precisa l'ADR 0018 (formati del brief e del rapporto).
+Stato: Accettata (iterazione 3). Precisa l'ADR 0018 (formati del brief e del rapporto). L'ADR
+0029 precisa i criteri del brief e le sezioni del rapporto.
 
 ## Contesto
 

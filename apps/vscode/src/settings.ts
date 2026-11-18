@@ -5,7 +5,7 @@
 // checked against its kind.
 
 import * as vscode from 'vscode';
-import type { SettingItem, SettingsSection, SettingsTarget } from './webview/protocol.js';
+import type { Cli, SettingItem, SettingsSection, SettingsTarget } from './webview/protocol.js';
 
 interface Definition {
   readonly key: string;
@@ -16,6 +16,8 @@ interface Definition {
   readonly max?: number;
   /** Development host only. */
   readonly development?: boolean;
+  /** The path of this CLI's executable: the page offers RILEVA and SELEZIONA (ADR 0025). */
+  readonly cli?: Cli;
 }
 
 const SECTIONS: readonly { title: string; items: readonly Definition[] }[] = [
@@ -44,10 +46,25 @@ const SECTIONS: readonly { title: string; items: readonly Definition[] }[] = [
     ],
   },
   {
+    // Its provider, model and reasoning are with the roles, at the top of the page (ADR 0029).
+    title: 'Revisore',
+    items: [
+      { key: 'reviewer.enabled', label: 'Revisione di ogni lavoro', kind: 'boolean' },
+      {
+        key: 'reviewer.rounds',
+        label: 'Giri di correzione al massimo',
+        kind: 'number',
+        min: 0,
+        max: 3,
+      },
+    ],
+  },
+  {
     title: 'Istruzioni per ruolo',
     items: [
       { key: 'leader.instructions', label: 'Leader', kind: 'text' },
       { key: 'implementer.instructions', label: 'Implementatore', kind: 'text' },
+      { key: 'reviewer.instructions', label: 'Revisore', kind: 'text' },
     ],
   },
   {
@@ -100,8 +117,14 @@ const SECTIONS: readonly { title: string; items: readonly Definition[] }[] = [
   {
     title: 'Provider',
     items: [
-      { key: 'codexPath', label: 'Eseguibile di Codex', kind: 'string' },
-      { key: 'claudePath', label: 'Eseguibile di Claude Code', kind: 'string' },
+      { key: 'codexPath', label: 'Eseguibile di Codex', kind: 'string', cli: 'codex' },
+      { key: 'claudePath', label: 'Eseguibile di Claude Code', kind: 'string', cli: 'claude' },
+      {
+        key: 'antigravityPath',
+        label: 'Eseguibile di Antigravity (agy)',
+        kind: 'string',
+        cli: 'antigravity',
+      },
       {
         key: 'fake',
         label: 'CLI finti (sviluppo, nessuna quota)',
@@ -149,6 +172,7 @@ export function settingsSections(context: vscode.ExtensionContext): SettingsSect
           ...(d.options ? { options: d.options } : {}),
           ...(d.min !== undefined ? { min: d.min } : {}),
           ...(d.max !== undefined ? { max: d.max } : {}),
+          ...(d.cli ? { cli: d.cli } : {}),
           value: settings.get(d.key) as SettingItem['value'],
           scope:
             where?.workspaceFolderValue !== undefined || where?.workspaceValue !== undefined

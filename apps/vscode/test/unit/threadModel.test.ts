@@ -7,6 +7,7 @@ import {
   readFacts,
   readOp,
   readReport,
+  readReviewBlock,
   readUserMessage,
   waitingItems,
   withoutDelegation,
@@ -174,6 +175,46 @@ describe('the implementer’s report (ADR 0020)', () => {
   it('is not one while its block is still open, nor in a text without it', () => {
     expect(readReport('<<<RAPPORTO\n## Esito\nparziale')).toBeNull();
     expect(readReport('Fatto.')).toBeNull();
+  });
+});
+
+describe('the reviewer’s blocks (ADR 0029)', () => {
+  it('reads a review: the verdict, the sections, the text around the block', () => {
+    const text = [
+      'Ho finito.',
+      '<<<REVISIONE',
+      '## Verdetto',
+      'Approvato con riserve — resta R2, due giri.',
+      '## Criteri',
+      'C1 — verificato — pnpm test: 12 passed',
+      '## Rilievi',
+      'nessuno',
+      'REVISIONE>>>',
+      'Fine.',
+    ].join('\r\n');
+    expect(readReviewBlock(text)).toMatchObject({
+      kind: 'review',
+      before: 'Ho finito.',
+      verdict: 'con riserve',
+      sections: [
+        { name: 'Verdetto', body: 'Approvato con riserve — resta R2, due giri.' },
+        { name: 'Criteri', body: 'C1 — verificato — pnpm test: 12 passed' },
+        { name: 'Rilievi', body: 'nessuno' },
+      ],
+      after: 'Fine.',
+    });
+  });
+
+  it('reads the findings as they are written; a block still open is not one', () => {
+    const text = '<<<RILIEVI\nR1 [bloccante] C1 — ans vale 0.\nProva: python calc.py\nRILIEVI>>>';
+    expect(readReviewBlock(text)).toMatchObject({
+      kind: 'findings',
+      verdict: null,
+      sections: [],
+      body: 'R1 [bloccante] C1 — ans vale 0.\nProva: python calc.py',
+    });
+    expect(readReviewBlock('<<<REVISIONE\n## Verdetto\nrespinto')).toBeNull();
+    expect(readReviewBlock('Tutto bene.')).toBeNull();
   });
 });
 

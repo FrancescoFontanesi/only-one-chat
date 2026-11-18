@@ -82,7 +82,10 @@ tocca e come le mitiga.
 - Mitigazioni (già attive): CSP `default-src 'none'`, script solo con nonce, nessun
   `unsafe-inline` o `unsafe-eval`, nessun `connect-src`, `localResourceRoots` limitati,
   `enableForms: false`, `enableCommandUris: false`, validazione di ogni messaggio
-  nell'host. Il markdown generato dai modelli dovrà essere sanificato prima del rendering.
+  nell'host. Il markdown generato dai modelli è disegnato come elementi Preact, mai come
+  HTML (`webview/markdown.tsx`): l'HTML che un modello scrive resta testo visibile, e i link
+  non a file della cartella mostrano solo il testo. L'unico markup inserito è il MathML che
+  KaTeX genera dalle formule, con `trust: false` e limiti di dimensione (ADR 0024).
 - Verifica: `apps/vscode/test/unit/html.test.ts`, `protocol.test.ts`.
 
 ### T7. Persistenza di transcript e log
@@ -152,6 +155,11 @@ tocca e come le mitiga.
     diversa da `auto` o `default`, il turno si ferma. `bypassPermissions` non si usa mai.
   - `onlyOneChat.ignoredPaths` toglie percorsi dai fatti verificati e dai checkpoint. È limitata
     nelle cartelle non attendibili, perché nasconderebbe modifiche alla revisione.
+  - Il revisore (ADR 0029) esegue comandi e scrive test nella cartella con i permessi nativi del
+    suo CLI, come l'implementatore, quindi con lo stesso raggio d'azione. Non cambia il codice:
+    il runtime registra la cartella prima di ogni suo turno e rimette com'era ogni file non di
+    test che cambia. Se la cartella non si può registrare il revisore resta in sola lettura. Le
+    sue istruzioni hanno scope `machine`, come quelle degli altri ruoli.
   - Le altre richieste di approvazione dei CLI vengono rifiutate e mostrate: R9 è ancora da
     fare.
   - I percorsi degli eseguibili, i comandi ammessi e il comando di verifica hanno scope

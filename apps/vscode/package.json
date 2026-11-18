@@ -135,6 +135,45 @@
           "default": "low",
           "description": "Reasoning effort of the implementer, among those its model supports."
         },
+        "onlyOneChat.reviewer.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "After every piece of implementer work, delegated or sent directly, a third model reviews it: it runs it and writes tests, never changes the code, sends its findings back to the implementer, then its review reaches the leader in place of the report. Switched on and off from Squad too; applies at once, also in the chat open."
+        },
+        "onlyOneChat.reviewer.cli": {
+          "type": "string",
+          "enum": [
+            "codex",
+            "claude",
+            "antigravity"
+          ],
+          "default": "claude",
+          "description": "CLI of the reviewer. Best on a provider other than the implementer's."
+        },
+        "onlyOneChat.reviewer.model": {
+          "type": "string",
+          "default": "haiku",
+          "description": "Model of the reviewer, as its CLI names it; chosen in the settings page from the models the CLI offers."
+        },
+        "onlyOneChat.reviewer.effort": {
+          "type": "string",
+          "default": "high",
+          "description": "Reasoning effort of the reviewer, among those its model supports."
+        },
+        "onlyOneChat.reviewer.rounds": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 3,
+          "description": "How many times the reviewer may send findings back to the implementer before it must write its review; 0: it reviews once and never sends findings back."
+        },
+        "onlyOneChat.reviewer.instructions": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "editPresentation": "multilineText",
+          "description": "Your own instructions for the reviewer, added to its role instructions. Applies from the next chat."
+        },
         "onlyOneChat.subagents.codexModel": {
           "type": "string",
           "default": "gpt-6-luna",
@@ -185,6 +224,12 @@
           "default": "",
           "scope": "machine",
           "description": "Path of the Antigravity CLI (agy), for the nodes on Antigravity; empty: searched on PATH."
+        },
+        "onlyOneChat.team.name": {
+          "type": "string",
+          "default": "",
+          "maxLength": 40,
+          "description": "Alias of the group the leader and the implementer form (ADR 0028); empty: the leader's provider."
         },
         "onlyOneChat.nodes": {
           "type": "array",

@@ -1,0 +1,128 @@
+{
+  "description": "The product's roles on a task with a security edge (ADR 0029). Everything at low effort, except the reviewer, at medium: its job (honesty, security, up to date) is not for a weak model.",
+  "seed": "../calc/reference",
+  "verify": ["python", "-m", "unittest"],
+  "systems": {
+    "T1": {
+      "kind": "leader",
+      "product": true,
+      "title": "T1: leader Sol, implementer Sonnet, reviewer Hydrogen",
+      "leader": {
+        "cli": "codex",
+        "model": "gpt-6.1-sol",
+        "effort": "low"
+      },
+      "implementer": {
+        "cli": "claude",
+        "model": "sonnet",
+        "effort": "low"
+      },
+      "reviewer": {
+        "cli": "antigravity",
+        "model": "gemini-4-hydrogen",
+        "effort": "medium"
+      },
+      "subagents": {
+        "codex": {
+          "model": "gpt-6-luna",
+          "effort": "low"
+        },
+        "claude": {
+          "model": "claude-haiku-5-5",
+          "effort": "low"
+        },
+        "maxConcurrent": 2
+      }
+    },
+    "T2": {
+      "kind": "leader",
+      "product": true,
+      "title": "T2: leader Sonnet, implementer Sol, reviewer Terra",
+      "leader": {
+        "cli": "claude",
+        "model": "sonnet",
+        "effort": "low"
+      },
+      "implementer": {
+        "cli": "codex",
+        "model": "gpt-6.1-sol",
+        "effort": "low"
+      },
+      "reviewer": {
+        "cli": "codex",
+        "model": "gpt-6.1-terra",
+        "effort": "medium"
+      },
+      "subagents": {
+        "codex": {
+          "model": "gpt-6-luna",
+          "effort": "low"
+        },
+        "claude": {
+          "model": "claude-haiku-5-5",
+          "effort": "low"
+        },
+        "maxConcurrent": 2
+      }
+    },
+    "T3": {
+      "kind": "leader",
+      "product": true,
+      "title": "T3: leader Sonnet, implementer Sonnet, reviewer Hydrogen",
+      "leader": {
+        "cli": "claude",
+        "model": "sonnet",
+        "effort": "low"
+      },
+      "implementer": {
+        "cli": "claude",
+        "model": "sonnet",
+        "effort": "low"
+      },
+      "reviewer": {
+        "cli": "antigravity",
+        "model": "gemini-4-hydrogen",
+        "effort": "medium"
+      },
+      "subagents": {
+        "codex": {
+          "model": "gpt-6-luna",
+          "effort": "low"
+        },
+        "claude": {
+          "model": "claude-haiku-5-5",
+          "effort": "low"
+        },
+        "maxConcurrent": 2
+      }
+    },
+    "U1": {
+      "kind": "session",
+      "script": "one-message.json",
+      "title": "U1: Sol alone, one ordinary message",
+      "agent": { "cli": "codex", "model": "gpt-6.1-sol", "effort": "medium" }
+    },
+    "U2": {
+      "kind": "session",
+      "script": "one-message.json",
+      "title": "U2: Sonnet alone, one ordinary message",
+      "agent": { "cli": "claude", "model": "sonnet", "effort": "medium" }
+    },
+    "U3": {
+      "kind": "leader",
+      "product": true,
+      "script": "one-message.json",
+      "title": "U3: leader Sol, implementer Sonnet, reviewer Haiku; Hydrogen reviews the same input apart",
+      "leader": { "cli": "codex", "model": "gpt-6.1-sol", "effort": "medium" },
+      "implementer": { "cli": "claude", "model": "sonnet", "effort": "low" },
+      "reviewer": { "cli": "claude", "model": "haiku", "effort": "high" },
+      "shadowReviewers": [{ "cli": "antigravity", "model": "gemini-4-hydrogen", "effort": "high" }],
+      "subagents": {
+        "codex": { "model": "gpt-6-luna", "effort": "low" },
+        "claude": { "model": "claude-haiku-5-5", "effort": "low" },
+        "maxConcurrent": 2
+      }
+    }
+  },
+  "sandboxCommands": ["python", "py"]
+}

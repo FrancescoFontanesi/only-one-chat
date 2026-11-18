@@ -1,0 +1,51 @@
+{
+  "description": "Hidden acceptance tests for the calc-roles scenario: the nine round cases of the first roles evaluation, then the calc regressions. Written before any run; never copied into the agents' working directory.",
+  "include": ["../calc/hidden-tests.json"],
+  "command": ["python", "main.py"],
+  "cases": [
+    {
+      "name": "round-two-digits",
+      "args": ["-e", "round(3.567, 2)"],
+      "stdout": "3.57",
+      "exitCode": 0
+    },
+    { "name": "round-half-even-down", "args": ["-e", "round(2.5)"], "stdout": "2", "exitCode": 0 },
+    {
+      "name": "round-negative-half-even",
+      "args": ["-e", "round(-2.5)"],
+      "stdout": "-2",
+      "exitCode": 0
+    },
+    { "name": "round-integer", "args": ["-e", "round(7)"], "stdout": "7", "exitCode": 0 },
+    {
+      "name": "round-expression",
+      "args": ["-e", "round(10 / 4, 1)"],
+      "stdout": "2.5",
+      "exitCode": 0
+    },
+    {
+      "name": "round-negative-digits",
+      "args": ["-e", "round(1, -1)"],
+      "stderrIncludes": "invalid argument for round",
+      "exitCode": 1
+    },
+    {
+      "name": "round-fractional-digits",
+      "args": ["-e", "round(1, 2.5)"],
+      "stderrIncludes": "invalid argument for round",
+      "exitCode": 1
+    },
+    {
+      "name": "round-no-arguments",
+      "args": ["-e", "round()"],
+      "stderrIncludes": "wrong number of arguments for round",
+      "exitCode": 1
+    },
+    {
+      "name": "round-three-arguments",
+      "args": ["-e", "round(1, 2, 3)"],
+      "stderrIncludes": "wrong number of arguments for round",
+      "exitCode": 1
+    }
+  ]
+}

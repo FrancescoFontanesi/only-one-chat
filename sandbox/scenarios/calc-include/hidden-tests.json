@@ -1,0 +1,225 @@
+{
+  "description": "Hidden acceptance tests for the calc-include scenario: the include statement and its limits, then the calc regressions. Cases with `outside` leave a readable file beside the working directory: a program that reads it prints 100. Written before any run; never copied into the agents' working directory. Hostile paths added after the third evaluation: a NUL byte (a real defect of one run), backslash traversal, drive-relative and UNC paths, empty names; none may end in a traceback.",
+  "include": ["../calc/hidden-tests.json"],
+  "command": ["python", "main.py"],
+  "cases": [
+    {
+      "name": "include-basic",
+      "args": [],
+      "stdin": "include \"a.calc\"\nx + 1\n",
+      "exitCode": 0,
+      "stdout": "8\n5",
+      "files": {
+        "a.calc": "x = 4\nx * 2\n"
+      }
+    },
+    {
+      "name": "include-nested",
+      "args": [],
+      "stdin": "include \"b.calc\"\ny * 2\n",
+      "exitCode": 0,
+      "stdout": "11\n22",
+      "files": {
+        "b.calc": "include \"c.calc\"\ny = c1 + 1\ny\n",
+        "c.calc": "c1 = 10\n"
+      }
+    },
+    {
+      "name": "include-subfolder",
+      "args": [],
+      "stdin": "include \"lib/m.calc\"\n",
+      "exitCode": 0,
+      "stdout": "42",
+      "files": {
+        "lib/m.calc": "7 * 6\n"
+      }
+    },
+    {
+      "name": "include-twice-is-not-a-cycle",
+      "args": [],
+      "stdin": "include \"a.calc\"\ninclude \"a.calc\"\nz\n",
+      "exitCode": 0,
+      "stdout": "1",
+      "files": {
+        "a.calc": "z = 1\n"
+      }
+    },
+    {
+      "name": "include-relative-outside-is-refused",
+      "args": [],
+      "stdin": "include \"<OUTSIDE_REL>\"\n",
+      "exitCode": 1,
+      "stdout": "",
+      "stderrIncludes": "include path not allowed",
+      "outside": "99 + 1\n"
+    },
+    {
+      "name": "include-absolute-outside-is-refused",
+      "args": [],
+      "stdin": "include \"<OUTSIDE>\"\n",
+      "exitCode": 1,
+      "stdout": "",
+      "stderrIncludes": "include path not allowed",
+      "outside": "99 + 1\n"
+    },
+    {
+      "name": "include-dotdot-is-refused-even-inside",
+      "args": [],
+      "stdin": "include \"lib/../a.calc\"\n",
+      "exitCode": 1,
+      "stdout": "",
+      "stderrIncludes": "include path not allowed",
+      "files": {
+        "a.calc": "1 + 1\n",
+        "lib/keep.txt": "x"
+      }
+    },
+    {
+      "name": "include-refused-before-existence",
+      "args": [],
+      "stdin": "include \"../nope.calc\"\n",
+      "exitCode": 1,
+      "stdout": "",
+      "stderrIncludes": "include path not allowed"
+    },
+    {
+      "name": "include-missing",
+      "args": [],
+      "stdin": "include \"nope.calc\"\n",
+      "exitCode": 1,
+      "stdout": "",
+      "stderrIncludes": "include file not found"
+    },
+    {
+      "name": "include-cycle-direct",
+      "args": [],
+      "stdin": "include \"a.calc\"\n",
+      "exitCode": 1,
+      "stdout": "",
+      "stderrIncludes": "include cycle",
+      "files": {
+        "a.calc": "include \"a.calc\"\n"
+      }
+    },
+    {
+      "name": "include-cycle-indirect",
+      "args": [],
+      "stdin": "include \"a.calc\"\n",
+      "exitCode": 1,
+      "stdout": "",
+      "stderrIncludes": "include cycle",
+      "files": {
+        "a.calc": "include \"b.calc\"\n",
+        "b.calc": "include \"a.calc\"\n"
+      }
+    },
+    {
+      "name": "include-depth-five-is-allowed",
+      "args": [],
+      "stdin": "include \"f1.calc\"\n",
+      "exitCode": 0,
+      "stdout": "10",
+      "files": {
+        "f1.calc": "include \"f2.calc\"\n",
+        "f2.calc": "include \"f3.calc\"\n",
+        "f3.calc": "include \"f4.calc\"\n",
+        "f4.calc": "include \"f5.calc\"\n",
+        "f5.calc": "5 + 5\n"
+      }
+    },
+    {
+      "name": "include-depth-six-is-refused",
+      "args": [],
+      "stdin": "include \"f1.calc\"\n",
+      "exitCode": 1,
+      "stdout": "",
+      "stderrIncludes": "include too deep",
+      "files": {
+        "f1.calc": "include \"f2.calc\"\n",
+        "f2.calc": "include \"f3.calc\"\n",
+        "f3.calc": "include \"f4.calc\"\n",
+        "f4.calc": "include \"f5.calc\"\n",
+        "f5.calc": "include \"f6.calc\"\n",
+        "f6.calc": "1\n"
+      }
+    },
+    {
+      "name": "include-too-large",
+      "args": [],
+      "stdin": "include \"big.calc\"\n",
+      "exitCode": 1,
+      "stdout": "",
+      "stderrIncludes": "include file too large",
+      "files": {
+        "big.calc": {
+          "repeat": "# padding padding\n",
+          "times": 5000
+        }
+      }
+    },
+    {
+      "name": "include-error-inside-continues",
+      "args": [],
+      "stdin": "include \"e.calc\"\n3 + 3\n",
+      "exitCode": 1,
+      "stdout": "4\n6",
+      "stderrIncludes": "division by zero",
+      "files": {
+        "e.calc": "1 / 0\n2 + 2\n"
+      }
+    },
+    {
+      "name": "include-not-with-e",
+      "args": ["-e", "include \"a.calc\""],
+      "stdout": "",
+      "stderrIncludes": "Error",
+      "exitCode": 1,
+      "files": {
+        "a.calc": "1 + 1\n"
+      }
+    },
+    {
+      "name": "include-nul-byte-is-an-error-not-a-crash",
+      "args": [],
+      "stdin": "include \"a\u0000b.calc\"\n2 + 2\n",
+      "stdout": "4",
+      "exitCode": 1,
+      "stderrIncludes": "Error",
+      "stderrExcludes": "Traceback"
+    },
+    {
+      "name": "include-backslash-dotdot-is-refused",
+      "args": [],
+      "stdin": "include \"<OUTSIDE_REL_BS>\"\n",
+      "stdout": "",
+      "exitCode": 1,
+      "stderrIncludes": "include path not allowed",
+      "outside": "99 + 1\n"
+    },
+    {
+      "name": "include-drive-relative-is-refused",
+      "args": [],
+      "stdin": "include \"C:x.calc\"\n",
+      "stdout": "",
+      "exitCode": 1,
+      "stderrIncludes": "include path not allowed"
+    },
+    {
+      "name": "include-unc-is-refused",
+      "args": [],
+      "stdin": "include \"\\\\localhost\\c$\\x.calc\"\n",
+      "stdout": "",
+      "exitCode": 1,
+      "stderrIncludes": "include path not allowed"
+    },
+    {
+      "name": "include-error-never-a-traceback",
+      "args": [],
+      "stdin": "include \"\"\ninclude \"   \"\n",
+      "stdout": "",
+      "exitCode": 1,
+      "stderrIncludes": "Error",
+      "stderrExcludes": "Traceback"
+    }
+  ]
+}

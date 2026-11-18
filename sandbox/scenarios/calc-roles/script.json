@@ -1,0 +1,13 @@
+{
+  "description": "The two messages of the first roles evaluation (docs/role-evaluation.md): ragionare, then decide and delegate.",
+  "messages": [
+    {
+      "name": "plan",
+      "text": "Vorrei aggiungere alla calcolatrice una funzione round(x) e round(x, n) con n cifre decimali. Ragioniamo prima: dove va nel codice, quali casi limite ci sono, come la testiamo? Non generare ancora il prompt. Se ti serve una mia decisione, chiedimela."
+    },
+    {
+      "name": "delegate",
+      "text": "Decisioni: arrotondamento come la round di Python; n deve essere un intero >= 0, altrimenti \"Error: invalid argument for round\"; un numero sbagliato di argomenti dà l'errore delle altre funzioni. Genera il prompt secondo la struttura e delegalo."
+    }
+  ]
+}

@@ -38,7 +38,9 @@ import {
   startClaudeTurn,
   CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
   CODEX_SUBAGENT_FORBIDDEN_NAMES,
+  antigravityModelId,
   codexQuota,
+  createAcpAgentFactory,
   connectCodex,
   createClaudeAgentFactory,
   createCodexAgentFactory,
@@ -53,7 +55,10 @@ import {
   briefAgentPrompt,
   extractResult,
   leaderInstructions,
+  IMPLEMENTER_ROLE_INSTRUCTIONS,
   LIGHT_IMPLEMENTER_INSTRUCTIONS,
+  REVIEWER_ROLE_INSTRUCTIONS,
+  parseReviewerTurn,
   type AgentSession,
   openEventLog,
   parseBrief,
@@ -68,6 +73,9 @@ import {
   type TurnUsage,
 } from '../packages/runtime/src/index.js';
 import { loadSuite, runHiddenTests, type HiddenResults } from './bench/hidden.js';
+import { CheckpointStore } from '../apps/vscode/src/session/checkpoints.js';
+import { guardReviewerTurn } from '../apps/vscode/src/session/guard.js';
+import { isTestFile } from '../apps/vscode/src/session/shortcuts.js';
 import {
   findLeaks,
   homeLiteral,
@@ -77,7 +85,7 @@ import {
 } from '../packages/adapters/dev/redact.js';
 
 interface AgentConfig {
-  readonly cli: 'codex' | 'claude';
+  readonly cli: 'codex' | 'claude' | 'antigravity';
   readonly model: string;
   readonly effort: string;
 }
@@ -92,6 +100,18 @@ interface SystemConfig {
   readonly executor?: AgentConfig;
   readonly gateway?: AgentConfig;
   readonly implementer?: AgentConfig;
+  /**
+   * `leader` systems: the product's own roles (ADR 0020, 0029): the leader
+   * read-only, the implementer with its report prompt, and a reviewer if given.
+   */
+  readonly product?: boolean;
+  readonly reviewer?: AgentConfig;
+  /**
+   * Other reviewers given the same first review request as `reviewer`, each in
+   * its own copy of the folder taken at that moment: one turn, not passed on to
+   * anyone, its usage kept apart from the run's. Compares reviewers on one input.
+   */
+  readonly shadowReviewers?: readonly AgentConfig[];
   /** Gateway systems: a light leader (forwards the brief, judges on the facts). */
   readonly light?: boolean;
   /** Session systems: the script, relative to the scenario; default script.json. */
@@ -355,11 +375,11 @@ async function main(): Promise<void> {
   const claudeLauncher = fake ? [join(fakes, 'fake-claude.mjs'), '--echo'] : [];
 
   // Who writes depends on the role: planners and gateways read only (ADR 0008).
-  const codex = (config: AgentConfig, writable: boolean): AgentFactory =>
+  const codex = (config: AgentConfig, writable: boolean, cwd: string): AgentFactory =>
     createCodexAgentFactory({
       executable: codexExecutable,
       launcherArgs: codexLauncher,
-      cwd: runDir,
+      cwd,
       model: config.model,
       effort: config.effort,
       requestTimeoutMs: 120_000,
@@ -367,21 +387,53 @@ async function main(): Promise<void> {
       // Experiments run isolated from the user's hooks (graft writes into the run directory).
       withoutUserHooks: true,
     });
-  const claude = (config: AgentConfig, writable: boolean): AgentFactory =>
+  const claude = (
+    config: AgentConfig,
+    writable: boolean,
+    readOnlyShell: boolean,
+    cwd: string,
+  ): AgentFactory =>
     createClaudeAgentFactory({
       executable: claudeExecutable,
       launcherArgs: claudeLauncher,
-      cwd: runDir,
+      cwd,
       model: config.model,
       effort: config.effort,
-      ...(writable ? { sandbox: { commands: systems.sandboxCommands } } : {}),
+      // As the product's default permission: Claude Code's auto mode, not a list that denies the rest.
+      ...(writable ? { sandbox: { commands: systems.sandboxCommands, auto: true } } : {}),
+      // The product's leader and reviewer run what Claude Code counts as read-only.
+      ...(readOnlyShell ? { readOnlyShell: true } : {}),
     });
-  const factory = (config: AgentConfig, writable: boolean) =>
-    config.cli === 'codex' ? codex(config, writable) : claude(config, writable);
+  /** Antigravity over ACP (ADR 0023); read-only declines every permission request. */
+  const antigravity = (config: AgentConfig, writable: boolean, cwd: string): AgentFactory =>
+    createAcpAgentFactory({
+      // --fake must never reach the real Antigravity.
+      executable: fake ? process.execPath : (env['AGY_EXECUTABLE'] ?? 'agy'),
+      args: fake ? [join(fakes, 'fake-agy.mjs'), 'acp'] : ['acp'],
+      provider: 'Antigravity',
+      cwd,
+      model: antigravityModelId(config.model, config.effort),
+      readOnly: !writable,
+    });
+  const factory = (config: AgentConfig, writable: boolean, readOnlyShell = false, cwd = runDir) =>
+    config.cli === 'codex'
+      ? codex(config, writable, cwd)
+      : config.cli === 'antigravity'
+        ? antigravity(config, writable, cwd)
+        : claude(config, writable, readOnlyShell, cwd);
+  /** The first review request and a copy of the folder as it was then, for `shadowReviewers`. */
+  let shadowInput: { prompt: string; dirs: string[] } | undefined;
+  const copyFolder = (to: string) => {
+    cpSync(runDir, to, {
+      recursive: true,
+      filter: (source) => !source.split(/[\\/]/).includes('__pycache__'),
+    });
+  };
   /** The sub-agent policy of an agent, from its CLI. */
   const policy = (config: AgentConfig): SubagentPolicy | undefined => {
     const sub = system.subagents;
-    if (!sub) return undefined;
+    // Antigravity has no sub-agents to rule (ADR 0023).
+    if (!sub || config.cli === 'antigravity') return undefined;
     return config.cli === 'codex'
       ? {
           ...sub.codex,
@@ -506,10 +558,26 @@ async function main(): Promise<void> {
     const proactive = leaderPolicy ? { ...leaderPolicy, proactive: true } : undefined;
     const implementerPolicy = policy(system.implementer);
     // The leader writes too: it makes the small, focused changes itself.
+    const product = system.product === true;
     const leaderSession = await factory(
       leaderConfig,
-      true,
-    )(agentSessionOptions(leaderInstructions(system.implementer.cli), proactive));
+      !product,
+      product,
+    )(
+      agentSessionOptions(
+        // No questions tool in the bench: the leader asks in words.
+        leaderInstructions(system.implementer.cli, product ? { questions: false } : {}),
+        proactive,
+      ),
+    );
+    const reviewerConfig = product ? system.reviewer : undefined;
+    /** The folder before each reviewer turn, outside the run directory. */
+    const reviewerStore = new CheckpointStore(
+      join(stateDir(), 'sandbox', `${runId}-guard`),
+      runDir,
+    );
+    let reviewerTurns = 0;
+    const reviewerPolicy = reviewerConfig ? policy(reviewerConfig) : undefined;
     const answers: Answer[] = [];
     const implementerConfig = system.implementer;
     /** Every implementer session opened, closed at the end; the last one is current. */
@@ -520,7 +588,12 @@ async function main(): Promise<void> {
       const session = await factory(
         implementerConfig,
         true,
-      )(agentSessionOptions(LIGHT_IMPLEMENTER_INSTRUCTIONS, implementerPolicy));
+      )(
+        agentSessionOptions(
+          product ? IMPLEMENTER_ROLE_INSTRUCTIONS : LIGHT_IMPLEMENTER_INSTRUCTIONS,
+          implementerPolicy,
+        ),
+      );
       implementers.push(session);
       return session;
     };
@@ -571,9 +644,37 @@ async function main(): Promise<void> {
           autoApprove: true,
           orchestrator: () => Promise.reject(new Error('the leader session is given')),
           worker: () => Promise.reject(new Error('the implementer session is given')),
+          ...(reviewerConfig
+            ? {
+                // As in the product (ADR 0029): it runs and writes tests, its code changes put back.
+                reviewer: async (sessionOptions) => {
+                  const session = await factory(reviewerConfig, true)(sessionOptions);
+                  const shadows = system.shadowReviewers ?? [];
+                  if (shadows.length === 0) return session;
+                  // The first request, before the turn: the folder is what the reviewer gets.
+                  return {
+                    name: session.name,
+                    id: session.id,
+                    runTurn: (prompt, handlers, turnOptions) => {
+                      if (!shadowInput) {
+                        const dirs = shadows.map((_, at) => `${runDir}-shadow-${String(at + 1)}`);
+                        dirs.forEach(copyFolder);
+                        shadowInput = { prompt, dirs };
+                      }
+                      return session.runTurn(prompt, handlers, turnOptions);
+                    },
+                    close: () => session.close(),
+                  };
+                },
+                reviewRounds: 2,
+                guardReviewer: () =>
+                  guardReviewerTurn(reviewerStore, `rev-${String(++reviewerTurns)}`),
+              }
+            : {}),
           subagents: {
             ...(proactive ? { orchestrator: proactive } : {}),
             ...(implementerPolicy ? { worker: implementerPolicy } : {}),
+            ...(reviewerPolicy ? { reviewer: reviewerPolicy } : {}),
           },
           facts: () => verifiedFacts(runDir, baseline, systems.verify),
           intercept: () => Promise.reject(new Error('not used with autoApprove')),
@@ -705,6 +806,76 @@ async function main(): Promise<void> {
   const codexAfter = await codexQuotaNow();
   const claudeAfter = await claudeProbe();
 
+  // After the run's quota is read: the shadow reviewers' usage stays out of the run's.
+  const shadows: {
+    reviewer: AgentConfig;
+    verdict: string | null;
+    kind: string;
+    durationMs: number | null;
+    usage: TurnUsage | null;
+    /** What it changed in its copy; files that are not tests the product would put back. */
+    changed: string[];
+    /** The permission requests it made, all allowed in its copy. */
+    approved: string[];
+    text: string;
+  }[] = [];
+  const shadowConfigs = system.shadowReviewers ?? [];
+  if (shadowInput) {
+    for (const [at, config] of shadowConfigs.entries()) {
+      const dir = shadowInput.dirs[at] ?? '';
+      process.stdout.write(`\n— revisore ombra ${config.cli}:${config.model}:${config.effort}\n`);
+      const before = snapshot(dir);
+      const session = await factory(
+        config,
+        true,
+        false,
+        dir,
+      )(agentSessionOptions(REVIEWER_ROLE_INSTRUCTIONS, policy(config)));
+      const approved: string[] = [];
+      try {
+        const turn = await session.runTurn(shadowInput.prompt, {
+          onText: () => undefined,
+          // Its own copy, thrown away: what it asks is allowed and listed. A refused
+          // command ends an Antigravity turn with no answer.
+          onApprovalRequest: (request) => {
+            approved.push(request.summary.slice(0, 160));
+            return Promise.resolve('accept');
+          },
+        }).done;
+        const answer = parseReviewerTurn(turn.text);
+        shadows.push({
+          reviewer: config,
+          kind: answer.kind,
+          verdict: answer.kind === 'review' ? answer.verdict : null,
+          durationMs: turn.usage?.durationMs ?? null,
+          usage: turn.usage ?? null,
+          changed: changes(before, snapshot(dir)).map((change) =>
+            isTestFile(change.slice(change.indexOf(' ') + 1))
+              ? change
+              : `${change} (non è un test)`,
+          ),
+          approved,
+          text: turn.text,
+        });
+      } catch (error) {
+        shadows.push({
+          reviewer: config,
+          kind: 'failed',
+          verdict: null,
+          durationMs: null,
+          usage: null,
+          changed: [],
+          approved,
+          text: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        await session.close();
+      }
+    }
+  } else if (shadowConfigs.length > 0) {
+    process.stdout.write('\nNessuna revisione nel run: i revisori ombra non sono partiti.\n');
+  }
+
   const hidden: HiddenResults = await runHiddenTests(suite, runDir, {
     ...env,
     PYTHONDONTWRITEBYTECODE: '1',
@@ -744,6 +915,7 @@ async function main(): Promise<void> {
       after: claudeAfter?.quota ?? null,
       probeCostUsd: (claudeBefore?.costUsd ?? 0) + (claudeAfter?.costUsd ?? 0),
     },
+    shadows,
     otherEvents: events,
   };
 
@@ -796,6 +968,26 @@ async function main(): Promise<void> {
     ...(finalFacts === null
       ? []
       : ['## Verifica finale del runner', '', '```text', finalFacts, '```', '']),
+    ...shadows.flatMap((shadow) => {
+      const models = Object.values(shadow.usage?.byModel ?? {});
+      const fresh = models.reduce((s, m) => s + m.input + m.cacheWrite, 0);
+      const cached = models.reduce((s, m) => s + m.cachedInput, 0);
+      const out = models.reduce((s, m) => s + m.output, 0);
+      const { cli, model, effort } = shadow.reviewer;
+      return [
+        `## Revisore ombra ${cli}:${model}:${effort}, stessa richiesta del primo turno di revisione`,
+        '',
+        `- Esito: ${shadow.kind}, verdetto ${String(shadow.verdict)}`,
+        `- Tempo: ${((shadow.durationMs ?? 0) / 1000).toFixed(1)} s; token nuovi ${String(fresh)}, in cache ${String(cached)}, output ${String(out)}; costo nominale $${(shadow.usage?.costUsd ?? 0).toFixed(4)}`,
+        `- File cambiati nella sua copia: ${shadow.changed.join(', ') || 'nessuno'}`,
+        `- Permessi chiesti e concessi: ${shadow.approved.join('; ') || 'nessuno'}`,
+        '',
+        '```text',
+        shadow.text,
+        '```',
+        '',
+      ];
+    }),
   ].join('\n');
   // The results go into the repository: redacted like the fixtures, and kept in
   // the run directory instead if the scanner still finds something personal.

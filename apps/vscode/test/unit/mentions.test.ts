@@ -5,11 +5,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   MAX_EXCERPT_LINES,
   expandMentions,
+  insideFolder,
   plainRefs,
   resolveRefs,
   withRefs,
 } from '../../src/session/mentions.js';
-import { refTokens } from '../../src/webview/refs.js';
+import { linkPath, pathCandidates, refTokens } from '../../src/webview/refs.js';
 import type { ThreadUpdate } from '../../src/webview/protocol.js';
 import { matchPaths, mentionAt, pickMention } from '../../webview/mentions.js';
 
@@ -155,5 +156,43 @@ describe('@ paths in any text (ADR 0018)', () => {
         cwd,
       ),
     ).toMatchObject({ refs: ['src/calc.py'], missing: ['src/x.ts'] });
+  });
+});
+
+describe('files an agent names without @ (ADR 0018)', () => {
+  it('reads link targets and inline paths, never a web address', () => {
+    expect(linkPath('file:///C:/a%20b/src/calc.py#L2-3')).toEqual({
+      path: 'C:/a b/src/calc.py',
+      lines: { from: 2, to: 3 },
+    });
+    expect(linkPath('src/calc.py:12:4')).toEqual({
+      path: 'src/calc.py',
+      lines: { from: 12, to: 12 },
+    });
+    expect(linkPath('C:\\x\\y.py')).toEqual({ path: 'C:\\x\\y.py' });
+    expect(linkPath('https://example.com/a.py')).toBeNull();
+    expect(linkPath('vscode:extension/x')).toBeNull();
+    expect(
+      pathCandidates(
+        'Vedi [calc](src/calc.py), `src/calc.py:2`, `round(x)`, `cv2.inpaint` e [sito](https://x.y).',
+      ),
+    ).toEqual(['src/calc.py', 'src/calc.py:2', 'cv2.inpaint']);
+  });
+
+  it('links in a turn only the files of the folder, absolute paths included', () => {
+    const full = join(cwd, 'src', 'calc.py').replace(/\\/g, '/');
+    // As the agents write it: a URL, its spaces encoded.
+    const url = `file:///${encodeURI(full)}`;
+    const turn: ThreadUpdate = {
+      type: 'turn',
+      id: 't',
+      role: 'leader',
+      agent: 'a',
+      status: 'done',
+      text: `[calc](${url}) e \`src/calc.py\`, non [fuori](${join(root, 'secret.txt')}) né \`cv2.inpaint\`.`,
+    };
+    expect((withRefs(turn, cwd) as { refs?: string[] }).refs).toEqual([url, 'src/calc.py']);
+    expect(insideFolder(cwd, join(root, 'secret.txt'))).toBeUndefined();
+    expect(insideFolder(cwd, join(cwd, 'src'))?.folder).toBe(true);
   });
 });

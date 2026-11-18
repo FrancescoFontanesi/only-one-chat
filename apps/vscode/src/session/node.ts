@@ -15,6 +15,7 @@ import { NODE_NAME_LENGTH, type PermitDecision, type ThreadUpdate } from '../web
 import { summarize } from './chat.js';
 import { changes, snapshot } from './facts.js';
 import { ignoredPaths, type Ignored } from './ignore.js';
+import { plainRefs } from './mentions.js';
 import { PROVIDERS, type ProviderChoice, type ProviderConfig } from './providers.js';
 
 export interface NodeChoice extends ProviderChoice {
@@ -36,6 +37,11 @@ export interface NodeEvents {
   busy(busy: boolean): void;
   /** The provider's session, once known: kept with the chat to reopen it. */
   sessionId?(id: string): void;
+  /**
+   * How full its session is after a turn: the CLI's own figure, else the turn's
+   * context (ACP reports no window), as the thread shows it under the turn.
+   */
+  context?(context: { readonly used: number; readonly window: number | null }): void;
 }
 
 const NODE_ID = /^[a-z0-9-]{1,64}$/;
@@ -147,14 +153,20 @@ export class NodeSession {
     }
     const resume = this.resume;
     this.resume = undefined;
-    return provider.factory(
-      this.config,
-      { choice: node, leader: false },
-      this.bridge,
-    )({
-      ...agentSessionOptions(nodeInstructions(node), undefined),
-      ...(resume ? { resume } : {}),
-    });
+    const factory = provider.factory(this.config, { choice: node, leader: false }, this.bridge);
+    const options = agentSessionOptions(nodeInstructions(node), undefined);
+    if (!resume) return factory(options);
+    try {
+      return await factory({ ...options, resume });
+    } catch (error) {
+      // Deleted or expired in its CLI: a new session, and the user is told (ADR 0027).
+      this.events.update({
+        type: 'notice',
+        level: 'warn',
+        text: `La sessione salvata di ${node.name} non si riapre (${error instanceof Error ? error.message : String(error)}): ne parte una nuova, che non ricorda la conversazione.`,
+      });
+      return factory(options);
+    }
   }
 
   /** The user's message to the node: one turn, shown in the node's thread. */
@@ -170,7 +182,9 @@ export class NodeSession {
     this.running = true;
     this.events.busy(true);
     this.events.update({ type: 'user', id: this.id('u'), text, to: 'implementer' });
-    const prompt = attached?.text ? `${text}\n\n${attached.text}` : text;
+    // `@path` in the text names a file: the node reads it as the plain path (ADR 0026).
+    const named = plainRefs(text, this.config.cwd);
+    const prompt = attached?.text ? `${named}\n\n${attached.text}` : named;
     const { cwd } = this.config;
     const baseline = snapshot(cwd, this.ignored);
     try {
@@ -210,6 +224,8 @@ export class NodeSession {
         ...(usage ? { usage } : {}),
       });
       if (result.identity.sessionId) this.events.sessionId?.(result.identity.sessionId);
+      const context = result.context ?? (usage ? { used: usage.context, window: null } : null);
+      if (context) this.events.context?.(context);
     } catch (error) {
       this.events.update({
         type: 'notice',

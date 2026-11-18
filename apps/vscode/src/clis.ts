@@ -9,6 +9,7 @@ import {
   resolveCodexExecutable,
   resolveNativeExecutable,
 } from '@only-one-chat/adapters';
+import { detectCli } from './detect.js';
 import type { Cli } from './webview/protocol.js';
 
 export interface CliLaunch {
@@ -46,11 +47,19 @@ export async function cliLaunch(context: vscode.ExtensionContext, cli: Cli): Pro
   }
   const settings = vscode.workspace.getConfiguration('onlyOneChat');
   const configuredPath = settings.get<string>(`${cli}Path`) ?? '';
-  const executable =
-    cli === 'codex'
-      ? await resolveCodexExecutable({ configuredPath })
-      : cli === 'claude'
-        ? await resolveClaudeExecutable({ configuredPath })
-        : await resolveNativeExecutable('agy', 'Antigravity', { configuredPath });
-  return { executable, launcherArgs: [] };
+  try {
+    const executable =
+      cli === 'codex'
+        ? await resolveCodexExecutable({ configuredPath })
+        : cli === 'claude'
+          ? await resolveClaudeExecutable({ configuredPath })
+          : await resolveNativeExecutable('agy', 'Antigravity', { configuredPath });
+    return { executable, launcherArgs: [] };
+  } catch (error) {
+    // No path set and not on VS Code's PATH (which is read when VS Code starts, so a CLI
+    // installed later is missing from it): the places RILEVA searches (ADR 0025).
+    const found = configuredPath === '' ? await detectCli(cli) : undefined;
+    if (!found) throw error;
+    return { executable: found, launcherArgs: [] };
+  }
 }

@@ -28,3 +28,8 @@ Una decisione superata non si cancella: si marca "Sostituita da NNNN".
 | [0021](0021-auto-mode-ignored-paths-waiting.md)   | Modalità auto di Claude Code, percorsi ignorati, richieste in attesa | Accettata                                     |
 | [0022](0022-providers-per-role.md)                | Qualsiasi provider in qualsiasi ruolo, e le domande di Claude        | Accettata                                     |
 | [0023](0023-board-nodes-and-acp.md)               | Nodi sulla lavagna di Squad e Antigravity tramite ACP                | Accettata                                     |
+| [0024](0024-markdown-and-latex.md)                | Markdown e LaTeX nei messaggi degli agenti                           | Accettata                                     |
+| [0025](0025-cli-paths-detect-pick.md)             | Trovare gli eseguibili dei CLI dalle impostazioni                    | Accettata                                     |
+| [0026](0026-mention-and-attach.md)                | `@` nomina un file, + lo allega                                      | Accettata                                     |
+| [0027](0027-history-and-blocks.md)                | Lo storico per chat e la ghiera per blocchi                          | Accettata                                     |
+| [0028](0028-groups-on-the-dial.md)                | Gruppi e nodi singoli sulla ghiera, SQUAD nel composer               | Accettata                                     |

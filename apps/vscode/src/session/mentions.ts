@@ -7,7 +7,7 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, isAbsolute, relative, resolve } from 'node:path';
 import type { ThreadUpdate } from '../webview/protocol.js';
-import { looksLikeFile, refTokens } from '../webview/refs.js';
+import { linkPath, looksLikeFile, pathCandidates, refTokens } from '../webview/refs.js';
 
 /** A range of lines this short is included in the message; a longer one is named only. */
 export const MAX_EXCERPT_LINES = 80;
@@ -39,6 +39,22 @@ export function inside(cwd: string, path: string): { full: string; folder: boole
     const rel = relative(root, full);
     if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return undefined;
     return { full, folder: statSync(full).isDirectory() };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Like `inside`, but an absolute path is taken too when it is in the folder:
+ * the agents write their links with the folder's full path (ADR 0018).
+ */
+export function insideFolder(
+  cwd: string,
+  path: string,
+): { full: string; folder: boolean } | undefined {
+  if (!isAbsolute(path)) return inside(cwd, path);
+  try {
+    return inside(cwd, relative(realpathSync.native(cwd), resolve(path)));
   } catch {
     return undefined;
   }
@@ -148,8 +164,15 @@ export function withRefs(update: ThreadUpdate, cwd: string): ThreadUpdate {
       : update.type === 'turn' && update.status !== 'running'
         ? (update.text ?? '')
         : '';
-  if (text === '' || !text.includes('@')) return update;
+  if (text === '') return update;
   const { found, missing } = resolveRefs(text, cwd);
+  // An agent's links and inline paths that name a file of the folder, as written.
+  if (update.type === 'turn') {
+    for (const raw of pathCandidates(text)) {
+      const target = linkPath(raw);
+      if (target && insideFolder(cwd, target.path.replace(/\/+$/, ''))) found.push(raw);
+    }
+  }
   return {
     ...update,
     ...(found.length > 0 ? { refs: found } : {}),

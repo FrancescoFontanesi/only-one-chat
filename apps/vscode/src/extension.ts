@@ -62,6 +62,13 @@ export function activate(context: vscode.ExtensionContext): OnlyOneChatExports {
   );
   context.subscriptions.push(
     roles,
+    // Another executable may offer other models: they are read again.
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      const paths = ['codexPath', 'claudePath', 'antigravityPath'];
+      if (paths.some((key) => event.affectsConfiguration(`onlyOneChat.${key}`))) {
+        void catalog.load(true);
+      }
+    }),
     vscode.workspace.registerTextDocumentContentProvider(
       CHECKPOINT_SCHEME,
       new CheckpointContentProvider(context),

@@ -355,6 +355,7 @@
   "dependencies": {
     "@only-one-chat/adapters": "workspace:*",
     "@only-one-chat/runtime": "workspace:*",
+    "katex": "0.19.1",
     "preact": "10.29.8"
   },
   "devDependencies": {

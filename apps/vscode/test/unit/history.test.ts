@@ -7,6 +7,7 @@ import {
   compact,
   forReplay,
   newChatId,
+  summary,
   type ChatRecord,
 } from '../../src/session/history.js';
 import type { ThreadUpdate } from '../../src/webview/protocol.js';
@@ -32,6 +33,52 @@ describe('chat history (R5)', () => {
     expect(history.load('chat-a')?.sessions).toEqual({ leader: 'thread-9' });
     // Nothing temporary is left behind.
     expect(readdirSync(join(dir, 'chats')).every((name) => name.endsWith('.json'))).toBe(true);
+  });
+
+  it('lists who worked in a chat: its roles, whether the implementer did, its nodes', () => {
+    const leader = {
+      cli: 'codex',
+      model: 'gpt-6.1-sol',
+      effort: 'medium',
+      permission: 'read-only',
+    } as const;
+    const implementer = {
+      cli: 'claude',
+      model: 'sonnet',
+      effort: 'low',
+      permission: 'auto',
+    } as const;
+    const said: ThreadUpdate = { type: 'user', id: 'u', text: 'ciao', to: 'implementer' };
+    const chat: ChatRecord = {
+      ...record('chat-s', 1),
+      roles: { leader, implementer },
+      updates: [{ type: 'turn', id: 't', role: 'leader', agent: 'a', status: 'done', text: 'x' }],
+      nodes: {
+        'n-1': { name: 'Gemini', cli: 'antigravity', updates: [said] },
+        'n-2': { name: 'Muto', updates: [] },
+      },
+    };
+    expect(summary(chat)).toEqual({
+      id: 'chat-s',
+      title: 'chat-s',
+      updatedAt: 1,
+      roles: { leader, implementer },
+      implementerUsed: false,
+      nodes: ['Gemini'],
+    });
+  });
+
+  it('deletes a chat and what belongs to it', () => {
+    const removed: string[] = [];
+    const history = new ChatHistory(dir, (id) => removed.push(id));
+    history.save(record('chat-a', 1));
+    history.save(record('chat-b', 2));
+    history.remove('chat-a');
+    expect(history.list().map((c) => c.id)).toEqual(['chat-b']);
+    expect(removed).toEqual(['chat-a']);
+    expect(() => {
+      history.remove('../x');
+    }).toThrow('invalid chat id');
   });
 
   it('keeps the nodes’ threads and sessions (ADR 0023), compacted, dropping bad entries', () => {

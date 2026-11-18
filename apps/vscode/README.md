@@ -42,7 +42,8 @@ implementer.
 The chat opens in an editor tab, which you can move and resize; the layout follows its width.
 
 - **The bar:** the folder and the chat's title, its state (PRONTO, IN CORSO, ASPETTA TE, NON
-  PRONTO), STORICO (the chats of this folder), + NUOVA, IMPOSTAZIONI and SQUAD.
+  PRONTO), STORICO (the chats of this folder), NUOVA and IMPOSTAZIONI. SQUAD is in the box's foot,
+  between CTX and INVIA.
 - **The thread:** one column; each message opens with a line saying who wrote it, with which
   model, and its state, and COPIA (and ↺ RIPRISTINA QUI on yours) at hand. A turn shows what the
   agent does as it happens (ADR 0019): its intermediate messages, its reasoning (Codex's summary;
@@ -62,15 +63,17 @@ The chat opens in an editor tab, which you can move and resize; the layout follo
   - **CONSEGNA:** for the leader, whether its briefs go at once (AUTO) or wait for you
     (MANUALE), when the dials are not shown;
   - **CTX:** how full the session of the agent you write to is, after its latest turn;
-  - `@` in the text attaches a file or a folder (see below); `$` names a skill of the CLI you
+  - `@` in the text names a file or a folder, and **+** attaches files (see below); `$` names a skill of the CLI you
     write to, which it invokes in its own way (Claude may also choose skills by itself, as
     Codex does); `/` at the start of the text lists
     the commands: `/impl`, `/leader`, `/allega`, `/skill`, `/nuova` (or
     `/ferma` while it works), `/squad`, `/impostazioni`. Any other text that starts with `/`
     reaches the agent as text: the CLIs' own commands (`/clear`, `/plan`…) never run from the
     chat.
-- **On a wide panel,** two dials sit beside the box. On the left, who you talk to: click LDR,
-  IMP or a node, or the outer ring. Its sight sets the reasoning (drag, click a segment or use the wheel);
+- **On a wide panel,** two dials sit beside the box. On the left, who you talk to, in two steps (ADR 0028): the
+  label at the top (↕) chooses the group (the leader and the implementer, named by their alias,
+  else by the leader's provider) or a node alone; the outer ring chooses the role inside the
+  group, LDR or IMP, and stays empty for a node alone. Its sight sets the reasoning (drag, click a segment or use the wheel);
   the level reads above the middle line. Under it, for the leader the delivery, AUTO or MANUALE; for the implementer
   its model (↕ moves to the next one) and **HANDOFF**, a new session of the same model that starts
   from a handoff the current one writes; a node has only its model and reasoning there. On the
@@ -157,13 +160,16 @@ sub-agents, permissions and unsaved files, the composer, notifications, the CLIs
 
 ## Files and context
 
-- **`@` in the box** (or @ FILE) lists the folder's files and folders; pick one with the arrows
-  and Enter: it becomes an attachment above the text. `@` is for files only. **Ctrl+Alt+K** in the editor (or "Add File or
-  Selection to Chat" in its context menu) attaches the open file, or the selected lines as
-  `file#L10-20`.
+- **`@` in the box** names a file or a folder in your text, as in Claude Code and Codex (ADR 0026):
+  it lists the folder's files and folders, and the one you pick (arrows and Enter) is written as
+  `@path`. The thread shows it as a link to the file; the agent receives the relative path.
+- **+ before CTX** (or `/allega`) attaches files to the message's context: VS Code's file picker
+  opens on the folder, and the files go above the text. **Ctrl+Alt+K** in the editor (or "Add
+  File or Selection to Chat" in its context menu) attaches the open file, or the selected lines
+  as `file#L10-20`.
 - **The agents receive paths**, and read the files themselves: your leader's context does not
   fill with files. Selected lines are copied into the message when they are few (up to 80).
-- **CTX** above the text tells how full the session of the agent you write to is, after its
+- **CTX** under the text tells how full the session of the agent you write to is, after its
   latest turn; the Squad panel shows it for both roles.
 
 ## Reviewing and undoing changes

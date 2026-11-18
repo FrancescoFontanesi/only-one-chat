@@ -55,17 +55,40 @@ body {
   overflow-wrap: anywhere;
 }
 /* A path the text names that exists in the folder (ADR 0018): it opens the file. */
+/* A file the text names (ADR 0018, 0024): a chip, as the chat extensions show
+   them; on hover it inverts, as the design's buttons do. */
 .ref {
   all: unset;
+  display: inline;
+  padding: 0 5px;
+  border: 1px solid var(--line-strong);
   font-family: var(--font-mono);
-  font-size: 0.92em;
+  font-size: 0.82em;
+  font-weight: 500;
   color: var(--ink);
-  text-decoration: underline dotted var(--line-strong);
-  text-underline-offset: 3px;
+  white-space: nowrap;
   cursor: pointer;
+  box-decoration-break: clone;
 }
 .ref:hover {
-  text-decoration-color: var(--ink);
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--ground);
+}
+.ref__l {
+  color: var(--ink-muted);
+}
+/* The design's "opens" mark: what tells a file from inline code. */
+.ref::after {
+  content: '↗';
+  margin-left: 4px;
+  color: var(--ink-muted);
+}
+.ref:hover::after {
+  color: inherit;
+}
+.ref:hover .ref__l {
+  color: inherit;
 }
 .ref:focus-visible {
   outline: var(--stroke-focus) solid var(--ink);
@@ -100,8 +123,29 @@ body {
   padding: 10px 16px;
   cursor: pointer;
 }
-.pick + .pick {
+.pick + .pick,
+.pick-row + .pick-row {
   border-top: var(--stroke-hairline) solid var(--line);
+}
+/* A chat of the history and its delete button. */
+.pick-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.pick__x {
+  all: unset;
+  padding: 0 16px;
+  font-family: var(--font-mono);
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.pick__x:hover,
+.pick__x:focus-visible {
+  background: var(--ink);
+  color: var(--ground);
+}
+.pick__x:disabled {
+  visibility: hidden;
 }
 .pick__n {
   font-family: var(--font-display);
@@ -636,7 +680,7 @@ body {
 .bd__link--live polyline {
   stroke: var(--ink);
   stroke-dasharray: 4 4;
-  animation: bd-march 0.66s steps(4) infinite;
+  animation: bd-march 0.66s linear infinite;
 }
 .bd__link--live polygon {
   fill: var(--ink);
@@ -910,6 +954,10 @@ input:focus-visible {
   --_stroke: transparent;
   color: var(--ink-disabled);
 }
+.crumb__t {
+  color: var(--ink);
+  font-weight: 500;
+}
 .crumb__st {
   color: var(--ink);
 }
@@ -940,11 +988,13 @@ input:focus-visible {
 .cmp__send {
   margin-left: auto;
 }
-/* ── Beside the composer (Hud.tsx), on a wide panel: two dials of 216 × 192, 24px from it, each
-   joined to it by a connector at the middle of its edge; the composer as tall as they are. ── */
+/* ── Beside the composer (Hud.tsx), on a wide panel: two dials drawn at 216 × 192 and shown at
+   90% (CSS zoom, so their labels and ticks scale with them), 24px from it, each joined to it by a
+   connector at the middle of its edge; the composer as tall as they are. ── */
 .app--live {
-  --hud-w: 216px;
-  --hud-h: 192px;
+  --hud-scale: 0.9;
+  --hud-w: calc(216px * var(--hud-scale));
+  --hud-h: calc(192px * var(--hud-scale));
   --hud-gap: 24px;
 }
 .dock__side {
@@ -989,8 +1039,9 @@ input:focus-visible {
 
 .hud {
   position: relative;
-  width: var(--hud-w);
-  height: var(--hud-h);
+  width: 216px;
+  height: 192px;
+  zoom: var(--hud-scale, 1);
   user-select: none;
 }
 .hud__svg {
@@ -1425,7 +1476,7 @@ input:focus-visible {
 }
 .pk--compact:not(.pk--off):hover .pk__ticks,
 .pk--compact:not(.pk--off):focus-within .pk__ticks {
-  animation: cn-wipe 160ms steps(4) both;
+  animation: cn-wipe 160ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 .pk--compact:not(.pk--off):hover .pk__v:not(:hover),
 .pk--compact:focus-within .pk__v:not(:hover) {
@@ -1435,34 +1486,57 @@ input:focus-visible {
   color: var(--ink-disabled);
 }
 
-/* ── The thread answers the pointer: a message under it draws a notch on its rule, inverts
-   its author and wipes its actions in, in steps. ── */
+/* ── The rule above each message is a plain divider drawn as the lattice draws its junctions
+   (lattice.tsx): a + of 7 px (3 px arms round its centre pixel) at each end, in the
+   lattice's + colour, and the line broken 6 px short of each centre, so 3 px stay clear.
+   Nothing moves. Under the pointer the author inverts and the actions wipe in. ── */
 .turn {
   position: relative;
+  border-top: 0;
+  --rule: var(--line);
+}
+.turn--you {
+  --rule: var(--line-strong);
 }
 .turn::before {
   content: '';
   position: absolute;
-  left: 0;
-  top: -1px;
-  width: 0;
-  height: var(--stroke-rule);
-  background: var(--ink);
-  transition: width 240ms steps(4);
+  top: 0;
+  left: 7px;
+  right: 7px;
+  height: var(--stroke-hairline);
+  background: var(--rule);
+  pointer-events: none;
+}
+.turn::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  right: -3px;
+  height: 7px;
+  --plus-c: var(--ink-disabled);
+  --plus: linear-gradient(var(--plus-c), var(--plus-c));
+  background:
+    var(--plus) left 0 top 3px / 7px 1px no-repeat,
+    var(--plus) left 3px top 0 / 1px 7px no-repeat,
+    var(--plus) right 0 top 3px / 7px 1px no-repeat,
+    var(--plus) right 3px top 0 / 1px 7px no-repeat;
+  pointer-events: none;
+}
+/* Under the pointer the message's crosses and rule turn to ink, as a frame does when chosen;
+   its actions show. While it runs, its crosses blink: the design's one loop for liveness. */
+.turn:hover::after,
+.turn:focus-within::after {
+  --plus-c: var(--ink);
 }
 .turn:hover::before,
 .turn:focus-within::before {
-  width: 72px;
+  background: var(--line-strong);
 }
-.turn:hover .who > b,
-.turn:focus-within .who > b {
-  background: var(--ink);
-  color: var(--ground);
-  box-shadow: 0 0 0 3px var(--ink);
-}
-.turn:hover .who__acts,
-.turn:focus-within .who__acts {
-  animation: cn-wipe 200ms steps(4) both;
+.turn--live::after {
+  --plus-c: var(--ink);
+  animation: cn-blink 1s steps(1) infinite;
 }
 @keyframes cn-wipe {
   from {
@@ -1473,11 +1547,7 @@ input:focus-visible {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .turn::before {
-    transition: none;
-  }
-  .turn:hover .who__acts,
-  .turn:focus-within .who__acts,
+  .turn--live::after,
   .pk__v--set {
     animation: none;
   }
@@ -1510,7 +1580,7 @@ input:focus-visible {
   box-sizing: border-box;
   /* Grows with the text up to a limit, then scrolls. */
   field-sizing: content;
-  min-height: 52px;
+  min-height: 40px;
   max-height: min(40vh, 312px);
   overflow-y: auto;
   padding-right: 8px;
@@ -2077,4 +2147,473 @@ input:focus-visible {
 /* The empty chat: its text only, without a message's rule and author. */
 .empty {
   padding: var(--space-4) 0;
+}
+
+/* The bars move to their new value instead of jumping (context, usage). */
+.cn-meter > i {
+  transition: width 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cn-meter > i {
+    transition: none;
+  }
+}
+
+/* An agent's Markdown (webview/markdown.tsx): the thread's type, in the design's ink and lines. */
+.md {
+  overflow-wrap: anywhere;
+  /* Regular, so bold (700) stands out: Rajdhani's 500 and 700 look alike. */
+  font-weight: 400;
+}
+.md > * {
+  margin: 0;
+}
+.md > * + * {
+  margin-top: 10px;
+}
+.md p {
+  white-space: pre-line;
+}
+.md-h {
+  font-weight: 700;
+}
+.md-h1 {
+  font-size: 1.25em;
+}
+.md-h2 {
+  font-size: 1.12em;
+}
+.md strong {
+  font-weight: 700;
+}
+.md-code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  padding: 1px 5px;
+  background: var(--line);
+}
+.md-pre {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--line-strong);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+}
+.md-pre[data-lang]::before {
+  content: attr(data-lang);
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink-muted);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.md-list {
+  padding: 0;
+  list-style: none;
+}
+.md-list li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+}
+.md-mark {
+  color: var(--ink-muted);
+}
+.md-list li + li {
+  margin-top: 4px;
+}
+.md-list li {
+  white-space: pre-line;
+}
+.md-d1 {
+  margin-left: 18px;
+}
+.md-d2 {
+  margin-left: 36px;
+}
+.md-d3 {
+  margin-left: 54px;
+}
+.md-quote {
+  padding-left: 12px;
+  border-left: 2px solid var(--line-strong);
+  color: var(--ink-muted);
+  white-space: pre-line;
+}
+.md-table {
+  overflow-x: auto;
+}
+.md-table table {
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+.md-table th,
+.md-table td {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.md-table th {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.md-rule {
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+/* LaTeX as MathML (ADR 0024): the browser draws it, in the ink of the text. */
+.md-math math {
+  font-size: 1.05em;
+}
+.md-math--block {
+  display: block;
+  overflow-x: auto;
+  padding: 4px 0;
+}
+.md-math--block math {
+  display: block;
+  font-size: 1.15em;
+}
+
+/* ── The entrance, once when the panel opens (App.tsx: app--intro): the bar opens like a
+   shutter, the dials switch on like a screen, the composer is built, the thread comes last. ── */
+@keyframes intro-shutter {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+@keyframes intro-power {
+  0% {
+    opacity: 0;
+    clip-path: inset(50% 0 50% 0);
+  }
+  45% {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
+  60% {
+    opacity: 0.35;
+  }
+  72% {
+    opacity: 1;
+  }
+  84% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes intro-build {
+  from {
+    clip-path: inset(0 50% 0 50%);
+    opacity: 0.4;
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    opacity: 1;
+  }
+}
+@keyframes intro-fade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.app--intro .bar {
+  animation: intro-shutter 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.app--intro .dock__side .hud {
+  animation: intro-power 700ms ease-out 180ms both;
+}
+.app--intro .dock__side + .colw + .dock__side .hud {
+  animation-delay: 320ms;
+}
+.app--intro .dock .cmp {
+  animation: intro-build 520ms cubic-bezier(0.2, 0.8, 0.2, 1) 120ms both;
+}
+.app--intro .thread {
+  animation: intro-fade 420ms ease-out 480ms both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .app--intro .bar,
+  .app--intro .dock__side .hud,
+  .app--intro .dock .cmp,
+  .app--intro .thread {
+    animation: none;
+  }
+}
+
+/* A CLI's path in the settings (ADR 0025): the field, then RILEVA and SELEZIONA. */
+.sx-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.sx-path > .cn-field {
+  flex: 1 1 280px;
+}
+.sx-path__acts {
+  display: inline-flex;
+  gap: 8px;
+}
+
+/* ── The chat page's separators as the lattice draws them (as the thread's, ADR 0016): a + of
+   7 px at each end in the + colour, the line broken 6 px short of each centre. ── */
+.bar,
+.cmp__foot {
+  border-bottom-color: transparent;
+  --sep-plus: linear-gradient(var(--ink-disabled), var(--ink-disabled));
+}
+.bar {
+  border-bottom: 0;
+}
+.cmp__foot {
+  position: relative;
+  border-top: 0;
+}
+.bar::before,
+.cmp__foot::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  height: var(--stroke-hairline);
+  background: var(--line);
+  pointer-events: none;
+}
+.bar::after,
+.cmp__foot::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 7px;
+  background:
+    var(--sep-plus) left 0 top 3px / 7px 1px no-repeat,
+    var(--sep-plus) left 3px top 0 / 1px 7px no-repeat,
+    var(--sep-plus) right 0 top 3px / 7px 1px no-repeat,
+    var(--sep-plus) right 3px top 0 / 1px 7px no-repeat;
+  pointer-events: none;
+}
+/* The bar's rule at its foot, inset as its content. */
+.bar::before {
+  bottom: 0;
+  left: calc(var(--space-4) + 4px);
+  right: calc(var(--space-4) + 4px);
+}
+.bar::after {
+  bottom: -3px;
+  left: calc(var(--space-4) - 3px);
+  right: calc(var(--space-4) - 3px);
+}
+/* The composer's rule above CTX and the send. */
+.cmp__foot::before {
+  top: 0;
+}
+.cmp__foot::after {
+  top: -3px;
+  left: -3px;
+  right: -3px;
+}
+/* The bar's upright separator: a + at each end, the line between them broken the same way. */
+.vsep {
+  width: 7px;
+  height: 32px;
+  background:
+    linear-gradient(var(--ink-disabled), var(--ink-disabled)) left 0 top 3px / 7px 1px no-repeat,
+    linear-gradient(var(--ink-disabled), var(--ink-disabled)) left 3px top 0 / 1px 7px no-repeat,
+    linear-gradient(var(--ink-disabled), var(--ink-disabled)) left 0 bottom 3px / 7px 1px no-repeat,
+    linear-gradient(var(--ink-disabled), var(--ink-disabled)) left 3px bottom 0 / 1px 7px no-repeat,
+    linear-gradient(var(--line), var(--line)) left 3px center / 1px calc(100% - 20px) no-repeat;
+}
+
+/* A chat of the history: who worked in it, under its title (ADR 0027). */
+.pick__r {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.pick__r .mut {
+  color: var(--ink-disabled);
+}
+
+/* A spec list in the thread (the facts, the report): its top rule as the page's separators,
+   a + at each end and the line broken short of them; its rows keep their plain rules. */
+.thread .cn-spec {
+  position: relative;
+  border-top: 0;
+}
+.thread .cn-spec::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 7px;
+  right: 7px;
+  height: var(--stroke-hairline);
+  background: var(--line-strong);
+  pointer-events: none;
+}
+.thread .cn-spec::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  right: -3px;
+  height: 7px;
+  --sep-plus: linear-gradient(var(--ink-disabled), var(--ink-disabled));
+  background:
+    var(--sep-plus) left 0 top 3px / 7px 1px no-repeat,
+    var(--sep-plus) left 3px top 0 / 1px 7px no-repeat,
+    var(--sep-plus) right 0 top 3px / 7px 1px no-repeat,
+    var(--sep-plus) right 3px top 0 / 1px 7px no-repeat;
+  pointer-events: none;
+}
+
+/* SQUAD in the composer's foot, between CTX and the send: pushed to the middle when there is
+   room to be exactly on the box's axis, else after CTX. */
+.cmp__squad {
+  position: relative;
+  margin-left: auto;
+}
+@container oo (min-width: 1000px) {
+  .cmp__squad {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    margin: 0;
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* The group (or the node alone) heads the left dial's text, where "Parli con" was: R/ then its
+   name as its alias or its provider, ↕ when there is another to choose (ADR 0028). */
+.hud__grp {
+  all: unset;
+  box-sizing: border-box;
+  position: absolute;
+  z-index: 2;
+  top: 4px;
+  left: 8px;
+  max-width: 120px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink);
+  cursor: pointer;
+}
+.hud__grp > span:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.hud__grp:disabled {
+  cursor: default;
+}
+.hud__grp:not(:disabled):hover > span:nth-child(2) {
+  color: var(--ink-muted);
+}
+.hud__grp:focus-visible {
+  outline: var(--stroke-focus) solid var(--ink);
+  outline-offset: 1px;
+}
+
+/* Buttons with no frame and no icon (SQUAD, INVIA, APRI CARTELLA): the label alone. On hover the
+   ink fills it from left to right in eight steps and the text turns to the ground's colour as the
+   fill passes under it (the fill and the text's gradient run the same steps); on click the
+   button blinks once. */
+.cn-btn--bare {
+  --_stroke: transparent;
+  --_fill: transparent;
+  color: var(--ink);
+  min-height: 24px;
+}
+.cn-btn--bare::before {
+  inset: 0;
+  background: var(--ink);
+  transform: scaleX(0);
+  transform-origin: left;
+  pointer-events: none;
+}
+.cn-btn--bare:focus-visible::after {
+  content: none;
+}
+.cn-btn--bare:not(:disabled):hover,
+.cn-btn--bare:not(:disabled):focus-visible {
+  --_fill: transparent;
+  color: var(--ink);
+}
+.cn-btn--bare:not(:disabled):hover::before,
+.cn-btn--bare:not(:disabled):focus-visible::before {
+  transform: scaleX(1);
+  animation: bare-fill 200ms steps(8, end) backwards;
+}
+.cn-btn--bare:not(:disabled):hover .cn-btn__label,
+.cn-btn--bare:not(:disabled):focus-visible .cn-btn__label {
+  color: transparent;
+  background: linear-gradient(90deg, var(--ground) 50%, var(--ink) 50%) 0 0 / 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: bare-ink 200ms steps(8, end) backwards;
+}
+.cn-btn--bare:not(:disabled):active {
+  animation: bare-blink 120ms steps(1, end);
+}
+.cn-btn--bare:disabled {
+  --_stroke: transparent;
+  --_fill: transparent;
+  color: var(--ink-disabled);
+}
+@keyframes bare-fill {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes bare-ink {
+  from {
+    background-position: 100% 0;
+  }
+}
+@keyframes bare-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cn-btn--bare:hover::before,
+  .cn-btn--bare:focus-visible::before,
+  .cn-btn--bare:hover .cn-btn__label,
+  .cn-btn--bare:focus-visible .cn-btn__label,
+  .cn-btn--bare:active {
+    animation: none;
+  }
 }

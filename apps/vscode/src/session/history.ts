@@ -8,7 +8,7 @@ import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync
 import { join } from 'node:path';
 import type { PendingReport } from '@only-one-chat/runtime';
 import type { AgentChoice, DraftDelegation, FileNotes } from './chat.js';
-import type { ContextInfo, ThreadUpdate, TurnRole } from '../webview/protocol.js';
+import type { Cli, ContextInfo, ThreadUpdate, TurnRole } from '../webview/protocol.js';
 
 export interface ChatRecord {
   readonly version: 1;
@@ -35,6 +35,9 @@ export interface ChatRecord {
 
 export interface NodeThread {
   session?: string;
+  /** The node's name and provider when it was spoken to: shown even once it is off the board. */
+  name?: string;
+  cli?: Cli;
   updates: ThreadUpdate[];
 }
 
@@ -42,6 +45,11 @@ export interface ChatSummary {
   readonly id: string;
   readonly title: string;
   readonly updatedAt: number;
+  /** Who worked in it (ADR 0027): the roles it ran with, whether the implementer took a turn. */
+  readonly roles?: Partial<Record<TurnRole, AgentChoice>>;
+  readonly implementerUsed: boolean;
+  /** The nodes written to in it, by the name they had. */
+  readonly nodes: readonly string[];
 }
 
 /** At most this many chats are kept; the oldest go first. */
@@ -144,10 +152,26 @@ function nodeThreads(value: unknown): Record<string, NodeThread> {
     if (!ID.test(id) || typeof n !== 'object' || n === null || !Array.isArray(n.updates)) continue;
     nodes[id] = {
       ...(typeof n.session === 'string' ? { session: n.session } : {}),
+      ...(typeof n.name === 'string' ? { name: n.name.slice(0, 40) } : {}),
+      ...(n.cli === 'codex' || n.cli === 'claude' || n.cli === 'antigravity' ? { cli: n.cli } : {}),
       updates: n.updates as ThreadUpdate[],
     };
   }
   return nodes;
+}
+
+/** A chat as the history lists it: its title, when, and who worked in it. */
+export function summary(record: ChatRecord): ChatSummary {
+  return {
+    id: record.id,
+    title: record.title,
+    updatedAt: record.updatedAt,
+    ...(record.roles ? { roles: record.roles } : {}),
+    implementerUsed: record.updates.some((u) => u.type === 'turn' && u.role === 'implementer'),
+    nodes: Object.values(record.nodes ?? {})
+      .filter((thread) => thread.updates.some((u) => u.type === 'user'))
+      .map((thread) => thread.name ?? 'Nodo'),
+  };
 }
 
 export function newChatId(now = Date.now()): string {
@@ -257,7 +281,7 @@ export class ChatHistory {
     return names
       .flatMap((name) => {
         const record = this.load(name.slice(0, -'.json'.length));
-        return record ? [{ id: record.id, title: record.title, updatedAt: record.updatedAt }] : [];
+        return record ? [summary(record)] : [];
       })
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }
@@ -277,9 +301,12 @@ export class ChatHistory {
       JSON.stringify({ ...record, updates: compact(record.updates), nodes }),
     );
     renameSync(temporary, path);
-    for (const old of this.list().slice(MAX_CHATS)) {
-      rmSync(this.file(old.id), { force: true });
-      this.onRemove?.(old.id);
-    }
+    for (const old of this.list().slice(MAX_CHATS)) this.remove(old.id);
+  }
+
+  /** Deletes a chat and, through `onRemove`, what belongs to it (its checkpoints). */
+  remove(id: string): void {
+    rmSync(this.file(id), { force: true });
+    this.onRemove?.(id);
   }
 }

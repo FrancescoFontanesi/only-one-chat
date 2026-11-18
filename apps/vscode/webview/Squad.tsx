@@ -476,11 +476,11 @@ export function Squad({
       </Reveal>
     ),
   });
-  // The nodes in a row under the three roles, with no link: each talks only to you.
+  // The nodes on the reviewer's row, past the implementer, with no link: each talks only to you.
   const nodeBlock = (node: NodeInfo, index: number) => ({
     id: node.id,
-    x: index * 500,
-    y: 840,
+    x: 1000 + index * 500,
+    y: 420,
     width: 340,
     children: (
       <Reveal delay={300 + index * 100}>
@@ -568,16 +568,10 @@ export function Squad({
                     id: 'work',
                     from: 'implementer',
                     to: 'reviewer',
-                    label: 'Lavoro',
-                    lane: -16,
+                    // The work goes to it and its findings come back: one line, both ways.
+                    label: 'Lavoro ⇄ Rilievi',
+                    lane: 0,
                     live: agentStatus('reviewer') === 'working',
-                  },
-                  {
-                    id: 'findings',
-                    from: 'reviewer',
-                    to: 'implementer',
-                    label: 'Rilievi',
-                    lane: 16,
                   },
                   {
                     id: 'review',

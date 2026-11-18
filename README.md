@@ -9,7 +9,7 @@ a pagamento.
 > (Antigravity tramite ACP). Il manuale d'uso è nel
 > [README dell'estensione](apps/vscode/README.md).
 
-![La chat: una delega, il rapporto dell'implementatore e la revisione del leader](docs/images/chat.png)
+![La chat: la fine di una delega, il verdetto del revisore e la risposta del leader](docs/images/chat.png)
 
 ## Cosa fa
 
@@ -18,6 +18,14 @@ a pagamento.
   - quando glielo chiedi, scrive un brief che il runtime intercetta e consegna all'implementatore;
   - il rapporto torna al leader com'è, insieme ai fatti verificati dall'estensione (file
     cambiati, test rieseguiti).
+- **Il revisore** ([ADR 0029](docs/decisions/0029-reviewer-findings-and-review.md),
+  [ADR 0033](docs/decisions/0033-reviewer-always-and-direct.md)):
+  - rivede ogni lavoro dell'implementatore, delegato o scritto da te: lo prova e scrive test, mai
+    il codice;
+  - giudica onestà, sicurezza, aggiornamento e criteri del brief; i suoi rilievi tornano
+    all'implementatore, poi il leader legge la sua revisione al posto del rapporto;
+  - puoi chiedergli una revisione e spegnerlo dalla ghiera o da Squad; di default è Claude Haiku
+    a reasoning high.
 - **Qualsiasi provider in qualsiasi ruolo** ([ADR 0022](docs/decisions/0022-providers-per-role.md)):
   Codex e Claude Code fanno da leader o da implementatore. Il leader ti fa domande con lo
   strumento del proprio CLI.
@@ -31,12 +39,13 @@ a pagamento.
 - **Utilizzo degli abbonamenti:** finestre di 5 ore e settimanali di Codex, Claude e Antigravity,
   lette senza consumare quota e mai da file di credenziali.
 
-![Squad: la lavagna con il leader, l'implementatore e un nodo Gemini](docs/images/squad.png)
+![Squad: la lavagna con leader, implementatore, revisore e un nodo Gemini](docs/images/squad.png)
 
 ![Il thread di un nodo: Gemini su Antigravity](docs/images/node.png)
 
-Gli screenshot sono la webview vera, con dati di esempio presi da una prova sulla calcolatrice
-di `sandbox/scenarios/calc`.
+Gli screenshot sono la webview vera in Chrome headless, con una chat registrata da una prova
+sulla calcolatrice (`sandbox/scenarios/calc-include`, run U3). Si rigenerano con
+`node dev/screenshots.mjs`, dopo aver compilato l'estensione.
 
 ## Avvio rapido (Windows)
 

@@ -5,7 +5,7 @@ works with an **implementer** on another subscription (ADR 0010 in the repositor
 runs on Codex or Claude Code (ADR 0022), and more agents can join on Squad's board as **nodes**,
 Antigravity's Gemini among them (ADR 0023).
 
-![The chat: a delegation, the implementer's report and the leader's review](https://raw.githubusercontent.com/FrancescoFontanesi/only-one-chat/main/docs/images/chat.png)
+![The chat: the end of a delegation, the reviewer's verdict and the leader's answer](https://raw.githubusercontent.com/FrancescoFontanesi/only-one-chat/main/docs/images/chat.png)
 
 ## How it works
 
@@ -36,6 +36,12 @@ implementer.
   missing from its brief stops it, and it says so in its report.
 - **For a small change, write to the implementer directly:** it is the cheapest way, and the
   leader reads that report with your next message.
+- **A reviewer checks every piece of work** (ADR 0029, 0033), delegated or sent directly: it
+  runs it and writes tests, never the code (what it changes outside the tests is put back), and
+  judges honesty, security, being up to date and the brief's criteria. Its findings go back to
+  the implementer for a few rounds, then the leader reads its review in place of the report. You
+  can ask it for a review yourself (REVISORE in the box, `/rev`), and switch it off on the dial or
+  in Squad. By default: Claude Haiku at high reasoning.
 
 ## The chat
 
@@ -102,7 +108,7 @@ change, in the side column:
 
 Nothing changes the roles automatically.
 
-![Squad: the board with the leader, the implementer and a Gemini node](https://raw.githubusercontent.com/FrancescoFontanesi/only-one-chat/main/docs/images/squad.png)
+![Squad: the board with the leader, the implementer, the reviewer and a Gemini node](https://raw.githubusercontent.com/FrancescoFontanesi/only-one-chat/main/docs/images/squad.png)
 
 ### Nodes
 

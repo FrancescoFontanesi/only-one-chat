@@ -1,77 +1,68 @@
 # Ciclo di orchestrazione minimo (D6)
 
-Stato: iterazione 1. Codice: `packages/runtime/src/` (`loop.ts`, `delegation.ts`,
-`agent.ts`, `event-log.ts`); agenti: `packages/adapters/src/codex/agent.ts` e
-`src/claude/agent.ts`. Test con agenti finti deterministici:
-`packages/runtime/test/loop.test.ts`.
+Stato: iterazione 1. Il runtime ha due modalità, `leader` e `review` ([ADR 0034](decisions/0034-remove-experimental-modes.md)).
+Codice: `packages/runtime/src/` (`loop.ts`, `delegation.ts`, `brief.ts`, `agent.ts`,
+`event-log.ts`); agenti: `packages/adapters/src/codex/agent.ts` e `src/claude/agent.ts`.
+Test con agenti finti deterministici: `packages/runtime/test/loop.test.ts`.
 
-## Flusso
+## Le due modalità
 
-1. La richiesta dell'utente va all'**orchestratore** (iterazione 1: Codex), in un thread
-   in sola lettura (`sandbox: "read-only"`) nel workspace.
-2. L'orchestratore scrive un piano e un **blocco di delega** nel formato fisso imposto
-   dalle istruzioni di ruolo del runtime (`ORCHESTRATOR_INSTRUCTIONS`), mai lette da file
-   del repository:
+`runLoop` richiede l'opzione `mode`, senza default:
+
+- **`leader`**: la richiesta dell'utente va al **leader** (`leaderSession`), che risponde da
+  solo oppure delega all'implementatore con un blocco di delega. È il percorso dell'estensione.
+- **`review`** (ADR 0033): lavoro che il leader non ha delegato (un messaggio che l'utente ha
+  mandato direttamente all'implementatore, o una revisione chiesta al revisore). Richiede
+  `workerSession` e `reviewer` in `reviewOf`. Non c'è un turno del leader: il ciclo finisce
+  `delegated`, e il leader legge il risultato con il messaggio successivo dell'utente.
+
+Le modalità `loop`, `question`, `pipeline` e `gateway` (con la variante `light`) sono state
+tolte dall'ADR 0034: ora non esistono nel runtime.
+
+## Flusso in modalità `leader`
+
+1. La richiesta dell'utente va al **leader**, in un thread in sola lettura
+   (`sandbox: "read-only"`) nel workspace. La sessione del leader resta fra una richiesta e
+   l'altra e il ciclo non la chiude.
+2. Il leader risponde, oppure scrive un **blocco di delega** con marcatori fissi:
 
    ```text
    <<<DELEGA
-   ## Obiettivo
-   ## Contesto
-   ## Vincoli
-   ## Assunzioni
-   ## Domande aperte
-   ## Output atteso
+   testo libero, non vuoto
    DELEGA>>>
    ```
 
-   Le sei sezioni sono obbligatorie, in quest'ordine e non vuote. Senza marcatori la
-   risposta è una conclusione e il ciclo termina. La riga di apertura può nominare il
-   destinatario, `<<<DELEGA @claude`: un destinatario diverso dal worker rende il blocco
-   malformato.
+   La riga di apertura può nominare il destinatario, `<<<DELEGA @claude`; un destinatario
+   diverso dal worker rende il blocco malformato. Il corpo non ha più sezioni obbligatorie
+   (`DELEGATION_SECTIONS` è stato tolto): è libero, ma non può essere vuoto. Senza marcatori la
+   risposta è una conclusione e il ciclo termina.
 
 3. Il blocco viene **intercettato**: l'utente lo approva, lo modifica o lo annulla. Nessun
    messaggio arriva a un agente senza approvazione.
-4. Il **worker** (iterazione 1: Claude) riceve il testo approvato; la risposta arriva in
-   streaming. I turni successivi riprendono la stessa sessione Claude (`--resume`).
-5. Il runtime prepara il **messaggio di review** (risultato del worker e richiesta di
-   valutazione), anch'esso intercettato. La risposta del worker sta fra le righe
-   `<<<RISPOSTA DEL WORKER` e `RISPOSTA DEL WORKER>>>`, con una frase che la indica come
-   dato da valutare e non come istruzioni (minaccia T4 in [security.md](security.md)); una
-   riga della risposta identica a un delimitatore viene sostituita, così la risposta non
-   può chiudere la cornice in anticipo.
-6. L'orchestratore valuta: una nuova delega riparte dal punto 3, altrimenti la risposta è
-   la conclusione. Al massimo **3 scambi**; al terzo la review chiede di non delegare più e
-   un'ulteriore delega chiude con `limit_reached`.
+4. L'**implementatore** (worker) riceve il testo approvato; la risposta arriva in streaming.
+   I turni successivi riprendono la stessa sessione (`--resume` per Claude).
+5. Il runtime prepara il **messaggio di review** (risultato dell'implementatore e richiesta di
+   valutazione), anch'esso intercettato. Un revisore (ADR 0029) valuta il rapporto, a meno
+   che la revisione sia rinviata. Il rapporto sta fra le righe `<<<RISPOSTA DEL WORKER` e
+   `RISPOSTA DEL WORKER>>>`, con una frase che lo indica come dato da valutare e non come
+   istruzioni (minaccia T4 in [security.md](security.md)); una riga della risposta identica a un
+   delimitatore viene sostituita, così la risposta non può chiudere la cornice in anticipo.
+6. Il leader legge il risultato: può delegare ancora (si riparte dal punto 3) oppure
+   rispondere all'utente, e il ciclo termina.
 
-Esiti: `completed`, `limit_reached`, `answered` (modalità domanda), `cancelled` (con il
-punto: `delegation`, `review`, `malformed`), `stopped`, `failed`.
+**Brief dalla chat di ragionamento.** Un messaggio che è un brief `<<<OOC-BRIEF v1 ...`
+(ADR 0018, 0020, [brief-format.md](brief-format.md)) non passa dal ciclo di delega normale:
+va all'implementatore con solo le note del leader, e il ciclo finisce con il risultato per quella
+chat. Il formato del brief è descritto in [brief-format.md](brief-format.md).
 
-## Modalità domanda
+**Limite agli scambi.** Non c'è più l'opzione `maxExchanges` né l'esito `limit_reached`
+(tolti dall'ADR 0034).
 
-`runLoop({ mode: 'question' })`: l'orchestratore riceve istruzioni dedicate
-(`questionInstructions`) per formulare **una** domanda al worker, con il destinatario
-obbligatorio (`<<<DELEGA @<id>`), senza rispondere da solo. Il blocco è intercettato come
-sempre; dopo la risposta del worker il ciclo termina con `answered` (domanda approvata,
-risposta, etichetta), senza review. Una sola correzione di un blocco malformato è
-ammessa (`canAskOrchestrator` diventa falso); se l'orchestratore risponde senza
-delegare, l'esito è `failed`. Nella demo: `pnpm demo --question`.
+## Esiti
 
-## Modalità pipeline (benchmark)
-
-`runLoop({ mode: 'pipeline', autoApprove: true })`, per le prove della cartella `sandbox/`
-([ADR 0008](decisions/0008-sandbox-mode.md)). Tre turni:
-
-1. il **pianificatore** (`plannerInstructions`) ragiona e scrive una sola specifica completa
-   nel blocco di delega, con destinatario obbligatorio, senza codice completo;
-2. l'**esecutore** (`EXECUTOR_INSTRUCTIONS`) la segue alla lettera, senza analisi estese,
-   scrive i file, esegue i test e risponde con un rapporto fisso (File, Test, Problemi);
-3. il pianificatore riceve il rapporto nella cornice da dato (`verdictPrompt`) e risponde solo
-   `SUCCESS` o `FAIL`; l'esito è `verdict`, con il verdetto letto da `parseVerdict` (null se
-   ambiguo).
-
-Con `autoApprove` i messaggi fra agenti non aspettano l'utente, ma sono intercettati,
-registrati e mostrati come decisione `auto_approve`; un blocco malformato riceve una sola
-correzione automatica (`auto_fix`), poi il run fallisce. Mai per default.
+`completed` (risposta del leader senza delega), `delegated` (lavoro passato all'implementatore
+o in attesa della review, in modalità `review`), `result` (rapporto dell'implementatore pronto per
+il leader), `cancelled` (con il punto: `delegation`, `review`, `malformed`), `stopped`, `failed`.
 
 ## Etichette
 
@@ -84,7 +75,7 @@ identità.
 ## Regole
 
 - **Delega malformata**: non viene inoltrata. L'errore va nel thread
-  (`delegation_invalid`) e l'utente sceglie: chiedere all'orchestratore di correggerla,
+  (`delegation_invalid`) e l'utente sceglie: chiedere al leader di correggerla,
   scriverla a mano (poi intercettata come le altre) o annullare.
 - **Approvazioni** chieste da un agente (comandi, scritture, rete): rifiutate in
   automatico; nel thread compare "approvazione rifiutata: non supportata in questa
@@ -103,15 +94,16 @@ identità.
 ## Indipendenza dai provider
 
 Il runtime conosce solo `AgentFactory`/`AgentSession`/`AgentTurn` (`agent.ts`); gli
-adapter ne replicano la forma senza importare il runtime. Quale CLI fa da orchestratore o
-da worker, con quale modello e sforzo, è configurazione di chi crea le factory (la demo,
-poi l'estensione).
+adapter ne replicano la forma senza importare il runtime. Quale CLI fa da leader, da
+implementatore o da revisore, con quale modello e sforzo, è configurazione di chi crea le
+factory (l'estensione).
 
 ## Limiti
 
-- I turni Codex del fake seguono un turno reale (`question-turn.jsonl`, registrato dalla
-  demo con `OOC_CODEX_TRACE` e redatto), confrontato sui campi che il client legge. Il fake
-  non emette hook, stati di avvio MCP, uso dei token e rate limit.
+- I turni Codex del fake seguono un turno reale (`question-turn.jsonl`, registrato con
+  `OOC_CODEX_TRACE` e redatto, con la demo tolta dall'ADR 0034), confrontato sui campi che il
+  client legge. Il fake non emette hook, stati di avvio MCP, uso dei token e rate
+  limit.
 - **Sotto-agenti** di ciascun CLI (D13, [subagents.md](subagents.md)): visibili nel thread
   sotto il turno che li crea, con etichetta del runtime, vincolati dalla policy del ruolo
   (`LoopOptions.subagents`) e controllati a posteriori; non sono intercettati.

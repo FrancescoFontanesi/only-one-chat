@@ -3,8 +3,8 @@
 // and last lines are checked (docs/brief-format.md); its body reaches the
 // gateway as it is.
 
-export const BRIEF_END = 'OOC-BRIEF>>>';
-export const RESULT_END = 'OOC-RESULT>>>';
+const BRIEF_END = 'OOC-BRIEF>>>';
+const RESULT_END = 'OOC-RESULT>>>';
 
 const BRIEF_START = /^<<<OOC-BRIEF v1 project=([a-z0-9-]+) track=([a-z0-9-]+)$/;
 const RESULT_START = /^<<<OOC-RESULT v1\b/;
@@ -16,7 +16,7 @@ export interface Brief {
   readonly body: string;
 }
 
-export type BriefParse =
+type BriefParse =
   | { readonly status: 'valid'; readonly brief: Brief }
   | { readonly status: 'invalid'; readonly error: string };
 

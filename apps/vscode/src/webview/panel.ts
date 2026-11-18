@@ -13,7 +13,14 @@ import { SKIPPED } from '../session/facts.js';
 import { ignoredPaths } from '../session/ignore.js';
 import { expandMentions, insideFolder, withRefs } from '../session/mentions.js';
 import { ChatHistory, forReplay, newChatId, type ChatRecord } from '../session/history.js';
-import { checkpointUri, checkpointsRoot } from './checkpointContent.js';
+import { checkpointsRoot } from './checkpointContent.js';
+import {
+  openFile,
+  restoreCheckpoint,
+  reviewFile,
+  saveBeforeSend,
+  type FileHost,
+} from './fileActions.js';
 import type { ModelCatalog } from '../session/catalog.js';
 import type { SkillCatalog } from '../session/skills.js';
 import type { MonitorStore } from '../session/monitor.js';
@@ -128,7 +135,6 @@ export class OnlyOneChatPanel {
     if (current && !current.chat?.busy) await current.switchTo(current.emptyRecord());
   }
 
-  /** Stops what the chat is running (command palette). */
   /**
    * Puts a mention of the editor's file, or of its selection, in the composer
    * (command onlyOneChat.addSelection); the chat opens if it is closed.
@@ -157,6 +163,7 @@ export class OnlyOneChatPanel {
     OnlyOneChatPanel.current?.insert(`@${file.split(path.sep).join('/')}${lines} `);
   }
 
+  /** Stops what the chat is running (command palette). */
   static async stop(): Promise<void> {
     await OnlyOneChatPanel.current?.chat?.stop();
   }
@@ -550,7 +557,7 @@ export class OnlyOneChatPanel {
           await this.sendToNode(message.node, message.text, message.skill, message.attachments);
           break;
         }
-        if (!(await this.saveBeforeSend())) break;
+        if (!(await saveBeforeSend(workspaceFolder()))) break;
         const chat = await this.ensureChat();
         if (!chat) break;
         // `@` is for files only: the recipient comes from the composer's control.
@@ -583,7 +590,9 @@ export class OnlyOneChatPanel {
         break;
       }
       case 'openFile':
-        await this.openFile(message.path, message.from, message.to);
+        await openFile(workspaceFolder(), message.path, message.from, message.to, (text) => {
+          this.notice('warn', text);
+        });
         break;
       case 'permit':
         this.chat?.permit(message.id, message.decision);
@@ -666,7 +675,7 @@ export class OnlyOneChatPanel {
         await vscode.commands.executeCommand('workbench.action.files.openFolder');
         break;
       case 'reviewFile':
-        await this.reviewFile(message.id, message.path, message.action);
+        await reviewFile(this.fileHost(), message.id, message.path, message.action);
         break;
       case 'listFiles':
         await this.post({ type: 'files', paths: await folderPaths() });
@@ -680,7 +689,7 @@ export class OnlyOneChatPanel {
           this.notice('info', 'La chat non è ancora partita: l’implementatore parte già da zero.');
         break;
       case 'restoreCheckpoint':
-        await this.restoreCheckpoint(message.checkpoint);
+        await restoreCheckpoint(this.fileHost(), message.checkpoint);
         break;
       case 'openSettings':
         await vscode.commands.executeCommand('onlyOneChat.openSettings');
@@ -977,7 +986,7 @@ export class OnlyOneChatPanel {
       this.notice('warn', 'Le skill non si inviano ai nodi: messaggio non inviato.');
       return;
     }
-    if (!(await this.saveBeforeSend())) return;
+    if (!(await saveBeforeSend(workspaceFolder()))) return;
     const node = await this.ensureNode(id);
     if (!node) return;
     await node.send(text, attachedFiles(attachments));
@@ -1136,11 +1145,6 @@ export class OnlyOneChatPanel {
     });
   }
 
-  /**
-   * The agents read and change the files on disk: the folder's unsaved files
-   * are saved first, or not, as onlyOneChat.saveBeforeSend says. False: the
-   * user cancelled the message.
-   */
   /** Text for the composer, now or once the webview has loaded. */
   private insert(text: string): void {
     if (this.ready) void this.post({ type: 'insert', text });
@@ -1161,6 +1165,25 @@ export class OnlyOneChatPanel {
       : undefined;
   }
 
+  /** What the file actions of fileActions.ts need of the chat shown. */
+  private fileHost(): FileHost {
+    return {
+      recordId: this.record.id,
+      updates: this.record.updates,
+      store: this.checkpointStore(),
+      busy: this.chat?.busy ?? false,
+      notice: (level, text) => {
+        this.notice(level, text);
+      },
+      emit: (update) => {
+        this.emit(update);
+      },
+      noteFiles: (note) => {
+        this.noteFiles(note);
+      },
+    };
+  }
+
   /** Tells the agents, with their next message, which files the user put back. */
   private noteFiles(note: string): void {
     if (this.chat) {
@@ -1174,160 +1197,6 @@ export class OnlyOneChatPanel {
       implementer: [...(notes?.implementer ?? []), note],
     };
     this.keep(this.record);
-  }
-
-  /**
-   * A path the thread links (ADR 0018), at its lines: only inside the folder,
-   * after its links are resolved; a folder is shown in the explorer.
-   */
-  private async openFile(file: string, from?: number, to?: number): Promise<void> {
-    const cwd = workspaceFolder();
-    // An absolute path too, if it is in the folder: the agents' links use them.
-    const found = cwd ? insideFolder(cwd, file.replace(/\/+$/, '')) : undefined;
-    if (!found) {
-      this.notice('warn', `${file} non è un percorso della cartella aperta.`);
-      return;
-    }
-    const uri = vscode.Uri.file(found.full);
-    if (found.folder) {
-      await vscode.commands.executeCommand('revealInExplorer', uri);
-      return;
-    }
-    const start = from !== undefined ? from - 1 : undefined;
-    const end = to !== undefined ? to - 1 : start;
-    await vscode.window.showTextDocument(uri, {
-      preview: true,
-      ...(start !== undefined && end !== undefined
-        ? { selection: new vscode.Range(start, 0, end, Number.MAX_SAFE_INTEGER) }
-        : {}),
-    });
-  }
-
-  /**
-   * A file of a changes card (ADR 0014). The file is looked up in the card the
-   * chat recorded: the webview names it, but only a recorded path is touched.
-   */
-  private async reviewFile(
-    id: string,
-    file: string,
-    action: 'diff' | 'accept' | 'reject',
-  ): Promise<void> {
-    const card = this.record.updates.find(
-      (u): u is Extract<ThreadUpdate, { type: 'changes' }> => u.type === 'changes' && u.id === id,
-    );
-    const change = card?.files.find((f) => f.path === file);
-    const store = this.checkpointStore();
-    if (!change || !store) return;
-    if (action === 'diff') {
-      await vscode.commands.executeCommand(
-        'vscode.diff',
-        checkpointUri(this.record.id, change.before, change.path),
-        checkpointUri(this.record.id, change.after, change.path),
-        `${change.path} · prima ↔ dopo il messaggio`,
-        { preview: true },
-      );
-      return;
-    }
-    if (action === 'accept') {
-      this.emit({ type: 'change_decided', id, path: file, decision: 'accepted' });
-      return;
-    }
-    if (this.chat?.busy) {
-      this.notice('warn', 'Un messaggio è in corso: rifiuta il file quando è concluso.');
-      return;
-    }
-    try {
-      if (store.current(change.path) !== change.after) {
-        const answer = await vscode.window.showWarningMessage(
-          `${change.path} è cambiato ancora dopo il messaggio. Rimetterlo com’era prima del messaggio, perdendo anche quei cambiamenti?`,
-          { modal: true },
-          'Rimetti com’era',
-        );
-        if (!answer) return;
-      }
-      store.put(change.path, change.before);
-    } catch (error) {
-      this.notice(
-        'error',
-        `Il file non è stato rimesso: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return;
-    }
-    this.emit({ type: 'change_decided', id, path: file, decision: 'rejected' });
-    this.noteFiles(
-      `${change.path}: ${change.kind === 'added' ? 'tolto (era nuovo)' : 'rimesso com’era prima del messaggio'}`,
-    );
-  }
-
-  /** Brings the folder back to before a message; the conversation stays as it is. */
-  private async restoreCheckpoint(id: string): Promise<void> {
-    const store = this.checkpointStore();
-    const checkpoint = store?.load(id);
-    if (!store || !checkpoint) {
-      this.notice('error', 'Il checkpoint di questo messaggio non c’è più.');
-      return;
-    }
-    if (this.chat?.busy) {
-      this.notice('warn', 'Un messaggio è in corso: ripristina quando è concluso.');
-      return;
-    }
-    const answer = await vscode.window.showWarningMessage(
-      'Riportare i file della cartella a com’erano prima di questo messaggio? Ciò che è cambiato dopo, anche a mano, si perde. La conversazione resta com’è; i comandi eseguiti fuori dalla cartella non si annullano.',
-      { modal: true },
-      'Ripristina',
-    );
-    if (!answer) return;
-    let paths: string[];
-    try {
-      paths = store.restore(checkpoint);
-    } catch (error) {
-      this.notice(
-        'error',
-        `Ripristino non riuscito: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return;
-    }
-    this.emit({
-      type: 'notice',
-      level: 'info',
-      text:
-        paths.length === 0
-          ? 'Ripristino: la cartella era già com’era prima di quel messaggio.'
-          : ['Cartella riportata a prima del messaggio:', ...paths.map((p) => `- ${p}`)].join('\n'),
-    });
-    if (paths.length > 0) {
-      this.noteFiles(
-        `la cartella è tornata a prima di un messaggio precedente (${paths.join(', ')})`,
-      );
-    }
-  }
-
-  private async saveBeforeSend(): Promise<boolean> {
-    const cwd = workspaceFolder();
-    if (!cwd) return true;
-    const policy = vscode.workspace.getConfiguration('onlyOneChat').get<string>('saveBeforeSend');
-    if (policy === 'never') return true;
-    const inside = (file: string) => {
-      const relative = path.relative(cwd, file);
-      return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
-    };
-    const dirty = vscode.workspace.textDocuments.filter(
-      (document) =>
-        document.isDirty && document.uri.scheme === 'file' && inside(document.uri.fsPath),
-    );
-    if (dirty.length === 0) return true;
-    if (policy !== 'always') {
-      const answer = await vscode.window.showWarningMessage(
-        `${String(dirty.length)} file della cartella non sono salvati: gli agenti vedono i file su disco.`,
-        { modal: true },
-        'Salva e invia',
-        'Invia senza salvare',
-      );
-      if (answer === undefined) return false;
-      if (answer === 'Invia senza salvare') return true;
-    }
-    await Promise.all(dirty.map((document) => document.save()));
-    return true;
   }
 
   private dispose(): void {

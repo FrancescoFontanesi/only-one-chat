@@ -23,7 +23,7 @@ export interface NodeChoice extends ProviderChoice {
   readonly name: string;
 }
 
-export interface NodeConfig extends ProviderConfig {
+interface NodeConfig extends ProviderConfig {
   readonly node: NodeChoice;
   /** The provider's own session of a reopened chat, to continue. */
   readonly resume?: string;
@@ -32,7 +32,7 @@ export interface NodeConfig extends ProviderConfig {
   readonly ignoredPaths?: readonly string[];
 }
 
-export interface NodeEvents {
+interface NodeEvents {
   update(update: ThreadUpdate): void;
   busy(busy: boolean): void;
   /** The provider's session, once known: kept with the chat to reopen it. */

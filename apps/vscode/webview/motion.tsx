@@ -9,7 +9,7 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 
-export const TEMPO = { frame: 83, tick: 55, char: 28, step: 60, blink: 1000, hold: 1600 } as const;
+const TEMPO = { frame: 83, tick: 55, char: 28, step: 60, blink: 1000, hold: 1600 } as const;
 
 export function reducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -72,7 +72,7 @@ const GLYPHS = '#%&$@/\\|<>=+-_01';
 const glyph = () => GLYPHS[Math.floor(Math.random() * GLYPHS.length)] ?? '#';
 
 /** One step of Decode: the first len·p characters final, spaces kept, the rest random glyphs. */
-export function decodeFrame(text: string, p: number): string {
+function decodeFrame(text: string, p: number): string {
   if (p >= 1) return text;
   const settled = Math.floor(text.length * p);
   let out = text.slice(0, settled);

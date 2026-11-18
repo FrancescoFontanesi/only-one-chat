@@ -16,7 +16,7 @@ export interface Box {
   h: number;
 }
 
-export type Point = readonly [number, number];
+type Point = readonly [number, number];
 
 export const ZOOM = { min: 0.4, max: 2 } as const;
 
@@ -50,7 +50,7 @@ export function zoomAt(view: View, px: number, py: number, factor: number): View
   return { k, x: px - (px - view.x) * ratio, y: py - (py - view.y) * ratio };
 }
 
-export interface Route {
+interface Route {
   points: readonly Point[];
   /** Where the label sits: the middle of the route's middle segment. */
   label: Point;

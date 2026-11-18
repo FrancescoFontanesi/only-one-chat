@@ -72,9 +72,9 @@ export type QuestionAnswers = Readonly<Record<string, readonly string[]>> | null
  * change and replaced by id: an intermediate message, the reasoning, a
  * command with its output, file changes, the turn's plan, another tool.
  */
-export type StepStatus = 'running' | 'done' | 'failed';
+type StepStatus = 'running' | 'done' | 'failed';
 
-export interface FileStepChange {
+interface FileStepChange {
   readonly path: string;
   readonly change: 'add' | 'delete' | 'update';
   readonly added: number;

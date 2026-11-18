@@ -3,8 +3,8 @@
 // The turn explicitly asks the CLI for one sub-agent on a minimal task. Every
 // sub-agent event is printed with the runtime's label and checked against the
 // policy (model, effort, name, number); a violation stops the turn. The wire
-// traffic is written to <trace.jsonl> redacted (dev/trace.ts). Same
-// configuration as the demo: CODEX_EXECUTABLE, CLAUDE_EXECUTABLE, OOC_*.
+// traffic is written to <trace.jsonl> redacted (dev/trace.ts). Configuration:
+// CODEX_EXECUTABLE, CLAUDE_EXECUTABLE, OOC_CODEX_*, OOC_CLAUDE_* (model, effort, sub-agents).
 
 import { homedir } from 'node:os';
 import {

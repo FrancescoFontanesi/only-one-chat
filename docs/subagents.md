@@ -11,8 +11,8 @@ Codice: `packages/runtime/src/loop.ts` (policy, etichette, controlli), adapter
 - **Sotto-agenti**: istanze interne dello stesso CLI, create solo su richiesta esplicita.
   Non si approvano, come nell'estensione di Codex, ma sono **sempre visibili** e **vincolati**
   per modello, effort, numero e nome. Codex usa Luna, Claude usa Haiku 5.5, entrambi con effort
-  `low` e al massimo 2 contemporanei (configurazione della demo:
-  `OOC_CODEX_SUBAGENT_*`, `OOC_CLAUDE_SUBAGENT_*`, `OOC_MAX_SUBAGENTS`).
+  `low` e al massimo 2 contemporanei (la politica di ogni ruolo; nella prova
+  `dev/subagent-check.ts` dalle variabili `OOC_CODEX_SUBAGENT_*` e `OOC_CLAUDE_SUBAGENT_*`).
 - Un sotto-agente non deve chiamarsi come un agente esterno o un suo modello, né
   presentarsi come tale. Lo dicono le istruzioni di ruolo e il runtime lo controlla, su
   parole intere e relativamente al provider: per Codex sono vietati `claude`, `haiku`,
@@ -76,10 +76,9 @@ sotto-agenti del massimo: il turno si interrompe con `subagent_violation` e l'es
 `failed`, con un errore chiaro. Un valore non riportato dal CLI non è una violazione: si
 vede come "non riportato" nell'etichetta.
 
-**Attribuzione**: se la conclusione dell'orchestratore nomina un agente esterno (il worker
-o un nome vietato) e nel ciclo nessun turno del worker è stato eseguito, il runtime emette
-`attribution_warning`, visibile. È un avviso e non blocca: una semplice menzione basta a
-farlo scattare.
+**Attribuzione (tolta)**: fino all'ADR 0034 il runtime emetteva `attribution_warning` quando la
+conclusione del leader nominava un agente esterno senza che il worker avesse lavorato. L'evento
+è stato tolto con le modalità sperimentali; non c'è più un avviso di questo tipo.
 
 ## Verifica reale (`dev/subagent-check.ts`, un turno per CLI)
 

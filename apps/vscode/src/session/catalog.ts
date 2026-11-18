@@ -6,7 +6,7 @@
 import type { ModelInfo } from '@only-one-chat/adapters';
 import type { Cli, ModelOption, ProviderCatalog } from '../webview/protocol.js';
 
-export type ModelSource = () => Promise<readonly ModelInfo[]>;
+type ModelSource = () => Promise<readonly ModelInfo[]>;
 
 const CLIS: readonly Cli[] = ['codex', 'claude', 'antigravity'];
 

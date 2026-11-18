@@ -13,7 +13,7 @@ export interface Rect {
 }
 
 /** A horizontal line at y = `at` from x = `from` to `to`, or a vertical one at x = `at`. */
-export interface Line {
+interface Line {
   readonly at: number;
   readonly from: number;
   readonly to: number;
@@ -91,7 +91,7 @@ export function latticeLines(rects: readonly Rect[], width: number, height: numb
  * A line to draw, in whole pixels: on the pixel row (or column) `at`, over
  * the pixels from `from` up to `to`, `to` excluded.
  */
-export interface Segment {
+interface Segment {
   readonly horizontal: boolean;
   readonly at: number;
   readonly from: number;
@@ -104,7 +104,7 @@ export interface Broken {
   readonly pluses: readonly { readonly x: number; readonly y: number }[];
 }
 
-export interface BrokenOptions {
+interface BrokenOptions {
   /** Sides of the perimeter that are drawn: a lattice stacked under another keeps the line they share. */
   readonly edges?: {
     readonly top?: boolean;

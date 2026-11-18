@@ -7,9 +7,9 @@
 import type { SkillInfo } from '@only-one-chat/adapters';
 import type { Cli } from '../webview/protocol.js';
 
-export type SkillSource = (cwd: string) => Promise<readonly SkillInfo[]>;
+type SkillSource = (cwd: string) => Promise<readonly SkillInfo[]>;
 
-export type SkillList =
+type SkillList =
   | { readonly status: 'loading' }
   | { readonly status: 'ready'; readonly skills: readonly SkillInfo[] }
   | { readonly status: 'unavailable'; readonly note: string };

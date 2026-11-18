@@ -93,7 +93,7 @@ export function Meter({ value }: { value: number }) {
   );
 }
 
-export interface Option<T extends string> {
+interface Option<T extends string> {
   readonly value: T;
   readonly label: string;
   readonly title?: string;
@@ -148,7 +148,7 @@ export function Opts<T extends string>({
  * chosen one. Under the pointer the steps it would add show the 1-bit half
  * tone, those it would drop go hollow, and the name settles beside it.
  */
-export function Scale<T extends string>({
+function Scale<T extends string>({
   label,
   value,
   options,

@@ -10,7 +10,7 @@ import type {
   TurnUsageSummary,
 } from '../src/webview/protocol.js';
 
-export interface SubagentRow {
+interface SubagentRow {
   readonly id: string;
   readonly label: string;
   readonly status: string;

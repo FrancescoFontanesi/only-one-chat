@@ -8,7 +8,7 @@ export const FINDINGS_END = 'RILIEVI>>>';
 export const REVIEW_START = '<<<REVISIONE';
 export const REVIEW_END = 'REVISIONE>>>';
 
-export type ReportOutcome = 'completato' | 'parziale' | 'bloccato';
+type ReportOutcome = 'completato' | 'parziale' | 'bloccato';
 export type ReviewVerdict = 'approvato' | 'con riserve' | 'respinto';
 
 /**

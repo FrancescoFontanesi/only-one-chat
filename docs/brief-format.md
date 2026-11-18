@@ -1,17 +1,19 @@
 # Il brief
 
 Stato: formato v1, deciso al passo 2 del toolkit
-([ADR 0009](decisions/0009-chatgpt-web-and-three-turn-layer.md)). L'estensione non lo legge
-ancora: per ora lo leggono gli esperimenti della sandbox, da un file.
+([ADR 0009](decisions/0009-chatgpt-web-and-three-turn-layer.md)). Il runtime lo riconosce
+(`packages/runtime/src/brief.ts`) e in modalità `leader` lo consegna all'implementatore così com'è
+(ADR 0018, 0020). Il gateway previsto dall'ADR 0009 è stato tolto dall'ADR 0034.
 
 ## A cosa serve
 
-- **Il brief porta le decisioni prese nella chat di ChatGPT web al gateway.** È di alto
+- **Il brief porta le decisioni prese nella chat di ChatGPT web nell'estensione.** È di alto
   livello: ChatGPT non vede il repository. Contiene le conclusioni con il loro perché, non il
   ragionamento che ci ha portato.
-- **Il gateway lo aggancia al codice reale e lo traduce nella specifica per l'implementatore**,
-  che è lo standard operativo. Il gateway conserva la storia del filone (`track`): brief,
-  specifiche e risultati precedenti. Non vede invece la conversazione.
+- **Il brief arriva all'implementatore, che lo aggancia al codice reale.** Le sue tappe diventano
+  il lavoro dell'implementatore, che è lo standard operativo. Il `track` identifica il filone; il
+  gateway che ne conservava la storia (brief, specifiche e risultati precedenti) non c'è più.
+  Nessun agente vede la conversazione di ChatGPT.
 - **Le istruzioni che lo insegnano a ChatGPT** sono in
   [templates/chatgpt-project-instructions.txt](templates/chatgpt-project-instructions.txt).
   - Vanno incollate nelle istruzioni di un Progetto ChatGPT, una volta per ogni repository,
@@ -20,7 +22,7 @@ ancora: per ora lo leggono gli esperimenti della sandbox, da un file.
 
 ## Controlli meccanici
 
-L'estensione legge solo l'intestazione e la chiusura. Il corpo passa al gateway così com'è.
+Il runtime controlla solo l'intestazione e la chiusura. Il corpo viene consegnato così com'è.
 
 - La prima riga è `<<<OOC-BRIEF v1 project=<id> track=<slug>`, con `id` e `slug` fatti di
   lettere minuscole, cifre e trattini. È la protezione contro le copie sbagliate o di altri
@@ -28,8 +30,8 @@ L'estensione legge solo l'intestazione e la chiusura. Il corpo passa al gateway 
 - L'ultima riga è `OOC-BRIEF>>>`. Se manca, la copia è stata troncata, per esempio da tre
   backtick dentro il blocco.
 
-Se manca una sezione obbligatoria se ne accorge il gateway: la segnala, oppure chiede un
-chiarimento.
+Il runtime non controlla le sezioni (`parseBrief` legge solo intestazione e chiusura): se ne
+manca una obbligatoria, il leader la segnala o chiede un chiarimento.
 
 ## Struttura
 
@@ -51,7 +53,7 @@ contenuto è nella lingua della conversazione, a elenchi brevi e non in prosa.
 
 - **Una cosa per sezione.** Una decisione non sta nel piano, un vincolo non sta nel contesto.
 - **Le tappe, non i passi.** Il `Plan` dice cosa deve risultare da ogni tappa; i file e le
-  funzioni li sceglie il gateway, che vede il codice.
+  funzioni li sceglie l'implementatore, che vede il codice.
 - **Niente fatti inventati sul repository.** Ciò che non si sa va in `Latitude` o in `Context`,
   detto come non noto.
 - **Si può rimandare a brief e risultati precedenti dello stesso filone**, non a ciò che è

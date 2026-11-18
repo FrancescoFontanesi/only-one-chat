@@ -2,7 +2,7 @@
 // panel and the side views (roles, activity, usage). Imported by both sides:
 // it must not import `vscode` or DOM-only APIs.
 
-export interface ExtensionStatus {
+interface ExtensionStatus {
   readonly extensionVersion: string;
   readonly vscodeVersion: string;
   readonly runtime: { readonly name: string; readonly version: string };
@@ -17,7 +17,7 @@ export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type RoleName = 'leader' | 'implementer';
 export type Cli = 'codex' | 'claude' | 'antigravity';
 /** The CLIs of the leader and the implementer (ADR 0022); Antigravity is a node only (ADR 0023). */
-export type RoleCli = 'codex' | 'claude';
+type RoleCli = 'codex' | 'claude';
 
 /** What a role may do without asking: nothing, ask first, or act inside the folder. */
 export type PermissionLevel = 'read-only' | 'ask' | 'auto';
@@ -379,7 +379,7 @@ export interface MonitorState {
 }
 
 /** One usage window of a subscription, as its CLI reported it. */
-export interface UsageWindow {
+interface UsageWindow {
   /** "5h" or "weekly". */
   readonly name: string;
   readonly usedPercent: number;

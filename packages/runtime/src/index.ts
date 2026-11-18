@@ -1,13 +1,10 @@
-// Orchestration runtime: one conversation, a leader, workers, delegation,
-// persistent tasks and failover (see docs/architecture.md).
+// Orchestration runtime: one conversation, a leader, an implementer, an
+// optional reviewer, delegation and the JSONL event log (see
+// docs/architecture.md).
 //
-// Implemented so far: the minimal D6 loop (orchestrator → intercepted
-// delegation → worker → intercepted review → orchestrator, or a single
-// question to the worker), provider-agnostic
-// agent interfaces and the JSONL event log. TODO(orchestrator): persistent
-// tasks, failover and mediated approvals come in later iterations. This package
-// must stay free of any `vscode` import so it can be tested in plain Node and
-// reused outside the extension host.
+// TODO(orchestrator): persistent tasks, failover and mediated approvals come in
+// later iterations. This package must stay free of any `vscode` import so it
+// can be tested in plain Node and reused outside the extension host.
 
 import pkg from '../package.json' with { type: 'json' };
 
@@ -23,47 +20,23 @@ export function getRuntimeInfo(): RuntimeInfo {
 export type {
   AgentFactory,
   AgentQuestion,
-  FileStepChange,
-  AgentIdentity,
   AgentSession,
   AgentSessionOptions,
   AgentTurn,
   AgentTurnHandlers,
-  AgentTurnResult,
   ApprovalDecision,
-  ApprovalRequest,
   ContextUsage,
   QuotaSnapshot,
   QuestionAnswers,
-  StepStatus,
   SkillRef,
   TurnOptions,
   SubagentEvent,
   SubagentPolicy,
   TokenUsage,
-  TurnStep,
   TurnUsage,
 } from './agent.js';
-export {
-  DELEGATION_END,
-  DELEGATION_SECTIONS,
-  DELEGATION_START,
-  delegationStart,
-  delegationTemplate,
-  parseDelegation,
-  type Delegation,
-  type DelegationParse,
-  type DelegationSection,
-} from './delegation.js';
-export {
-  BRIEF_END,
-  RESULT_END,
-  extractResult,
-  parseBrief,
-  resultTemplate,
-  type Brief,
-  type BriefParse,
-} from './brief.js';
+export { parseDelegation } from './delegation.js';
+export { extractResult, parseBrief, resultTemplate, type Brief } from './brief.js';
 export { openEventLog, type EventLog, type LoggedEvent } from './event-log.js';
 export {
   changedFiles,
@@ -72,7 +45,6 @@ export {
   contractFacts,
   criteriaOf,
   criterionStatuses,
-  type ContractIssue,
 } from './contract.js';
 export {
   FINDINGS_END,
@@ -82,68 +54,38 @@ export {
   parseReviewerTurn,
   reportOutcome,
   reviewVerdict,
-  type ReportOutcome,
-  type ReviewVerdict,
-  type ReviewerTurn,
 } from './review.js';
 export {
-  APPROVAL_DENIED_MESSAGE,
   BRIEF_AGENT_INSTRUCTIONS,
+  EMPTY_REVIEW,
   IMPLEMENTER_ROLE_INSTRUCTIONS,
+  LIGHT_IMPLEMENTER_INSTRUCTIONS,
+  NO_COMMANDS_NOTE,
   REPORT_END,
   REPORT_START,
   REVIEWER_ROLE_INSTRUCTIONS,
-  DEFAULT_REVIEW_ROUNDS,
-  EMPTY_REVIEW,
-  NO_COMMANDS_NOTE,
-  MAX_REVIEW_ROUNDS,
-  findingsPrompt,
-  leaderReviewPrompt,
-  reviewFollowUpPrompt,
-  reviewRequestPrompt,
-  IMPLEMENTER_INSTRUCTIONS,
-  LIGHT_IMPLEMENTER_INSTRUCTIONS,
-  LIGHT_SECTIONS,
-  SPEC_SECTIONS,
-  agentSessionOptions,
-  leaderInstructions,
-  leaderResultPrompt,
-  pendingReportsPreface,
-  type PendingReport,
-  lightDelegation,
-  lightGatewayInstructions,
-  briefAgentPrompt,
-  briefPrompt,
-  gatewayInstructions,
-  resultPrompt,
-  MAX_EXCHANGES,
-  ORCHESTRATOR_INSTRUCTIONS,
-  WORKER_INSTRUCTIONS,
-  EXECUTOR_INSTRUCTIONS,
-  parseVerdict,
-  plannerInstructions,
-  verdictPrompt,
-  agentLabel,
   WORKER_ANSWER_END,
   WORKER_ANSWER_START,
-  fixPrompt,
+  agentSessionOptions,
+  briefAgentPrompt,
   frameWorkerAnswer,
-  questionInstructions,
-  subagentRules,
-  checkSubagent,
-  falseAttributions,
-  subagentLabel,
-  type SubagentState,
+  leaderInstructions,
+  pendingReportsPreface,
   requestPrompt,
-  reviewPrompt,
+  reviewRequestPrompt,
+  subagentRules,
+  type PendingReport,
+} from './prompts.js';
+export { checkSubagent, subagentLabel, type SubagentState } from './subagents.js';
+export {
+  APPROVAL_DENIED_MESSAGE,
+  agentLabel,
   runLoop,
   type InterceptDecision,
   type InterceptedMessage,
-  type Loop,
   type LoopOptions,
   type LoopOutcome,
   type MalformedDecision,
   type MalformedDelegation,
-  type Role,
   type ThreadEvent,
 } from './loop.js';

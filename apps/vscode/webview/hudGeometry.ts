@@ -11,7 +11,7 @@ export type Side = 'left' | 'right';
 export const HUD = { width: 216, height: 192, cy: 96 } as const;
 
 /** Degrees between two items on the dial. */
-export const SPACING = 14;
+const SPACING = 14;
 /** The radii: dial, its labels, bezel, and the two level arcs (outer and inner). */
 export const R = { dial: 150, label: 162, bezel: 196, outer: 138, inner: 130 } as const;
 /** Half the angle the level arcs span. */

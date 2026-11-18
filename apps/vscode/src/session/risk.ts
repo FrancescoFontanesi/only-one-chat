@@ -12,9 +12,9 @@
 import { lineCounts } from './checkpoints.js';
 import { TEST_FILE, shortcutFlags, type TextChange } from './shortcuts.js';
 
-export type RiskLevel = 'basso' | 'medio' | 'alto';
+type RiskLevel = 'basso' | 'medio' | 'alto';
 
-export interface RiskAssessment {
+interface RiskAssessment {
   readonly level: RiskLevel;
   /** The weighted sum, 0..1, before the signals that raise the level. */
   readonly score: number;

@@ -9,7 +9,7 @@ export type Inline =
   /** LaTeX: `$…$`, `\(…\)`, or `$$…$$` within a line. */
   | { readonly kind: 'math'; readonly tex: string; readonly display: boolean };
 
-export type Block =
+type Block =
   | { readonly kind: 'heading'; readonly level: number; readonly text: string }
   | { readonly kind: 'p'; readonly text: string }
   | { readonly kind: 'code'; readonly lang: string; readonly text: string }

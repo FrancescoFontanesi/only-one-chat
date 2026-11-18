@@ -83,7 +83,7 @@ attraverso gli appunti, la cattura al focus e il formato del brief.
 - **R1 e R2 tornano centrali.** La sezione "Flusso principale" di
   [requirements.md](../requirements.md) rimanda a questo ADR.
 - **Il runtime** ha il modo `leader`, con la sessione del leader conservata fra le richieste. I
-  modi `gateway` (pieno e leggero) restano per gli esperimenti.
+  modi `gateway` (pieno e leggero) restavano per gli esperimenti; li toglie l'ADR 0034.
 - **Nella sandbox anche il leader scrive** (ADR 0008), per le modifiche piccole.
 - **Aperto:**
   - quanto bene il leader sceglie fra fare da sé e delegare, da misurare su richieste piccole;

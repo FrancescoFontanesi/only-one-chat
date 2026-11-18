@@ -134,7 +134,7 @@ tocca e come le mitiga.
 - **Mitigazioni sul brief catturato.**
   - Un brief con l'id di un altro progetto non parte senza conferma.
   - Il brief ha un limite di dimensione e viene validato come ogni messaggio non fidato.
-  - Per il gateway resta una richiesta da verificare, non un'istruzione di sistema.
+  - Per chi riceve il brief resta una richiesta da verificare, non un'istruzione di sistema.
   - Nella modalità automatica la cattura viene notificata.
 
 ### T11. Agenti avviati dal pannello (ADR 0010)

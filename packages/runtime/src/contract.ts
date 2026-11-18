@@ -8,7 +8,7 @@
 import { reportOutcome, reviewVerdict, type ReviewVerdict } from './review.js';
 
 /** A point where a report or a review does not keep the contract. */
-export interface ContractIssue {
+interface ContractIssue {
   readonly code:
     | 'no-report'
     | 'criteria-missing'

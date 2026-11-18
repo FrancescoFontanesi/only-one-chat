@@ -4,6 +4,9 @@ Scenari per provare il sistema su compiti di codice veri e confrontare configura
 diverse (un solo modello contro agenti coordinati), misurando funzionamento, token, quota e
 tempo. Modalità di permessi: [ADR 0008](../docs/decisions/0008-sandbox-mode.md).
 
+Le configurazioni con il gateway e la pipeline a tre turni sono state tolte dall'ADR 0034: non si
+rifanno più con il codice attuale. I loro risultati restano in `results/`, come prova storica.
+
 ## Struttura
 
 | Percorso                             | Contenuto                                                      |
@@ -22,8 +25,9 @@ implementazione di riferimento superi i propri test nascosti.
 ```powershell
 $env:CODEX_EXECUTABLE = 'F:\dev-tools\codex\0.164.0\bin\bin\codex.exe'
 $env:CLAUDE_EXECUTABLE = 'F:\dev-tools\claude\2.1.308\bin\claude.exe'
-pnpm bench --system A          # oppure B; --scenario calc è il predefinito
-pnpm bench --system A --fake   # tutto sui fake: nessun turno reale, nessuna quota
+pnpm bench --system B          # --scenario calc è il predefinito
+pnpm bench --system SS --scenario calc-functions
+pnpm bench --system B --fake   # tutto sui fake: nessun turno reale, nessuna quota
 ```
 
 - **Cartella di lavoro.** Ogni run lavora in una cartella nuova e vuota, fuori dal
@@ -41,10 +45,12 @@ Una calcolatrice da riga di comando in Python: lexer, parser con precedenze e po
 associativa a destra, variabili, funzioni, errori con colonna, modalità `-e` e script da
 stdin. I test nascosti sono 30.
 
-| Sistema | Configurazione                                                                                         | Turni |
-| ------- | ------------------------------------------------------------------------------------------------------ | ----- |
-| A       | Codex Sol 6.1 medium pianifica e giudica; Claude Sonnet 5.5 low esegue; sotto-agenti Luna e Haiku, low | 3     |
-| B       | Claude Opus 5.5 medium, un solo turno, senza sotto-agenti                                              | 1     |
+| Sistema | Configurazione                                            | Turni |
+| ------- | --------------------------------------------------------- | ----- |
+| B       | Claude Opus 5.5 medium, un solo turno, senza sotto-agenti | 1     |
+
+- **Sistema A tolto (ADR 0034).** Era il leader Codex con implementatore Claude e sotto-agenti
+  su tre turni (la pipeline). Il suo risultato resta in `results/`.
 
 ## Scenario `calc-functions`
 
@@ -54,23 +60,24 @@ del run (`seed`). La richiesta è un brief nel formato della chat di ragionament
 I test nascosti sono i 30 di `calc`, che controllano che il comportamento esistente non
 cambi, più 20 nuovi, scritti a partire dal brief prima di qualsiasi run.
 
-| Sistema | Configurazione                                                  | Turni |
-| ------- | --------------------------------------------------------------- | ----- |
-| GC      | Sol 6.1 gateway, Sonnet 5.5 implementa, Sol scrive il risultato | 3     |
-| GA      | Opus 5.5 gateway, Luna 6 implementa, Opus scrive il risultato   | 3     |
-| SS      | Sol 6.1 da solo: interpreta, implementa e scrive il risultato   | 1     |
-| SO      | Opus 5.5 da solo: interpreta, implementa e scrive il risultato  | 1     |
+| Sistema | Configurazione                                                 | Turni |
+| ------- | -------------------------------------------------------------- | ----- |
+| SS      | Sol 6.1 da solo: interpreta, implementa e scrive il risultato  | 1     |
+| SO      | Opus 5.5 da solo: interpreta, implementa e scrive il risultato | 1     |
 
+- **Sistemi GC e GA tolti (ADR 0034).** Erano configurazioni con il gateway (tre turni, Sol o
+  Opus come gateway, Sonnet o Luna come implementatore). Non si rifanno più; i loro risultati
+  restano in `results/`.
 - **Effort:** tutti a low.
-- **Permessi:** gateway in sola lettura; implementatori e modelli da soli scrivono nella cartella
-  del run (ADR 0008).
-- **Fatti per il gateway:** dopo l'implementatore il runner riesegue `python -m unittest` ed
+- **Permessi:** implementatori e modelli da soli scrivono nella cartella del run (ADR 0008).
+- **Controlli di chiusura:** dopo l'implementatore il runner riesegue `python -m unittest` ed
   elenca i file cambiati.
 - **La stessa verifica gira alla fine per ogni sistema**, solo per la valutazione.
 
 ## Cosa si misura e limiti
 
-- **Funzionamento**: test nascosti superati e, per A, se il verdetto di Codex li rispecchia.
+- **Funzionamento**: test nascosti superati e, nei risultati storici con un leader, se il
+  verdetto del leader li rispecchiava.
 - **Token** per modello, come li contano i CLI. I tokenizer sono diversi, quindi i numeri dei
   due provider non si sommano fra loro.
 - **Costo nominale di Claude**: il prezzo di listino che il CLI riporta, anche con

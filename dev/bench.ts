@@ -7,9 +7,8 @@
 // (%LOCALAPPDATA%\only-one-chat\sandbox\<run>), empty or holding a copy of the
 // scenario's seed project; the agents work there in sandbox mode (ADR 0008),
 // messages between agents approved automatically and logged. A scenario with a
-// brief.txt runs it as a brief from the reasoning chat (ADR 0009): through a
-// gateway and an implementer, or given to a single agent. Afterwards the
-// scenario's hidden tests run on what they wrote.
+// brief.txt runs it as a brief from the reasoning chat (ADR 0009): given to a
+// single agent. Afterwards the scenario's hidden tests run on what they wrote.
 // Results: sandbox/results/<run>.json and .md (with --fake, in the run
 // directory instead). --fake drives the fake CLIs: no model turns, no quota.
 //
@@ -67,7 +66,6 @@ import {
   type Brief,
   type SubagentPolicy,
   type AgentFactory,
-  type LoopOutcome,
   type ThreadEvent,
   type TokenUsage,
   type TurnUsage,
@@ -92,13 +90,10 @@ interface AgentConfig {
 
 interface SystemConfig {
   /** `leader` and `session` run a scenario's script.json, one message after another. */
-  readonly kind: 'pipeline' | 'gateway' | 'single' | 'leader' | 'session';
+  readonly kind: 'single' | 'leader' | 'session';
   readonly title: string;
   /** `leader`: the leader, read-only, kept for the whole session; `implementer` writes. */
   readonly leader?: AgentConfig;
-  readonly planner?: AgentConfig;
-  readonly executor?: AgentConfig;
-  readonly gateway?: AgentConfig;
   readonly implementer?: AgentConfig;
   /**
    * `leader` systems: the product's own roles (ADR 0020, 0029): the leader
@@ -112,8 +107,6 @@ interface SystemConfig {
    * anyone, its usage kept apart from the run's. Compares reviewers on one input.
    */
   readonly shadowReviewers?: readonly AgentConfig[];
-  /** Gateway systems: a light leader (forwards the brief, judges on the facts). */
-  readonly light?: boolean;
   /** Session systems: the script, relative to the scenario; default script.json. */
   readonly script?: string;
   readonly agent?: AgentConfig;
@@ -143,7 +136,7 @@ const SESSION_AGENT_INSTRUCTIONS = [
   'modificare nulla. Se manca una decisione che cambia il risultato, chiedila.',
 ].join('\n');
 
-/** System B's only turn: implement, test and report like the pipeline's executor. */
+/** A single system's only turn: implement, test and report. */
 const SINGLE_AGENT_INSTRUCTIONS = [
   "Sei un agente di Only One Chat. Implementa la richiesta dell'utente nella cartella corrente:",
   'crea e modifica file solo lì, scrivi i test, eseguili e correggi finché passano. Alla fine',
@@ -235,7 +228,7 @@ function runCommand(
 }
 
 /**
- * What the runtime verified, as text for the gateway: the files changed since
+ * What the runtime verified, as text for the leader: the files changed since
  * the seed and the scenario's verification command, run again here.
  */
 async function verifiedFacts(
@@ -374,7 +367,7 @@ async function main(): Promise<void> {
   const codexLauncher = fake ? [join(fakes, 'fake-app-server.mjs'), '--account=chatgpt'] : [];
   const claudeLauncher = fake ? [join(fakes, 'fake-claude.mjs'), '--echo'] : [];
 
-  // Who writes depends on the role: planners and gateways read only (ADR 0008).
+  // Who writes depends on the role: a read-only leader or reviewer does not (ADR 0008).
   const codex = (config: AgentConfig, writable: boolean, cwd: string): AgentFactory =>
     createCodexAgentFactory({
       executable: codexExecutable,
@@ -530,24 +523,9 @@ async function main(): Promise<void> {
   const codexBefore = await codexQuotaNow();
   const claudeBefore = await claudeProbe();
   const startedAt = Date.now();
-  // The fakes answer by marker: [delegation], [spec] or [light] asks for a delegation.
-  const request = !fake
-    ? prompt
-    : system.kind === 'pipeline'
-      ? `${prompt}\n\n[delegation]`
-      : system.kind === 'gateway'
-        ? prompt.replace('\n', system.light === true ? '\n[light]\n' : '\n[spec]\n')
-        : prompt;
-  const [lead, doer] =
-    system.kind === 'pipeline'
-      ? [system.planner, system.executor]
-      : system.kind === 'gateway'
-        ? [system.gateway, system.implementer]
-        : [undefined, undefined];
   /** A session's answers, one per script message. */
   type Answer = { readonly name: string; readonly status: string; readonly text: string };
   let outcome:
-    | LoopOutcome
     | { status: 'single'; report: string }
     | { status: 'session'; answers: Answer[] }
     | { status: 'failed'; error: string };
@@ -642,7 +620,6 @@ async function main(): Promise<void> {
           leaderSession,
           workerSession: await implementerSession(message.implementer),
           autoApprove: true,
-          orchestrator: () => Promise.reject(new Error('the leader session is given')),
           worker: () => Promise.reject(new Error('the implementer session is given')),
           ...(reviewerConfig
             ? {
@@ -701,7 +678,7 @@ async function main(): Promise<void> {
     }
     outcome = { status: 'session', answers };
   } else if (script && system.kind === 'session' && system.agent) {
-    await log.append('loop_started', { request, mode: 'session', autoApprove: true });
+    await log.append('loop_started', { request: prompt, mode: 'session', autoApprove: true });
     const session = await factory(system.agent, true)({ instructions: SESSION_AGENT_INSTRUCTIONS });
     const answers: Answer[] = [];
     try {
@@ -742,39 +719,15 @@ async function main(): Promise<void> {
       await session.close();
     }
     outcome = { status: 'session', answers };
-  } else if ((system.kind === 'pipeline' || system.kind === 'gateway') && lead && doer) {
-    const leadPolicy = policy(lead);
-    const doerPolicy = policy(doer);
-    const loop = runLoop({
-      request,
-      log,
-      onEvent,
-      mode: system.kind,
-      ...(system.light === true ? { light: true } : {}),
-      autoApprove: true,
-      orchestrator: factory(lead, false),
-      worker: factory(doer, true),
-      subagents: {
-        ...(leadPolicy ? { orchestrator: leadPolicy } : {}),
-        ...(doerPolicy ? { worker: doerPolicy } : {}),
-      },
-      ...(system.kind === 'gateway'
-        ? { facts: () => verifiedFacts(runDir, baseline, systems.verify) }
-        : {}),
-      intercept: () => Promise.reject(new Error('not used with autoApprove')),
-      onMalformedDelegation: () => Promise.reject(new Error('not used with autoApprove')),
-    });
-    process.on('SIGINT', () => void loop.stop());
-    outcome = await loop.done;
   } else if (system.kind === 'single' && system.agent) {
-    await log.append('loop_started', { request, mode: 'single', autoApprove: true });
+    await log.append('loop_started', { request: prompt, mode: 'single', autoApprove: true });
     const session = await factory(
       system.agent,
       true,
     )({ instructions: brief ? BRIEF_AGENT_INSTRUCTIONS : SINGLE_AGENT_INSTRUCTIONS });
     record({ type: 'turn_started', role: 'worker', agent: session.name });
     try {
-      const turn = session.runTurn(brief ? briefAgentPrompt(brief) : requestPrompt(request), {
+      const turn = session.runTurn(brief ? briefAgentPrompt(brief) : requestPrompt(prompt), {
         onText: () => undefined,
         onApprovalRequest: () => Promise.resolve('decline'),
         onActivity: (activity) => {
@@ -884,13 +837,7 @@ async function main(): Promise<void> {
   // The same check for every system, for the evaluation: not shown to any agent.
   const finalFacts = brief || script ? await verifiedFacts(runDir, baseline, systems.verify) : null;
   const resultForChat =
-    outcome.status === 'result'
-      ? outcome.result
-      : outcome.status === 'single' && brief
-        ? (extractResult(outcome.report) ?? outcome.report)
-        : outcome.status === 'clarification'
-          ? outcome.questions
-          : null;
+    outcome.status === 'single' && brief ? (extractResult(outcome.report) ?? outcome.report) : null;
   const tokens = sumTokens(turns);
   const costUsd = turns.reduce((sum, t) => sum + (t.usage?.costUsd ?? 0), 0);
   const result = {
@@ -924,7 +871,7 @@ async function main(): Promise<void> {
     '',
     `${system.title}${fake ? ' (fake: nessun turno reale)' : ''}`,
     '',
-    `- Esito: ${JSON.stringify('verdict' in outcome ? outcome.verdict : outcome.status)}`,
+    `- Esito: ${JSON.stringify(outcome.status)}`,
     `- Test nascosti: ${String(hidden.passed)}/${String(hidden.total)}`,
     `- Tempo totale: ${(wallMs / 1000).toFixed(1)} s`,
     `- Quota Codex: prima ${quotaText(codexBefore)}; dopo ${quotaText(codexAfter)}`,

@@ -33,7 +33,7 @@ export interface ChatRecord {
   nodes?: Record<string, NodeThread>;
 }
 
-export interface NodeThread {
+interface NodeThread {
   session?: string;
   /** The node's name and provider when it was spoken to: shown even once it is off the board. */
   name?: string;
@@ -41,7 +41,7 @@ export interface NodeThread {
   updates: ThreadUpdate[];
 }
 
-export interface ChatSummary {
+interface ChatSummary {
   readonly id: string;
   readonly title: string;
   readonly updatedAt: number;

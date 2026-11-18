@@ -3,7 +3,7 @@
 
 import { randomBytes } from 'node:crypto';
 
-export interface WebviewHtmlOptions {
+interface WebviewHtmlOptions {
   /** `webview.cspSource` of the hosting webview. */
   readonly cspSource: string;
   readonly nonce: string;
@@ -15,7 +15,7 @@ export interface WebviewHtmlOptions {
   readonly view?: WebviewKind;
 }
 
-export type WebviewKind = 'chat' | 'settings';
+type WebviewKind = 'chat' | 'settings';
 
 /** The stylesheets of every webview, under media/cn (ADR 0016). */
 export const STYLESHEETS = ['fonts.css', 'oo.css', 'bundle.css', 'app.css'] as const;

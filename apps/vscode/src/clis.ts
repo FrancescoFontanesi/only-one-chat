@@ -12,7 +12,7 @@ import {
 import { detectCli } from './detect.js';
 import type { Cli } from './webview/protocol.js';
 
-export interface CliLaunch {
+interface CliLaunch {
   readonly executable: string;
   /** Arguments before the CLI's own: the fake CLI's script and flags. */
   readonly launcherArgs: readonly string[];

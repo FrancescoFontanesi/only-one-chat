@@ -23,7 +23,7 @@ export const SKIPPED = new Set([
 export const MAX_FILES = 5_000;
 
 /** `unavailable`: too many files, or the folder could not be read. */
-export type Snapshot = ReadonlyMap<string, string> | 'unavailable';
+type Snapshot = ReadonlyMap<string, string> | 'unavailable';
 
 /** Content hash of every file under `dir`, by relative path; `ignored` paths left out (ADR 0021). */
 export function snapshot(dir: string, ignored: Ignored = NOTHING_IGNORED): Snapshot {
@@ -65,14 +65,14 @@ export function changes(before: Snapshot, after: Snapshot): string[] | 'unknown'
   return out.sort((a, b) => a.slice(a.indexOf(' ')).localeCompare(b.slice(b.indexOf(' '))));
 }
 
-export interface CommandRun {
+interface CommandRun {
   readonly code: number | null;
   readonly output: string;
   readonly timedOut: boolean;
 }
 
 /** Runs a command without a shell; stdout and stderr together. */
-export function runCommand(
+function runCommand(
   command: readonly string[],
   cwd: string,
   timeoutMs = 120_000,

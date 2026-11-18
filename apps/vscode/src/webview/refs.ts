@@ -3,7 +3,7 @@
 // or a scoped package in a code block stays text; whether a path exists is for
 // the host to tell. Pure, imported by the host and the webview alike.
 
-export interface RefToken {
+interface RefToken {
   /** Where the token starts (its `@`) and ends in the text. */
   readonly start: number;
   readonly end: number;

@@ -39,7 +39,7 @@ export type ProviderConfig = Pick<
 >;
 
 /** A role as the chat needs it, without naming a provider. */
-export interface RoleSpec {
+interface RoleSpec {
   readonly choice: ProviderChoice;
   /**
    * The leader (ADR 0018, 0019): read-only, it still runs commands to search
@@ -69,7 +69,7 @@ export interface Provider {
 }
 
 /** Said to a read-only role whose action would need a permission: the role's rule, not the user's answer. */
-export const READ_ONLY_DENIAL =
+const READ_ONLY_DENIAL =
   'Negato dal ruolo: in Only One Chat questo ruolo è in sola lettura e non modifica nulla; l’utente non è stato interpellato.';
 
 export const PROVIDERS: Readonly<Record<Cli, Provider>> = {

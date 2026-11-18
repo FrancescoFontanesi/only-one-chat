@@ -168,7 +168,7 @@ const readOnly = <T extends ProviderChoice>(choice: T): T => ({
 /** Notes on files the user put back (ADR 0014), per role, until each receives them. */
 export type FileNotes = Readonly<Record<RoleName, readonly string[]>>;
 
-export interface ChatEvents {
+interface ChatEvents {
   update(update: ThreadUpdate): void;
   busy(busy: boolean): void;
   /** A role's CLI reported its own session id: to resume the chat later. */
@@ -891,7 +891,6 @@ ${this.diffChecks()}`;
       },
       workerSession: await this.implementer(),
       ...reviewer.options,
-      orchestrator: () => Promise.reject(new Error('no leader turn in a review')),
       worker: () => Promise.reject(new Error('the implementer session is given')),
       subagents: {
         worker: { ...this.policy(this.roles.implementer), proactive: true },
@@ -1044,7 +1043,6 @@ ${this.diffChecks()}`;
       review: config.review,
       ...(reviewer?.options ?? {}),
       autoApprove: !manual,
-      orchestrator: () => Promise.reject(new Error('the leader session is given')),
       worker: () => Promise.reject(new Error('the implementer session is given')),
       subagents: {
         orchestrator: leaderPolicy,
@@ -1366,7 +1364,6 @@ ${this.diffChecks()}`;
         });
         break;
       case 'subagent_violation':
-      case 'attribution_warning':
       case 'error':
         update({ type: 'notice', level: 'error', text: event.message });
         break;

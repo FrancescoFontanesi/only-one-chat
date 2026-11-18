@@ -38,7 +38,7 @@ export interface Checkpoint {
   readonly large: Readonly<Record<string, string>>;
 }
 
-export interface Review {
+interface Review {
   readonly files: readonly ChangedFile[];
   /** Files changed that cannot be put back, e.g. too large to record. */
   readonly uncovered: readonly string[];

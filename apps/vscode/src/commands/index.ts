@@ -4,7 +4,7 @@ import { OnlyOneChatPanel, type PanelServices } from '../webview/panel.js';
 import { SettingsPanel } from '../webview/settingsPanel.js';
 
 /** Command ids; must match `contributes.commands` in package.json. */
-export const CommandId = {
+const CommandId = {
   openPanel: 'onlyOneChat.openPanel',
   openSettings: 'onlyOneChat.openSettings',
   addSelection: 'onlyOneChat.addSelection',

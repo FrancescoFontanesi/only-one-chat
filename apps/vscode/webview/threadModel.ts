@@ -91,7 +91,7 @@ export function isFacts(text: string): boolean {
   );
 }
 
-export interface Facts {
+interface Facts {
   readonly files: readonly string[];
   readonly verify?: string;
   readonly failed: readonly string[];
@@ -126,7 +126,7 @@ export function readFacts(text: string): Facts {
   };
 }
 
-export interface UserMessage {
+interface UserMessage {
   readonly to: 'leader' | 'implementer' | 'reviewer';
   /** The route older chats asked of the leader with `/fai`, `/delega`, `/chiedi`; no longer shown (ADR 0018). */
   readonly route: 'fai' | 'delega' | 'chiedi' | null;
@@ -205,7 +205,7 @@ export function withoutDelegation(text: string): { text: string; writing: boolea
 }
 
 /** The implementer's report (ADR 0020): its sections, and the text around it. */
-export interface Report {
+interface Report {
   readonly before: string;
   /** completato, parziale, bloccato; null when the Esito does not say. */
   readonly outcome: 'completato' | 'parziale' | 'bloccato' | null;
@@ -264,7 +264,7 @@ export function readReport(text: string): Report | null {
  * A reviewer's block (ADR 0029) and the text around it: its report for the
  * leader, with the verdict, or its findings for the implementer.
  */
-export interface ReviewBlock {
+interface ReviewBlock {
   readonly kind: 'review' | 'findings';
   readonly before: string;
   /** approvato, con riserve, respinto; null for findings, or when the Verdetto does not say. */

@@ -17,14 +17,14 @@ const MAX_MENTIONS = 20;
 
 const MENTION = /(^|\s)@([^\s@`'"<>|]+?)(?:#L(\d+)(?:-L?(\d+))?)?(?=$|[\s,;:!?)\]])/g;
 
-export interface Mention {
+interface Mention {
   /** Relative to the folder, forward slashes; a folder ends with `/`. */
   readonly path: string;
   readonly kind: 'file' | 'folder';
   readonly lines?: { readonly from: number; readonly to: number };
 }
 
-export interface Expanded {
+interface Expanded {
   readonly mentions: readonly Mention[];
   /** What follows the user's text for the agents; empty without mentions. */
   readonly attachments: string;

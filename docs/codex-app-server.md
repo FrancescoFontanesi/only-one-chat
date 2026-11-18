@@ -76,7 +76,7 @@ solo per capire i problemi pratici (shim npm, stderr). Nessun codice è stato ri
 - **Ambiente**: per default `process.env`. Il client non legge e non modifica la
   configurazione né le credenziali di Codex.
 - **`onWire`** (diagnostica e transcript): riceve in ordine ogni messaggio inviato e ogni
-  oggetto JSON ricevuto, non redatti. La demo lo usa con `OOC_CODEX_TRACE` e scrive solo
+  oggetto JSON ricevuto, non redatti. La demo tolta dall'ADR 0034 lo usava con `OOC_CODEX_TRACE`, e scriveva solo
   dopo redaction e scanner.
 
 ## Rilevamento dell'eseguibile
@@ -116,7 +116,7 @@ solo per capire i problemi pratici (shim npm, stderr). Nessun codice è stato ri
   rigiocati contro il fake e le risposte devono avere la stessa forma, gli stessi codici
   d'errore e lo stesso ordine di quelle reali. Se divergono, si corregge il fake.
 - **Turno reale** (`question-turn.jsonl`): il turno di Codex della mini conversazione,
-  registrato dalla demo. Il fake è confrontato sui campi che il client legge (risposta di
+  registrato con la demo tolta dall'ADR 0034. Il fake è confrontato sui campi che il client legge (risposta di
   `thread/start`, `turn/started`, `turn/completed`, `agentMessage`, delta), non messaggio
   per messaggio: il turno reale ha anche hook dell'utente, stati di avvio MCP, uso dei
   token e rate limit.

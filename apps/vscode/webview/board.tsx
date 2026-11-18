@@ -10,7 +10,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { type Box, bounds, fit, route, type View, zoomAt } from './boardGeometry.js';
 
-export interface BoardBlock {
+interface BoardBlock {
   id: string;
   /** Where it sits in the world, and how wide it is; its height is its content's. */
   x: number;
@@ -19,7 +19,7 @@ export interface BoardBlock {
   children: ComponentChildren;
 }
 
-export interface BoardLink {
+interface BoardLink {
   id: string;
   from: string;
   to: string;

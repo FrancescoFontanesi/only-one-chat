@@ -1,4 +1,4 @@
-// Redacted transcripts of real CLI traffic, for the dev tools (demo, sub-agent
+// Redacted transcripts of real CLI traffic, for the dev tools (the sub-agent
 // check). Entries stay in memory until they are redacted like the recorded
 // fixtures; raw traffic is never written, and nothing is if the leak scanner
 // still finds something.

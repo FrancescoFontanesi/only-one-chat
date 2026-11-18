@@ -1,6 +1,6 @@
-// Lets plain Node run the TypeScript sources of dev tools (the demo) with its
+// Lets plain Node run the TypeScript sources of dev tools (the bench) with its
 // built-in type stripping: registers ts-resolve-hooks.mjs. Usage:
-//   node --import ./dev/ts-resolve.mjs dev/demo.ts
+//   node --import ./dev/ts-resolve.mjs dev/bench.ts
 
 import { register } from 'node:module';
 

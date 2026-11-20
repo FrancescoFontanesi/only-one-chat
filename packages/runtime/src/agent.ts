@@ -263,6 +263,8 @@ export interface AgentSession {
   readonly name: string;
   /** Short identifier, e.g. "claude"; for display and logs. */
   readonly id: string;
+  /** True when the session's transport can no longer run turns. */
+  readonly closed?: boolean;
   runTurn(prompt: string, handlers: AgentTurnHandlers, options?: TurnOptions): AgentTurn;
   /**
    * Sets the reasoning effort of the next turns, in the same session; the

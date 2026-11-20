@@ -101,6 +101,8 @@ export interface JsonRpcOptions {
   /** Lines that are not valid protocol messages; they are skipped. */
   readonly onProtocolError?: (error: AppServerError) => void;
   readonly onExit?: (info: ExitInfo) => void;
+  /** The connection became unusable, after its final messages have been read on exit. */
+  readonly onDisconnect?: (error: AppServerError) => void;
   /** close() had to terminate processes; never called for a clean shutdown. */
   readonly onForcedShutdown?: (report: ForcedShutdownReport) => void;
   /**
@@ -246,6 +248,7 @@ export async function startJsonRpc(options: JsonRpcOptions): Promise<JsonRpcClie
     ended = error;
     for (const entry of pending.values()) entry.reject(error);
     pending.clear();
+    options.onDisconnect?.(error);
   }
 
   function protocolError(message: string): void {

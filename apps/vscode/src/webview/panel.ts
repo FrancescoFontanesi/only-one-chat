@@ -842,6 +842,7 @@ export class OnlyOneChatPanel {
         mode: this.mode,
         // A reopened chat continues the CLIs' own sessions; Codex keeps its threads.
         resume: { ...record.sessions },
+        implementerHandoff: record.implementerHandoff,
         unseen: record.unseen ?? [],
         ...(record.draft ? { draft: record.draft } : {}),
         checkpoints: new CheckpointStore(
@@ -884,6 +885,9 @@ export class OnlyOneChatPanel {
           if (record.sessions[role] === id) return;
           record.sessions[role] = id;
           this.keep(record);
+        },
+        saveImplementerHandoff: (id, brief) => {
+          this.history.saveImplementerHandoff(record, id, brief);
         },
         context: (role, context) => {
           record.context = { ...record.context, [role]: context };

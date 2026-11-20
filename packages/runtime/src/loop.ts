@@ -292,6 +292,8 @@ export interface LoopOptions {
    * such as reports of work it has not seen yet (pendingReportsPreface).
    */
   readonly preface?: string;
+  /** Background data from a pending implementer handoff, until its first completed turn. */
+  workerPreface?(): string | undefined;
   /**
    * `leader` mode, after a delegation: `always` (default) asks the leader to
    * review the report at once; `deferred` ends with the report, which the
@@ -674,11 +676,19 @@ export function runLoop(options: LoopOptions): Loop {
    */
   async function implement(worker: AgentSession, prompt: string): Promise<Work> {
     const commands = new CommandEvidence();
-    let result = await turn(worker, 'worker', prompt, undefined, commands);
+    const withPreface = (text: string) =>
+      [options.workerPreface?.(), text].filter(Boolean).join('\n\n');
+    let result = await turn(worker, 'worker', withPreface(prompt), undefined, commands);
     let read = readHandoff(result.handoffs, 'report');
     let text = result.text;
     if (read.value === null && held) {
-      result = await turn(worker, 'worker', reportRepairPrompt(read.errors), undefined, commands);
+      result = await turn(
+        worker,
+        'worker',
+        withPreface(reportRepairPrompt(read.errors)),
+        undefined,
+        commands,
+      );
       read = readHandoff(result.handoffs, 'report');
       text = [text, result.text].filter((part) => part.trim() !== '').join('\n\n');
     }

@@ -44,7 +44,7 @@ import { connectCodex, type CodexSessionOptions } from './session.js';
 
 export interface CodexAgentConfig extends Omit<
   CodexSessionOptions,
-  'onNotification' | 'onServerRequest' | 'clientInfo'
+  'onNotification' | 'onServerRequest' | 'onDisconnect' | 'clientInfo'
 > {
   /** Working directory of the thread: the workspace. */
   readonly cwd: string;
@@ -494,6 +494,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
       ...sessionOptions
     } = config;
     let current: RunningTurn | undefined;
+    let closed = false;
     let threadId = '';
     /** Set when the thread was resumed; see the first completed turn. */
     let baselineUnknown = false;
@@ -569,6 +570,10 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
     const session = await connectCodex({
       ...sessionOptions,
       clientInfo: { name: 'only-one-chat', title: 'Only One Chat', version: '0.0.0' },
+      onDisconnect(error) {
+        closed = true;
+        current?.settle(error);
+      },
       onNotification: function notify(method, params) {
         if (!isRecord(params)) return;
         // Usage and quota, kept whether or not a turn is running.
@@ -877,10 +882,16 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         done,
         async stop() {
           if (current !== turn) return;
-          await interruptAll(turn);
           const timer = setTimeout(() => {
             settle(new Error('Codex turn interrupted (no completion reported)'));
           }, interruptTimeoutMs);
+          // Stop can arrive before turn/start has returned the ID needed to interrupt.
+          void turn.started?.then(
+            async () => {
+              if (current === turn) await interruptAll(turn);
+            },
+            () => undefined,
+          );
           await done.catch(() => undefined);
           clearTimeout(timer);
           for (const id of children.keys()) finishChild(turn.handlers, id, 'interrupted');
@@ -893,6 +904,9 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         return `Codex (${currentModel ?? 'default model'})`;
       },
       id: 'codex',
+      get closed() {
+        return closed;
+      },
       runTurn,
       setEffort(next) {
         // turn/start takes the effort per turn: the thread stays the same.

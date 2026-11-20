@@ -186,6 +186,8 @@ export interface AgentSkillRef {
 
 export interface AgentSession {
   readonly name: string;
+  /** True when the session's transport can no longer run turns. */
+  readonly closed?: boolean;
   /** Recipient name in delegation blocks. */
   readonly id: string;
   runTurn(

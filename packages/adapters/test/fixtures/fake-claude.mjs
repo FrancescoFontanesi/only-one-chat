@@ -257,6 +257,7 @@ async function replay(prompt) {
       message.message.content = [{ type: 'text', text: `ECHO: ${prompt}` }];
     }
     if (flag('echo') && message.type === 'result') message.result = `ECHO: ${prompt}`;
+    if (flag('blank-session-id') && message.type === 'result') message.session_id = ' ';
     if (answered !== null && message.type === 'result') message.result = answered;
     if (denials.length > 0 && message.type === 'result') message.permission_denials = denials;
     if (outcomes.length > 0 && message.type === 'result') {

@@ -29,7 +29,7 @@
 // in `test/received`.
 
 import { spawn } from 'node:child_process';
-import { appendFileSync, writeSync } from 'node:fs';
+import { appendFileSync, existsSync, writeSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 const flags = new Set(process.argv.slice(2));
@@ -215,7 +215,11 @@ const handlers = {
     });
   },
 
-  'thread/start': (params) => {
+  'thread/start': async (params) => {
+    const gate = option('thread-start-gate');
+    if (gate && params.sandbox === 'workspace-write') {
+      while (!existsSync(gate)) await sleep(10);
+    }
     threads.set('thread-1', params);
     return {
       thread: { id: 'thread-1', sessionId: 'thread-1', ephemeral: params.ephemeral ?? false },
@@ -256,7 +260,13 @@ const handlers = {
       completedAt: null,
       durationMs: null,
     });
+    if (text.includes('[exit-before-turn-start]')) process.exit(3);
+    const gate = option('hung-turn-start-gate');
+    if (gate && text.includes('[hang]')) {
+      while (!existsSync(gate)) await sleep(10);
+    }
     send({ id, result: { turn: turnObject('inProgress') } });
+    if (text.includes('[exit-after-turn-start]')) process.exit(3);
     notify('turn/started', { threadId, turn: turnObject('inProgress') });
     const complete = (status, error = null) =>
       notify('turn/completed', {

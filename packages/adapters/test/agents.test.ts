@@ -758,12 +758,17 @@ describe('Claude agent session', () => {
     const session = await claudeWithPolicy(['--scenario=turn-subagent', '--subagent-hang']);
     const h = handlers();
     const turn = session.runTurn('usa un sotto-agente', h.value);
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    expect(h.subagents[0]).toMatchObject({ type: 'started' });
-    await turn.stop();
-    await expect(turn.done).rejects.toMatchObject({ kind: 'stopped' });
-    expect(h.subagents.at(-1)).toEqual({ type: 'finished', id: SUB, status: 'interrupted' });
-  });
+    const outcome = turn.done.catch((error: unknown) => error);
+    try {
+      await expect.poll(() => h.subagents[0], { timeout: 5000 }).toMatchObject({ type: 'started' });
+      await turn.stop();
+      expect(await outcome).toMatchObject({ kind: 'stopped' });
+      expect(h.subagents.at(-1)).toEqual({ type: 'finished', id: SUB, status: 'interrupted' });
+    } finally {
+      await turn.stop();
+      await outcome;
+    }
+  }, 10_000);
 
   it('stops a turn whose init reports another permission mode', async () => {
     const session = await claude(['--permission-mode-reported=acceptEdits']);

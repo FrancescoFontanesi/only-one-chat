@@ -18,6 +18,8 @@ export interface ChatRecord {
   updatedAt: number;
   /** The CLIs' own sessions, to resume: Claude session id, Codex thread id. */
   sessions: Partial<Record<TurnRole, string>>;
+  /** Handoff awaiting the replacement implementer's first completed turn. */
+  implementerHandoff?: string | undefined;
   /** The roles the chat runs with: its providers stay its own (ADR 0012); absent in older records. */
   roles?: Partial<Record<TurnRole, AgentChoice>>;
   /** Notes on files the user put back, not received yet by each role (ADR 0014). */
@@ -240,6 +242,10 @@ export function forReplay(updates: readonly ThreadUpdate[], open?: string): Thre
   return [...out, ...tail];
 }
 
+export function validImplementerHandoff(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 32_768 && value.trim().length > 0;
+}
+
 export class ChatHistory {
   /** `onRemove`: told of each chat dropped past the limit, to drop what belongs to it. */
   constructor(
@@ -258,6 +264,9 @@ export class ChatHistory {
       return record.version === 1 && record.id === id
         ? {
             ...(record as ChatRecord),
+            implementerHandoff: validImplementerHandoff(record.implementerHandoff)
+              ? record.implementerHandoff
+              : undefined,
             unseen: pendingReports(record.unseen),
             roles: chatRoles(record.roles),
             context: contextOf(record.context),
@@ -288,6 +297,22 @@ export class ChatHistory {
   }
 
   save(record: ChatRecord): void {
+    this.write(record);
+    for (const old of this.list().slice(MAX_CHATS)) this.remove(old.id);
+  }
+
+  /** Publish the pending handoff or its replacement session ID in one write. */
+  saveImplementerHandoff(record: ChatRecord, sessionId: string, brief: string | null): void {
+    const sessions = { ...record.sessions };
+    if (sessionId === '') delete sessions.implementer;
+    else sessions.implementer = sessionId;
+    const next = { ...record, sessions, implementerHandoff: brief ?? undefined };
+    this.write(next);
+    record.sessions = sessions;
+    record.implementerHandoff = next.implementerHandoff;
+  }
+
+  private write(record: ChatRecord): void {
     mkdirSync(this.dir, { recursive: true });
     const path = this.file(record.id);
     const temporary = `${path}.${String(process.pid)}.tmp`;
@@ -302,7 +327,6 @@ export class ChatHistory {
       JSON.stringify({ ...record, updates: compact(record.updates), nodes }),
     );
     renameSync(temporary, path);
-    for (const old of this.list().slice(MAX_CHATS)) this.remove(old.id);
   }
 
   /** Deletes a chat and, through `onRemove`, what belongs to it (its checkpoints). */

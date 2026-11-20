@@ -13,12 +13,12 @@ Status: Accepted (iteration 3).
 - **HANDOFF** (`{ type: 'handoff' }` from the webview and `ChatSession.handoff()`) applies only to the implementer, after its first turn, while no message is running.
   1. The current session writes a handoff in a normal turn visible in the thread. It includes the objective, status, files touched, decisions, open issues, next steps, and verification commands. The handoff turn makes no edits and runs no commands.
   2. Close the session and clear its stored ID so the chat cannot resume it, even after reopening. Reset the displayed context to zero.
-  3. The next session starts with the same provider and model, with the handoff after its instructions.
+  3. The next session uses the same provider and model. Its first work prompt includes the handoff as background context, as specified in [ADR 0037](0037-persist-implementer-handoff.md).
 - **If the handoff text is empty**, keep the existing session and show an error in the thread.
 - The product supplies the same request text for Codex and Claude.
 
 ## Consequences
 
 - A handoff uses one implementer turn under the user's subscription.
-- **Keep the handoff in memory** until the next message opens the new session. If the chat closes first, the new session starts fresh. TODO(continuity): persist the handoff with the chat once there is a layer for continuity between sessions (ADR 0011).
+- The original implementation kept the handoff in memory. [ADR 0037](0037-persist-implementer-handoff.md) replaces that behavior with a pending handoff saved in chat history.
 - The leader handoff remains to be designed. The leader model stays fixed within a chat.

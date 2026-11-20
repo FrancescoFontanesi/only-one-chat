@@ -1,7 +1,8 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ChatHistory,
   compact,
@@ -11,6 +12,11 @@ import {
   type ChatRecord,
 } from '../../src/session/history.js';
 import type { ThreadUpdate } from '../../src/webview/protocol.js';
+
+vi.mock(import('node:fs'), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, renameSync: vi.fn(actual.renameSync) };
+});
 
 let dir: string;
 beforeEach(() => {
@@ -139,6 +145,57 @@ describe('chat history (R5)', () => {
     };
     new ChatHistory(dir).save({ ...record('chat-v', 1), unseen: [pending] });
     expect(new ChatHistory(dir).load('chat-v')?.unseen).toEqual([pending]);
+  });
+
+  it.each([
+    { case: 'object', value: { sessionId: 'wrong-role', instructions: 'synthetic' } },
+    { case: 'empty', value: ' \r\n ' },
+    { case: 'over limit', value: 'x'.repeat(32_769) },
+  ])('ignores stored handoff data of the wrong shape ($case)', ({ value }) => {
+    const history = new ChatHistory(dir);
+    writeFileSync(
+      join(dir, 'chat-v.json'),
+      JSON.stringify({
+        ...record('chat-v', 1),
+        sessions: { implementer: 'keep-thread' },
+        implementerHandoff: value,
+      }),
+    );
+    const loaded = history.load('chat-v');
+    expect(loaded?.implementerHandoff).toBeUndefined();
+    expect(loaded?.sessions.implementer).toBe('keep-thread');
+  });
+
+  it('does not publish an in-memory handoff when its atomic storage write fails', () => {
+    const path = join(dir, 'blocked');
+    writeFileSync(path, 'file in place of history directory');
+    const active = { ...record('chat-v', 1), sessions: { implementer: 'keep-thread' } };
+    expect(() => {
+      new ChatHistory(path).saveImplementerHandoff(active, '', 'pending');
+    }).toThrow();
+    expect(active.sessions.implementer).toBe('keep-thread');
+    expect(active).not.toHaveProperty('implementerHandoff');
+  });
+
+  it('keeps the pending handoff on disk and in memory when publishing the replacement ID fails', () => {
+    const history = new ChatHistory(dir);
+    const active = record('chat-v', 1);
+    history.saveImplementerHandoff(active, '', 'pending');
+    vi.mocked(fs.renameSync).mockImplementationOnce(() => {
+      throw new Error('synthetic rename failure');
+    });
+    expect(() => {
+      history.saveImplementerHandoff(active, 'replacement', null);
+    }).toThrow('synthetic rename failure');
+    expect(active.implementerHandoff).toBe('pending');
+    expect(active.sessions.implementer).toBeUndefined();
+    const persisted = history.load(active.id);
+    expect(persisted?.implementerHandoff).toBe('pending');
+    expect(persisted?.sessions.implementer).toBeUndefined();
+    history.saveImplementerHandoff(active, 'replacement', null);
+    const completed = history.load(active.id);
+    expect(completed?.sessions.implementer).toBe('replacement');
+    expect(completed?.implementerHandoff).toBeUndefined();
   });
 
   it('drops a malformed pending review without discarding its valid neighbors', () => {

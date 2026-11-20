@@ -1,9 +1,0 @@
-{
-  "description": "The include task as one ordinary message in natural language, the same for a model alone and for the three roles: no planning step, no request to write a brief.",
-  "messages": [
-    {
-      "name": "request",
-      "text": "Vorrei poter spezzare gli script della calcolatrice in più file: una riga `include \"file.calc\"` esegue le righe di quel file come se fossero scritte lì, con le stesse variabili. Vale solo negli script letti da stdin e nei file inclusi, non con -e. Il percorso è relativo alla cartella da cui parte il programma e non deve uscirne: un percorso assoluto o con `..` dà \"Error: include path not allowed\", prima ancora di controllare se il file esiste. Se il file manca: \"Error: include file not found\". Se un file richiama se stesso, anche passando da altri, mentre è ancora in corso: \"Error: include cycle\" (includere due volte lo stesso file uno dopo l'altro invece va bene). Al massimo 5 livelli di annidamento, oltre: \"Error: include too deep\". Un file più grande di 64 KiB: \"Error: include file too large\". Un errore dentro un file incluso si stampa come gli altri, lo script prosegue dalla riga dopo e alla fine esce con codice 1. Se sicurezza e comodità si scontrano, scegli la sicurezza. Se manca qualche decisione, prendi la più prudente e dimmelo."
-    }
-  ]
-}

@@ -7,6 +7,7 @@ export default defineConfig(
   {
     ignores: [
       'references/**',
+      'sandbox/**',
       'graft/**',
       '**/node_modules/**',
       '**/dist/**',

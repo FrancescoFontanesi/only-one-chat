@@ -335,7 +335,7 @@ abbonamenti diversi; se un modello economico rivede bene e scrive il rapporto pe
 revisione può esserci sempre.
 
 **Scenario:** `calc-include`, un solo messaggio in linguaggio naturale
-([one-message.json](../sandbox/scenarios/calc-include/one-message.json)), uguale per tutti, senza
+(`one-message.json`), uguale per tutti, senza
 fase di ragionamento né richiesta di brief. 51 test nascosti, ingressi ostili compresi.
 
 |                               | U1: Sol da solo (medium)                                  | U2: Sonnet da solo (medium) | U3: Sol (medium) → Sonnet (low) → Haiku (high)                       |

@@ -54,7 +54,7 @@ strumento `Agent` aggiunto a `Read,Grep,Glob` e `--forward-subagent-text`.
 - Senza `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` un sotto-agente parte in background e riporta
   in un turno successivo, che un turno `-p` ripreso non riceve in modo affidabile. Con la
   variabile, Claude lo aspetta dentro il turno. Il caso è documentato in
-  [calc-session](../sandbox/results/calc-session-2026-10-27-confronto.md). `CLAUDE_CODE_EFFORT_LEVEL` vale anche per la sessione principale, quindi
+  `calc-session`. `CLAUDE_CODE_EFFORT_LEVEL` vale anche per la sessione principale, quindi
   l'effort della policy deve coincidere con il suo.
 
 ## Monitoraggio

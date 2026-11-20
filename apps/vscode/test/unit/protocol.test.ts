@@ -198,6 +198,14 @@ describe('parseWebviewMessage: composer and roles (ADR 0012)', () => {
     {
       type: 'setRole',
       role: 'leader',
+      cli: 'antigravity',
+      model: 'gemini-pro',
+      effort: 'low',
+      permission: 'read-only',
+    },
+    {
+      type: 'setRole',
+      role: 'leader',
       cli: 'gemini',
       model: 'm',
       effort: 'low',

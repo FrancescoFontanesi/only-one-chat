@@ -89,7 +89,7 @@
             "claude"
           ],
           "default": "codex",
-          "description": "CLI of the leader, the model you chat with. A chat keeps its providers: another CLI applies from the next chat."
+          "description": "CLI of the leader, the model you chat with. Antigravity is temporarily unavailable for this role. A chat keeps its providers: another CLI applies from the next chat."
         },
         "onlyOneChat.leader.model": {
           "type": "string",

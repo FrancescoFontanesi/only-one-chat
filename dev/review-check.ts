@@ -83,6 +83,8 @@ async function main(): Promise<void> {
   const reviewers = arguments_('reviewer');
   const runs = Number(arguments_('runs')[0] ?? '1');
   if (!log || reviewers.length === 0) throw new Error('usage: --from <log> --reviewer cli:model');
+  const reference = join(REPO, 'sandbox', 'scenarios', 'calc', 'reference');
+  if (!existsSync(reference)) throw new Error(`provide a local reference project at ${reference}`);
   const { brief, report } = fromLog(log);
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -93,7 +95,6 @@ async function main(): Promise<void> {
     `review-check-${stamp}`,
   );
   mkdirSync(dir, { recursive: true });
-  const reference = join(REPO, 'sandbox', 'scenarios', 'calc', 'reference');
   const skip = (source: string) => !source.split(/[\\/]/).includes('__pycache__');
   cpSync(reference, dir, { recursive: true, filter: skip });
   const baseline = snapshot(dir);

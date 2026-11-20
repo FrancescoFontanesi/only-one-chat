@@ -26,9 +26,10 @@ a pagamento.
     all'implementatore, poi il leader legge la sua revisione al posto del rapporto;
   - puoi chiedergli una revisione e spegnerlo dalla ghiera o da Squad; di default è Claude Haiku
     a reasoning high.
-- **Qualsiasi provider in qualsiasi ruolo** ([ADR 0022](docs/decisions/0022-providers-per-role.md)):
-  Codex e Claude Code fanno da leader o da implementatore. Il leader ti fa domande con lo
-  strumento del proprio CLI.
+- **Provider per ruolo** ([ADR 0022](docs/decisions/0022-providers-per-role.md),
+  [ADR 0035](docs/decisions/0035-handoff-tools-and-english.md)): Codex e Claude Code fanno da
+  leader o da implementatore. Antigravity è disponibile per il revisore e per i nodi di Squad.
+  Il leader ti fa domande con lo strumento del proprio CLI.
 - **Permessi dei CLI stessi** ([ADR 0021](docs/decisions/0021-auto-mode-ignored-paths-waiting.md)):
   sola lettura, chiede prima di agire, oppure auto (la modalità auto di Claude Code, la sandbox
   di Codex). Mai `--dangerously-skip-permissions`.
@@ -44,7 +45,7 @@ a pagamento.
 ![Il thread di un nodo: Gemini su Antigravity](docs/images/node.png)
 
 Gli screenshot sono la webview vera in Chrome headless, con una chat registrata da una prova
-sulla calcolatrice (`sandbox/scenarios/calc-include`, run U3). Si rigenerano con
+sulla calcolatrice (scenario `calc-include`, run U3). Si rigenerano con
 `node dev/screenshots.mjs`, dopo aver compilato l'estensione.
 
 ## Avvio rapido (Windows)
@@ -54,7 +55,6 @@ powershell -ExecutionPolicy Bypass -File scripts/check-environment.ps1
 pnpm install --frozen-lockfile
 pnpm check        # build + typecheck + lint + test
 pnpm test:e2e     # smoke test nell'Extension Host isolato
-pnpm playground   # copia della calcolatrice dove provarla a mano
 ```
 
 Poi apri la cartella in VS Code, premi **F5** e lancia **Only One Chat: Open Panel**. Servono

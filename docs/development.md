@@ -70,6 +70,18 @@ Watch: `pnpm --filter only-one-chat run watch`.
 L'Extension Development Host parte con `--disable-extensions`: le altre estensioni
 installate (Codex, Claude Code, Antigravity, ...) non vengono caricate.
 
+### Esperimenti locali
+
+Git ignora `sandbox/`. Per usare i benchmark, fornisci uno scenario locale in
+`sandbox/scenarios/<nome>/` con `systems.json` e i file di input richiesti dallo scenario.
+`pnpm bench --fake --system <sistema> --scenario <nome>` usa i CLI finti. Le corse dal vivo
+consumano quota e vanno autorizzate. I loro risultati vengono scritti in `sandbox/results/`.
+
+`pnpm playground` e la configurazione «Run Extension (playground)» usano una copia di lavoro
+separata. Per crearla o ripristinarla, fornisci il progetto di riferimento locale in
+`sandbox/scenarios/calc/reference/`. La configurazione «Run Extension» funziona da un clone
+del repository.
+
 ## Testing
 
 - **Unit** (`pnpm test`): `packages/*/test`, `apps/vscode/test/unit`, `tests/`. Non

@@ -379,7 +379,7 @@ export function SettingsApp() {
           <span class="sl-model">{info.modelName}</span>
           <p class="sl-d">
             {role === 'leader'
-              ? 'Nella chat il modello si blocca al primo messaggio.'
+              ? 'Antigravity non è disponibile come leader. Nella chat il modello si blocca al primo messaggio.'
               : 'In chat, un altro provider vale dalla chat successiva.'}
           </p>
         </>

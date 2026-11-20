@@ -18,10 +18,14 @@ const base =
 const target = join(base, 'playground', 'calc');
 const source = join(import.meta.dirname, '..', 'sandbox', 'scenarios', 'calc', 'reference');
 
-if (process.argv.includes('--reset')) rmSync(target, { recursive: true, force: true });
-if (existsSync(target)) {
+const reset = process.argv.includes('--reset');
+if (!reset && existsSync(target)) {
   process.stdout.write(`Playground: ${target} (kept; --reset for a fresh copy)\n`);
+} else if (!existsSync(source)) {
+  process.stderr.write(`Playground: provide a local reference project at ${source}\n`);
+  process.exitCode = 1;
 } else {
+  if (reset) rmSync(target, { recursive: true, force: true });
   cpSync(source, target, {
     recursive: true,
     filter: (path) => !path.split(/[\\/]/).includes('__pycache__'),

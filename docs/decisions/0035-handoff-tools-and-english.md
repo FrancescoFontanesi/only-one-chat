@@ -84,7 +84,7 @@ di testo degli ADR 0018, 0029 e 0031 fra agenti dell'estensione.
    - **I test** che leggono quei testi.
 
    L'italiano non resta come seconda lingua: una localizzazione (`vscode.l10n`) si aggiunge
-   dopo, se serve. I risultati in `sandbox/results/` restano come sono, come evidenza storica.
+   dopo, se serve. I risultati delle prove restano dati locali. Questo ADR conserva gli esiti.
 
 8. **Il bench** misura le consegne mancate o invalide per ruolo e modello, al posto dei blocchi
    malformati.
@@ -156,20 +156,17 @@ Che cosa è emerso, e che cosa è stato corretto:
 - **Il leader non delega senza il via** (V1 e V3): segue la regola del prompt, come con i
   marcatori. Il copione del bench aggiunge "Procedi.".
 
-## Stato del lavoro e ripresa (2026-11-19)
-
-Questa sezione serve a riprendere il lavoro con un altro agente o provider. Va tolta quando
-il punto 9 è chiuso.
+## Stato dell’implementazione (2026-11-20)
 
 ### Dove siamo
 
 - **Passo 1 (pulizia, ADR 0034):** fatto, commit `4cc3684`.
-- **Passo 2 (runtime sugli strumenti, prompt in inglese):** fatto e verificato, **non ancora
-  committato**. È tutto nel working tree: `git status` elenca i file. `pnpm check` passa
-  (574 test, 3 saltati) e `pnpm test:e2e` passa (7). Il commit va fatto solo su richiesta
-  dell'utente, senza righe `Co-Authored-By` né altre attribuzioni AI.
-- **Passo 3 (traduzione in inglese di UI, docs, ADR, AGENTS.md e test):** da fare, dopo il
-  commit del passo 2. Va delegato per aree, come dice il punto 9.
+- **Passo 2 (runtime sugli strumenti, prompt in inglese):** verificato e committato
+  (`567de01`). `pnpm check` ha passato 574 test (3 saltati) e `pnpm test:e2e` ne ha passati 7.
+- **Antigravity come leader:** supporto rinviato (opzione B). Le impostazioni indicano il limite.
+  Antigravity resta selezionabile come revisore e come nodo.
+- **Passo 3 (traduzione in inglese di UI, docs, ADR, AGENTS.md e test):** da fare in un
+  commit dedicato. Va delegato per aree, come dice il punto 9.
 
 ### Dove sta il codice del passo 2
 
@@ -191,12 +188,10 @@ il punto 9 è chiuso.
   Antigravity dopo un rifiuto.
 - **Estensione:** il target esbuild `dist/handoff-server.js`, lanciato con
   `ELECTRON_RUN_AS_NODE`; le schede REPORT, REVIEW e FINDINGS nella webview.
-- **Bench:**
-  - `sandbox/scenarios/calc-include/systems.json` (V1, V2, V3);
-  - `message-and-go.json` (la richiesta, poi "Procedi.");
-  - la metrica `handoffs` nel report.
+- **Bench:** metrica `handoffs` nel report. Lo scenario `calc-include` e i suoi sistemi
+  V1, V2 e V3 erano dati di prova locali. Il copione inviava la richiesta, poi «Procedi.».
 
-### Risultati in `sandbox/results/` (2026-11-18)
+### Risultati storici del benchmark (2026-11-18)
 
 | File (`calc-include-…`)                  | Esito                                                                         |
 | ---------------------------------------- | ----------------------------------------------------------------------------- |
@@ -209,7 +204,7 @@ il punto 9 è chiuso.
 La correzione per il comando rifiutato in ACP è arrivata dopo queste corse: è verificata con
 `fake-agy` e con una sonda dal vivo, non con una corsa completa del bench.
 
-### Problema aperto: il lavoro in background di Antigravity
+### Limite del ruolo di leader in Antigravity
 
 **Cosa fa Antigravity.** Verificato con sonde ACP dirette su `agy acp`, modello
 `gemini-4-hydrogen-medium`, sessione in sola lettura:
@@ -251,22 +246,20 @@ Gli aggiornamenti che arrivano dopo, senza un turno in corso, sono ignorati
     tetto di circa 10 minuti.
   - Limite: è una stima, non un segnale del CLI. Va scritta nell'ADR e coperta da un
     test con `fake-agy`, che dovrà simulare il risveglio.
-- **B. Antigravity escluso dal ruolo di leader per ora,** con un avviso nelle impostazioni.
+- **B. Antigravity escluso dal ruolo di leader per ora (scelta adottata),** con un avviso nelle impostazioni.
   Come revisore ha funzionato grazie al turno di correzione; come implementatore non è
   stato provato dal vivo.
 - **C. Commit del passo 2 adesso,** e il problema come passo separato.
 
-Raccomandazione: C, poi A. Il problema è un limite dell'adapter Antigravity, non degli
-strumenti: con i marcatori il blocco andava perso nello stesso modo. **La scelta spetta
-all'utente,** che non l'ha ancora fatta.
+Dopo il commit del passo 2 (C), si adotta B. L'adapter ACP perdeva gli aggiornamenti tardivi
+anche quando le consegne usavano i marcatori di testo. L'opzione A resta da valutare se si
+riapre il supporto ad Antigravity come leader.
 
 ### Come verificare e riprodurre
 
-- **Controlli:** `pnpm check` e `pnpm test:e2e`. Prima di `pnpm check`, i nuovi file di
-  `sandbox/results/` vanno formattati con `npx prettier --write`: il bench non lo fa e il
-  lint fallisce.
-- **Una corsa dal vivo:** `pnpm bench --system V1 --scenario calc-include` (oppure V2, V3).
-  Consuma quota e va approvata dall'utente.
+- **Controlli:** `pnpm check` e `pnpm test:e2e` funzionano senza `sandbox/`.
+- **Benchmark dal vivo:** `pnpm bench --system V1 --scenario calc-include` richiede una
+  copia privata dello scenario. Consuma quota e va approvata dall'utente.
   - Il riepilogo è nel `.md` del risultato: righe "Test nascosti" e "Consegne (strumenti
     ooc)".
   - Il log completo è in `%LOCALAPPDATA%/only-one-chat/logs/bench-<runId>.jsonl`: eventi

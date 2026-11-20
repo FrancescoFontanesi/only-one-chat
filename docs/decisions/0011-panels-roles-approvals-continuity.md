@@ -130,8 +130,7 @@ Stato: Accettata in parte (iterazione 3).
 
 ### Esito: chi fa le modifiche piccole
 
-Dati in [calc-small](../../sandbox/results/calc-small-2026-10-27-confronto.md): un run per
-variante, a effort low.
+La prova `calc-small` usava un run per variante, a effort low.
 
 - **Il leader che fa da sé è la via più cara.** Sol ha letto 180k di contesto per una riga:
   ogni chiamata di strumento rimanda tutta la sua sessione. Delegare gli costa 48k.

@@ -10,9 +10,7 @@ attraverso gli appunti, la cattura al focus e il formato del brief.
   Il concetto originale del prodotto (R1, R2) è diverso: **una chat sola, con un leader
   scelto dall'utente, che ragiona e delega**. L'utente vuole anche lavorare senza la web app,
   e chiedere modifiche piccole senza un brief strutturato.
-- **Le prove**, un run per sistema a effort low, sono in
-  [calc-functions](../../sandbox/results/calc-functions-2026-10-27-confronto.md) e
-  [calc-session](../../sandbox/results/calc-session-2026-10-27-confronto.md).
+- **Le prove** su `calc-functions` e `calc-session` usavano un run per sistema a effort low.
   - **Il gateway pieno raddoppia il lavoro.** Esplora il codice, riscrive la specifica e
     rilegge il codice. Su un brief già deciso costa più del modello da solo e non migliora il
     codice.

@@ -1,5 +1,5 @@
-// Benchmark of a sandbox scenario (sandbox/README.md): one run of one system,
-// measured. Dev tooling only.
+// Benchmark of a local sandbox scenario: one measured run of one system.
+// Dev tooling only. See docs/development.md for the local inputs.
 //
 //   pnpm bench --system <name> [--scenario calc] [--fake]
 //
@@ -326,7 +326,11 @@ async function main(): Promise<void> {
   const scenario = argument('scenario') ?? 'calc';
   const fake = process.argv.includes('--fake');
   const scenarioDir = join(REPO, 'sandbox', 'scenarios', scenario);
-  const systems = JSON.parse(readFileSync(join(scenarioDir, 'systems.json'), 'utf8')) as {
+  const systemsPath = join(scenarioDir, 'systems.json');
+  if (!existsSync(systemsPath)) {
+    throw new Error(`local scenario "${scenario}" is missing: provide ${systemsPath}`);
+  }
+  const systems = JSON.parse(readFileSync(systemsPath, 'utf8')) as {
     systems: Record<string, SystemConfig>;
     sandboxCommands: string[];
     /** Project copied into the run directory first, relative to the scenario. */

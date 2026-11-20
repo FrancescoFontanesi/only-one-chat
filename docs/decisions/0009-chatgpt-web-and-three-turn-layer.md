@@ -18,7 +18,7 @@ Stato: Sostituita in parte da [0010](0010-leader-chat-adaptive-delegation.md).
 - **Cosa prevedevano R1 e R2.** Un leader dentro l'estensione, Codex, che conversa con
   l'utente. Ogni turno di conversazione consumerebbe quota, e lo stesso contesto
   accumulerebbe ragionamento, lavoro sul codice e scrittura di testi.
-- **Il benchmark `calc`** ([confronto](../../sandbox/results/calc-2026-10-26-confronto.md)).
+- **Il benchmark `calc`.**
   - Un pianificatore costoso con un esecutore economico supera tutti i test, come Opus da
     solo.
   - Spende circa un terzo in costo nominale di Claude.

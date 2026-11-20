@@ -15,6 +15,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   antigravityModelId,
   createAcpAgentFactory,
@@ -25,13 +26,28 @@ import {
 } from '../packages/adapters/src/index.js';
 import {
   REVIEWER_ROLE_INSTRUCTIONS,
-  parseReviewerTurn,
+  agentSessionOptions,
+  handoffTools,
+  readHandoff,
+  renderFindings,
+  renderReview,
   reviewRequestPrompt,
+  type HandoffServer,
 } from '../packages/runtime/src/index.js';
 import { snapshot, verifiedFacts } from '../apps/vscode/src/session/facts.js';
 
 const REPO = join(import.meta.dirname, '..');
 const env = process.env;
+
+/** The handoff server (ADR 0035), run from its source with the dev loader. */
+const HANDOFF_SERVER: HandoffServer = {
+  command: process.execPath,
+  args: [
+    '--import',
+    pathToFileURL(join(REPO, 'dev', 'ts-resolve.mjs')).href,
+    join(REPO, 'packages', 'runtime', 'src', 'handoff-main.ts'),
+  ],
+};
 
 function arguments_(name: string): string[] {
   return process.argv.flatMap((arg, at) =>
@@ -39,22 +55,23 @@ function arguments_(name: string): string[] {
   );
 }
 
-/** The brief and the report of a bench run, from its event log. */
+/** The brief and the report of a bench run, from its event log: the rendered handoffs. */
 function fromLog(path: string): { brief: string; report: string } {
   let brief = '';
   let report = '';
   for (const line of readFileSync(path, 'utf8').split('\n').filter(Boolean)) {
-    const event = JSON.parse(line) as { type: string; role?: string; text?: string };
-    if (event.type !== 'message' || !event.text) continue;
-    if (event.role === 'orchestrator' && event.text.includes('<<<DELEGA')) {
-      const lines = event.text.split('\n');
-      const start = lines.findIndex((l) => l.startsWith('<<<DELEGA'));
-      const end = lines.findIndex((l) => l.trim() === 'DELEGA>>>');
-      brief = lines.slice(start + 1, end).join('\n');
+    const event = JSON.parse(line) as {
+      type: string;
+      role?: string;
+      handoff?: { tool: string; text: string };
+    };
+    if (event.type !== 'message' || !event.handoff) continue;
+    if (event.role === 'orchestrator' && event.handoff.tool === 'delegate') {
+      brief = event.handoff.text;
     }
-    if (event.role === 'worker') report = event.text;
+    if (event.role === 'worker' && event.handoff.tool === 'report') report = event.handoff.text;
   }
-  if (!brief || !report) throw new Error(`no brief and report in ${path}`);
+  if (!brief || !report) throw new Error(`no brief and report handoffs in ${path}`);
   return { brief, report };
 }
 
@@ -143,7 +160,13 @@ async function main(): Promise<void> {
                 writable: false,
                 withoutUserHooks: true,
               });
-      const session = await factory({ instructions: REVIEWER_ROLE_INSTRUCTIONS });
+      const session = await factory(
+        agentSessionOptions(
+          REVIEWER_ROLE_INSTRUCTIONS,
+          undefined,
+          handoffTools('reviewer', HANDOFF_SERVER),
+        ),
+      );
       const activity: string[] = [];
       const denied: string[] = [];
       try {
@@ -165,19 +188,28 @@ async function main(): Promise<void> {
             onActivity: (a) => activity.push(`${a.kind}: ${a.detail.slice(0, 120)}`),
           },
         ).done;
-        const answer = parseReviewerTurn(turn.text);
-        const found = /\bR1\b/.test(answer.text) && /bloccante/i.test(answer.text);
+        // The review wins over findings in a turn; neither: the handoff was missed (ADR 0035).
+        const review = readHandoff(turn.handoffs, 'review').value;
+        const findings = readHandoff(turn.handoffs, 'findings').value;
+        const answer = review
+          ? { kind: 'review', verdict: review.verdict, text: renderReview(review) }
+          : findings
+            ? { kind: 'findings', verdict: null, text: renderFindings(findings) }
+            : { kind: 'none', verdict: null, text: turn.text };
+        const found = review
+          ? (review.open_findings ?? []).some((f) => f.severity === 'blocking')
+          : (findings?.items ?? []).some((f) => f.severity === 'blocking');
         const row = {
           reviewer: spec,
           run,
           kind: answer.kind,
-          verdict: answer.kind === 'review' ? answer.verdict : null,
+          verdict: answer.verdict,
           foundBlocking: found,
           mentionsNegative: /-\s*1|negativ|< ?0/.test(answer.text),
           activity,
           denied,
           durationMs: turn.usage?.durationMs ?? null,
-          text: turn.text,
+          text: answer.text,
         };
         results.push(row);
         process.stdout.write(

@@ -60,6 +60,8 @@ export type {
   AgentTurn,
   AgentTurnHandlers,
   AgentTurnStep,
+  HandoffCall,
+  HandoffTools,
 } from './agent.js';
 export { StepStream, diffCounts, tail } from './steps.js';
 export {
@@ -72,6 +74,8 @@ export {
   codexAnswers,
   codexInput,
   codexQuestions,
+  handoffThreadConfig,
+  isHandoffApproval,
   itemStep,
   type CodexAgentConfig,
 } from './codex/agent.js';

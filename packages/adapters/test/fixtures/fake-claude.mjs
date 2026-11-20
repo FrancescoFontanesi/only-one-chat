@@ -16,7 +16,19 @@
 //        finishes, like a sub-agent still running)
 //        --ask (after init, asks its host with two can_use_tool control requests, a
 //        Bash command then AskUserQuestion, and answers with the host's two responses)
-// Real Claude arguments (-p, --model, …) are accepted and ignored.
+// Real Claude arguments (-p, --model, …) are accepted and ignored; they are all in the
+// --log entry's argv, so a test reads --mcp-config and --allowedTools there.
+//
+// Handoff calls (ADR 0035): prompt lines, one call each, run in order after init:
+//   [handoff <tool> <json>]          the main agent calls the tool mcp__ooc__<tool>
+//   [handoff-sub <tool> <json>]      the same from a sub-agent (parent_tool_use_id set)
+//   [handoff@<server> <tool> <json>] the tool mcp__<server>__<tool>
+// <json> is the call's input, one line. Like Claude, the fake emits the tool_use only
+// if the tool is allowed: named in --allowedTools; else the host is asked when
+// --permission-prompt-tool is given (a can_use_tool control request, allowed on
+// "allow"), else it is denied (a tool_result with is_error, no tool_use). --ask-handoff
+// asks the host for every call, allowed or not. The result of the turn reports each
+// call's outcome: "handoffs: <tool>=allowed|denied, …".
 
 import { spawn } from 'node:child_process';
 import { appendFileSync, readdirSync, readFileSync, writeSync } from 'node:fs';
@@ -62,6 +74,16 @@ const recorded = readFileSync(join(fixtures, version, `${scenario}.jsonl`), 'utf
   .map((line) => JSON.parse(line))
   .filter((entry) => entry.type === 'message' && entry.dir === 'server')
   .map((entry) => entry.message);
+
+/** `[handoff…]` lines of a prompt: { sub, server, tool, input }. */
+const handoffCalls = (prompt) =>
+  [...prompt.matchAll(/^\[handoff(-sub)?(?:@(\S+))? (\S+) (.*)\]$/gm)].map((match) => ({
+    sub: match[1] !== undefined,
+    server: match[2] ?? 'ooc',
+    tool: match[3],
+    input: JSON.parse(match[4]),
+  }));
+const allowedTools = (argv[argv.indexOf('--allowedTools') + 1] ?? '').split(',');
 
 let started = false;
 /** Control requests sent to the host, waiting for its response, by request id. */
@@ -123,6 +145,7 @@ input.on('line', (line) => {
 
 async function replay(prompt) {
   let answered = null;
+  const outcomes = [];
   for (const original of recorded) {
     const message = structuredClone(original);
     if (message.type === 'system' && message.subtype === 'init') {
@@ -169,6 +192,40 @@ async function replay(prompt) {
         });
         answered = JSON.stringify({ bash, ask });
       }
+      for (const [index, call] of handoffCalls(prompt).entries()) {
+        const name = `mcp__${call.server}__${call.tool}`;
+        let allowed = allowedTools.includes(name);
+        if (flag('ask-handoff') || (!allowed && argv.includes('--permission-prompt-tool'))) {
+          const reply = await askHost(`handoff-${String(index)}`, {
+            subtype: 'can_use_tool',
+            tool_name: name,
+            input: call.input,
+          });
+          allowed = reply?.behavior === 'allow';
+        }
+        outcomes.push(`${call.tool}=${allowed ? 'allowed' : 'denied'}`);
+        if (!allowed) continue;
+        const parent = call.sub ? 'toolu_sub' : null;
+        send({
+          type: 'assistant',
+          parent_tool_use_id: parent,
+          message: {
+            role: 'assistant',
+            model: 'claude-haiku-5-5',
+            content: [{ type: 'tool_use', id: `toolu_h${String(index)}`, name, input: call.input }],
+          },
+        });
+        send({
+          type: 'user',
+          parent_tool_use_id: parent,
+          message: {
+            role: 'user',
+            content: [
+              { type: 'tool_result', tool_use_id: `toolu_h${String(index)}`, content: 'received' },
+            ],
+          },
+        });
+      }
       continue;
     }
     if (flag('subagent-hang') && typeof message.parent_tool_use_id === 'string') {
@@ -181,6 +238,9 @@ async function replay(prompt) {
     }
     if (flag('echo') && message.type === 'result') message.result = `ECHO: ${prompt}`;
     if (answered !== null && message.type === 'result') message.result = answered;
+    if (outcomes.length > 0 && message.type === 'result') {
+      message.result = `${message.result} handoffs: ${outcomes.join(', ')}`;
+    }
     send(message);
   }
 }

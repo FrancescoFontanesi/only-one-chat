@@ -5,7 +5,7 @@
 // are kept: the same Claude response carries account data, which is never read.
 
 import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
+import { onJsonLines } from './lines.js';
 import { withoutApiKeys } from './environment.js';
 import { connectCodex } from './codex/session.js';
 import { runAgy } from './acp/antigravity.js';
@@ -198,7 +198,7 @@ function claudeInitialize(options: ListModelsOptions): Promise<unknown> {
       });
     });
     child.stdin.on('error', () => undefined);
-    createInterface({ input: child.stdout, crlfDelay: Infinity }).on('line', (line) => {
+    onJsonLines(child.stdout, (line) => {
       let message: unknown;
       try {
         message = JSON.parse(line);

@@ -51,17 +51,17 @@ export function resultTemplate(brief: Pick<Brief, 'project' | 'track'>): string 
   return [
     `<<<OOC-RESULT v1 project=${brief.project} track=${brief.track}`,
     '## Outcome',
-    'done, partial o failed, in una riga',
+    'done, partial or failed, on one line',
     '## Acceptance criteria',
-    'ogni criterio del brief, con il suo numero: ✓ o ✗ e l’evidenza in una riga',
+    'each criterion of the brief, with its number: ✓ or ✗ and the evidence on one line',
     '## Verified facts',
-    'solo ciò che è stato verificato eseguendo qualcosa: comandi con il loro esito, file modificati',
+    'only what was verified by running something: commands with their outcome, files modified',
     '## Autonomous decisions',
-    'ciò che è stato deciso senza che il brief lo dicesse, e ogni deviazione, con il perché; oppure "None"',
+    'what was decided without the brief saying so, and every deviation, with the why; or "None"',
     '## Problems and risks',
-    'oppure "None"',
+    'or "None"',
     '## Notes',
-    'facoltativa: ciò che serve sapere per il prossimo brief',
+    'optional: what is needed to know for the next brief',
     RESULT_END,
   ].join('\n');
 }

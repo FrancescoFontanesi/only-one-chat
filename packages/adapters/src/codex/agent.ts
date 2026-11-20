@@ -13,16 +13,20 @@
 // sub-agent event for the runtime, which checks the policy; stop() interrupts
 // the sub-agents' turns too.
 
-import type {
-  AgentFactory,
-  AgentIdentity,
-  AgentSubagentOptions,
-  AgentSession,
-  AgentTurn,
-  AgentTurnHandlers,
-  AgentSkillRef,
-  AgentTurnStep,
-  AgentUserQuestion,
+import {
+  HANDOFF_SERVER_NAME,
+  handoffEnv,
+  type AgentFactory,
+  type AgentIdentity,
+  type HandoffCall,
+  type HandoffTools,
+  type AgentSubagentOptions,
+  type AgentSession,
+  type AgentTurn,
+  type AgentTurnHandlers,
+  type AgentSkillRef,
+  type AgentTurnStep,
+  type AgentUserQuestion,
 } from '../agent.js';
 import { diffCounts, StepStream, tail } from '../steps.js';
 import { CodexAuthError, isUsable } from './auth.js';
@@ -200,6 +204,33 @@ export function codexAnswers(answers: Readonly<Record<string, readonly string[]>
       Object.entries(answers).map(([id, values]) => [id, { answers: [...values] }]),
     ),
   };
+}
+
+/**
+ * The thread `config` that registers the handoff server as the MCP server `ooc`
+ * (ADR 0035), as dotted keys; it adds to the user's own servers.
+ */
+export function handoffThreadConfig(handoff: HandoffTools): Record<string, unknown> {
+  const key = `mcp_servers.${HANDOFF_SERVER_NAME}`;
+  return {
+    [`${key}.command`]: handoff.server.command,
+    [`${key}.args`]: [...handoff.server.args],
+    [`${key}.env`]: handoffEnv(handoff),
+  };
+}
+
+/**
+ * True for the approval of a call to a tool of `ooc`: an MCP elicitation of
+ * kind `mcp_tool_call` from that server. Those tools have no effects (ADR 0035).
+ */
+export function isHandoffApproval(method: string, params: unknown): boolean {
+  if (method !== 'mcpServer/elicitation/request' || !isRecord(params)) return false;
+  const meta = params['_meta'];
+  return (
+    params['serverName'] === HANDOFF_SERVER_NAME &&
+    isRecord(meta) &&
+    meta['codex_approval_kind'] === 'mcp_tool_call'
+  );
 }
 
 /** Answer that declines what an approval request asks for, per request method. */
@@ -380,6 +411,7 @@ type TurnOutcome =
       usage?: { byModel: Record<string, TokenUsage>; costUsd: null; durationMs: number };
       quota: QuotaSnapshot | null;
       context: ContextUsage | null;
+      handoffs?: readonly HandoffCall[];
     }
   | Error;
 
@@ -396,6 +428,8 @@ interface RunningTurn {
   readonly startedAt: number;
   /** The thread's cumulative tokens when the turn started. */
   readonly baseline: TokenUsage;
+  /** The main thread's calls to the handoff tools, in order (ADR 0035). */
+  readonly handoffs: HandoffCall[];
   quota: QuotaSnapshot | null;
   settle(outcome: TurnOutcome): void;
 }
@@ -415,7 +449,7 @@ const FINISHED: Readonly<Record<string, 'completed' | 'interrupted' | 'failed'>>
 };
 
 export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory {
-  return async ({ instructions, subagents, resume }): Promise<AgentSession> => {
+  return async ({ instructions, subagents, resume, handoff }): Promise<AgentSession> => {
     const {
       cwd,
       model,
@@ -563,6 +597,14 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
               putStep(turn, { kind: 'message', id: String(item['id']), text: item['text'] }, true);
             } else turn.messages.push(item['text']);
           } else {
+            if (
+              item['type'] === 'mcpToolCall' &&
+              item['server'] === HANDOFF_SERVER_NAME &&
+              typeof item['tool'] === 'string'
+            ) {
+              // Completed or failed alike: the runtime validates the arguments.
+              turn.handoffs.push({ tool: item['tool'], arguments: item['arguments'] });
+            }
             const step = itemStep(item, true);
             if (step) putStep(turn, step, true);
           }
@@ -614,6 +656,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
                 : {}),
               quota: turn.quota,
               context: mainContext,
+              ...(turn.handoffs.length > 0 ? { handoffs: turn.handoffs } : {}),
             });
           } else {
             const error = isRecord(completed['error']) ? String(completed['error']['message']) : '';
@@ -631,6 +674,10 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
           const answers = await turnHandlers.onQuestion(codexQuestions(params));
           if (answers === null) throw new Error('The user did not answer');
           return codexAnswers(answers);
+        }
+        // The handoff tools need nobody's approval, with or without a turn.
+        if (handoff && isHandoffApproval(method, params)) {
+          return { action: 'accept', content: {}, _meta: null };
         }
         const summary = summarize(method, params);
         // Without a turn there is nobody to ask: declined.
@@ -652,6 +699,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         ...(writable ? writableThreadConfig(process.platform) : {}),
         ...(withoutUserHooks ? { 'features.hooks': false } : {}),
         ...(questions ? { 'features.default_mode_request_user_input': true } : {}),
+        ...(handoff ? handoffThreadConfig(handoff) : {}),
       };
       const threadParams = {
         cwd,
@@ -731,6 +779,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         stream: new StepStream((step) => handlers.onStep?.(step)),
         startedAt: Date.now(),
         baseline: totals.get(threadId) ?? NO_TOKENS,
+        handoffs: [],
         quota: null,
         settle,
       };

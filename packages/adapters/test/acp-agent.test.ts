@@ -16,6 +16,7 @@ import {
   type AgentSession,
   type AgentTurnStep,
 } from '../src/index.js';
+import { REFUSED_NOTICE } from '../src/acp/agent.js';
 
 const FAKE_AGY = join(import.meta.dirname, 'fixtures', 'fake-agy.mjs');
 const sessions: AgentSession[] = [];
@@ -131,6 +132,19 @@ describe('ACP agent (ADR 0023)', () => {
     const result = await session.runTurn('PERMESSO', seen.handlers).done;
     expect(seen.seen.asked).toEqual([]);
     expect(result.text).toContain('"optionId":"deny"');
+  });
+
+  it('goes on, told why, when a refused command ends a read-only turn with no answer', async () => {
+    const session = await open({ readOnly: true });
+    const result = await session.runTurn('MUTO', handlers('accept').handlers).done;
+    // The fake echoes the last line of the prompt it got: the notice.
+    expect(result.text).toContain(`ECHO: ${REFUSED_NOTICE}`);
+    // The tokens of both prompts: 10 + 100.
+    expect(Object.values(result.usage?.byModel ?? {})[0]?.input).toBe(110);
+    // Not read-only: the user decides, and a refusal is the user's answer.
+    const asked = await open();
+    const no = await asked.runTurn('MUTO', handlers('decline').handlers).done;
+    expect(no.text).toBe('');
   });
 
   it('stops a turn with session/cancel', async () => {

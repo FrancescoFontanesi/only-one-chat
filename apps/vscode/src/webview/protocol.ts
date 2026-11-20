@@ -239,6 +239,17 @@ export interface QuestionItem {
   readonly secret: boolean;
 }
 
+/** A handoff between roles (ADR 0035): the tool called, its Markdown, and its outcome or verdict. */
+export interface TurnHandoff {
+  /** `delegate`, `report`, `findings` or `review`. */
+  readonly tool: string;
+  readonly text: string;
+  /** `report`: `done`, `partial` or `blocked`. */
+  readonly outcome?: string;
+  /** `review`: `approved`, `with_reservations` or `rejected`. */
+  readonly verdict?: string;
+}
+
 /** One entry of the chat thread, or a change to one. */
 export type ThreadUpdate =
   | {
@@ -265,6 +276,8 @@ export type ThreadUpdate =
       /** Written by the runtime from what the CLI reported, once the turn is done. */
       readonly label?: string;
       readonly text?: string;
+      /** The handoff the turn made (ADR 0035), rendered; `text` is then only the agent's prose. */
+      readonly handoff?: TurnHandoff;
       readonly usage?: TurnUsageSummary;
       /** The `@` paths of the text that exist in the folder, once the turn is done. */
       readonly refs?: readonly string[];

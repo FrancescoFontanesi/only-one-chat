@@ -194,6 +194,44 @@ export interface AgentTurnResult {
   readonly quota?: QuotaSnapshot | null;
   /** The main session's context after the turn, when the CLI reports it. */
   readonly context?: ContextUsage | null;
+  /**
+   * The calls to the handoff tools (ADR 0035) the agent made in this turn, its
+   * sub-agents excluded, in order, with the arguments as the CLI reported them:
+   * not validated, extra fields possible. Absent or empty: none.
+   */
+  readonly handoffs?: readonly HandoffCall[];
+}
+
+/** A call to a tool of the `ooc` handoff server (ADR 0035). */
+export interface HandoffCall {
+  /** The tool's own name, e.g. "report", without the CLI's prefix. */
+  readonly tool: string;
+  readonly arguments: unknown;
+}
+
+/** How a CLI launches the `ooc` handoff server: a Node and the server's file. */
+export interface HandoffServer {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+/** A handoff tool as MCP lists it. */
+export interface HandoffSpec {
+  readonly name: string;
+  readonly description: string;
+  readonly inputSchema: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * The handoff tools of a session (ADR 0035). The adapter registers the server
+ * as the MCP server `ooc`, with the environment variable `OOC_HANDOFF_TOOLS`
+ * set to the JSON of `tools`; it lets the agent call those tools, and only
+ * those of `ooc`, without asking anyone, also in read-only mode.
+ */
+export interface HandoffTools {
+  readonly server: HandoffServer;
+  readonly tools: readonly HandoffSpec[];
 }
 
 export interface AgentTurn {
@@ -219,7 +257,7 @@ export interface TurnOptions {
 export interface AgentSession {
   /** Display name, e.g. "Codex (gpt-6-luna)". */
   readonly name: string;
-  /** Recipient name in delegation blocks (`<<<DELEGA #<id>`), e.g. "claude". */
+  /** Short identifier, e.g. "claude"; for display and logs. */
   readonly id: string;
   runTurn(prompt: string, handlers: AgentTurnHandlers, options?: TurnOptions): AgentTurn;
   /**
@@ -270,6 +308,8 @@ export interface AgentSessionOptions {
    * for a chat reopened later (R5). When it cannot be resumed, a new one starts.
    */
   readonly resume?: string;
+  /** The handoff tools this role may call (ADR 0035). Absent: none. */
+  readonly handoff?: HandoffTools;
 }
 
 /** Creates a session for one role; model and effort are the factory's configuration. */

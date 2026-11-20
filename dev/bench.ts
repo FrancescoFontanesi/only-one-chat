@@ -33,6 +33,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, relative } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   startClaudeTurn,
   CLAUDE_SUBAGENT_FORBIDDEN_NAMES,
@@ -57,8 +58,13 @@ import {
   IMPLEMENTER_ROLE_INSTRUCTIONS,
   LIGHT_IMPLEMENTER_INSTRUCTIONS,
   REVIEWER_ROLE_INSTRUCTIONS,
-  parseReviewerTurn,
+  handoffTools,
+  readHandoff,
+  renderFindings,
+  renderReport,
+  renderReview,
   type AgentSession,
+  type HandoffServer,
   openEventLog,
   parseBrief,
   requestPrompt,
@@ -123,8 +129,27 @@ interface TurnRecord {
   readonly role: string;
   readonly agent: string;
   readonly label: string;
+  /** The handoff tool the turn called validly (ADR 0035); null: none. */
+  readonly handoff: string | null;
   readonly usage: TurnUsage | null;
   readonly quota: QuotaSnapshot | null;
+}
+
+/**
+ * Handoffs per role and agent (ADR 0035): the turns, the valid handoffs by tool, and the turns of
+ * an implementer or a reviewer that made none, which the runtime had to ask for or left
+ * missing; `invalid` counts the leader's `delegate` calls that never validated.
+ */
+function handoffMetrics(turns: readonly TurnRecord[], invalid: number) {
+  const byAgent: Record<string, { turns: number; made: Record<string, number>; missing: number }> =
+    {};
+  for (const turn of turns) {
+    const row = (byAgent[`${turn.role} · ${turn.agent}`] ??= { turns: 0, made: {}, missing: 0 });
+    row.turns += 1;
+    if (turn.handoff) row.made[turn.handoff] = (row.made[turn.handoff] ?? 0) + 1;
+    else if (turn.role !== 'orchestrator') row.missing += 1;
+  }
+  return { invalidDelegations: invalid, byAgent };
 }
 
 /** A session system: one model, one long chat, every message of the script in it. */
@@ -151,6 +176,16 @@ const SINGLE_AGENT_INSTRUCTIONS = [
 
 const REPO = join(import.meta.dirname, '..');
 const env = process.env;
+
+/** The handoff server (ADR 0035), run from its source with the dev loader. */
+const HANDOFF_SERVER: HandoffServer = {
+  command: process.execPath,
+  args: [
+    '--import',
+    pathToFileURL(join(REPO, 'dev', 'ts-resolve.mjs')).href,
+    join(REPO, 'packages', 'runtime', 'src', 'handoff-main.ts'),
+  ],
+};
 
 function argument(name: string): string | undefined {
   const at = process.argv.indexOf(`--${name}`);
@@ -500,6 +535,7 @@ async function main(): Promise<void> {
         role: event.role,
         agent: event.agent,
         label: event.label,
+        handoff: event.handoff?.tool ?? null,
         usage: event.usage ?? null,
         quota: event.quota ?? null,
       });
@@ -546,6 +582,7 @@ async function main(): Promise<void> {
         // No questions tool in the bench: the leader asks in words.
         leaderInstructions(system.implementer.cli, product ? { questions: false } : {}),
         proactive,
+        handoffTools('leader', HANDOFF_SERVER),
       ),
     );
     const reviewerConfig = product ? system.reviewer : undefined;
@@ -570,6 +607,7 @@ async function main(): Promise<void> {
         agentSessionOptions(
           product ? IMPLEMENTER_ROLE_INSTRUCTIONS : LIGHT_IMPLEMENTER_INSTRUCTIONS,
           implementerPolicy,
+          handoffTools('implementer', HANDOFF_SERVER),
         ),
       );
       implementers.push(session);
@@ -591,6 +629,7 @@ async function main(): Promise<void> {
                 record({ type: 'activity', role: 'worker', ...activity });
               },
             }).done;
+            const report = readHandoff(result.handoffs, 'report').value;
             record({
               type: 'message',
               role: 'worker',
@@ -598,6 +637,15 @@ async function main(): Promise<void> {
               text: result.text,
               label: agentLabel(result.identity),
               identity: result.identity,
+              ...(report
+                ? {
+                    handoff: {
+                      tool: 'report',
+                      text: renderReport(report),
+                      outcome: report.outcome,
+                    },
+                  }
+                : {}),
               ...(result.usage ? { usage: result.usage } : {}),
               ...(result.quota !== undefined ? { quota: result.quota } : {}),
             });
@@ -609,11 +657,18 @@ async function main(): Promise<void> {
           }
           continue;
         }
-        // The fake leader answers [light] with a delegation block.
+        // The fake leader makes a `delegate` call on [delegation]: on a brief, and on the last
+        // message to the leader, so that --fake runs the whole pipeline of a script.
         const isBrief = parseBrief(message.text).status === 'valid';
-        const text = fake && isBrief ? message.text.replace('\n', '\n[light]\n') : message.text;
+        const lastToLeader = script.filter((m) => m.to !== 'implementer').at(-1) === message;
+        const text =
+          fake && (isBrief || lastToLeader)
+            ? `${message.text}
+[delegation]`
+            : message.text;
         const loop = runLoop({
           request: text,
+          handoffServer: HANDOFF_SERVER,
           log,
           onEvent,
           mode: 'leader',
@@ -783,7 +838,13 @@ async function main(): Promise<void> {
         true,
         false,
         dir,
-      )(agentSessionOptions(REVIEWER_ROLE_INSTRUCTIONS, policy(config)));
+      )(
+        agentSessionOptions(
+          REVIEWER_ROLE_INSTRUCTIONS,
+          policy(config),
+          handoffTools('reviewer', HANDOFF_SERVER),
+        ),
+      );
       const approved: string[] = [];
       try {
         const turn = await session.runTurn(shadowInput.prompt, {
@@ -795,11 +856,13 @@ async function main(): Promise<void> {
             return Promise.resolve('accept');
           },
         }).done;
-        const answer = parseReviewerTurn(turn.text);
+        // The review wins over findings in a turn; neither: the handoff was missed.
+        const review = readHandoff(turn.handoffs, 'review').value;
+        const findings = readHandoff(turn.handoffs, 'findings').value;
         shadows.push({
           reviewer: config,
-          kind: answer.kind,
-          verdict: answer.kind === 'review' ? answer.verdict : null,
+          kind: review ? 'review' : findings ? 'findings' : 'none',
+          verdict: review?.verdict ?? null,
           durationMs: turn.usage?.durationMs ?? null,
           usage: turn.usage ?? null,
           changed: changes(before, snapshot(dir)).map((change) =>
@@ -808,7 +871,7 @@ async function main(): Promise<void> {
               : `${change} (non è un test)`,
           ),
           approved,
-          text: turn.text,
+          text: review ? renderReview(review) : findings ? renderFindings(findings) : turn.text,
         });
       } catch (error) {
         shadows.push({
@@ -863,6 +926,7 @@ async function main(): Promise<void> {
       probeCostUsd: (claudeBefore?.costUsd ?? 0) + (claudeAfter?.costUsd ?? 0),
     },
     shadows,
+    handoffs: handoffMetrics(turns, events.filter((type) => type === 'delegation_invalid').length),
     otherEvents: events,
   };
 
@@ -877,6 +941,14 @@ async function main(): Promise<void> {
     `- Quota Codex: prima ${quotaText(codexBefore)}; dopo ${quotaText(codexAfter)}`,
     `- Quota Claude (sonde): prima ${quotaText(claudeBefore?.quota)}; dopo ${quotaText(claudeAfter?.quota)}`,
     `- Costo nominale Claude: $${costUsd.toFixed(4)}`,
+    `- Consegne (strumenti ooc): ${
+      Object.entries(result.handoffs.byAgent)
+        .map(
+          ([who, row]) =>
+            `${who}: ${String(row.turns)} turni, ${JSON.stringify(row.made)}, mancate ${String(row.missing)}`,
+        )
+        .join('; ') || 'nessuna'
+    }; delegate non valide ${String(result.handoffs.invalidDelegations)}`,
     `- File: ${files.map((f) => `${f.path} (${String(f.lines)})`).join(', ') || 'nessuno'}`,
     '',
     '| Messaggio | Turno | Etichetta | Tempo | Contesto letto | Output | Quota vista |',

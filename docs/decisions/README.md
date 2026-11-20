@@ -39,3 +39,4 @@ Una decisione superata non si cancella: si marca "Sostituita da NNNN".
 | [0032](0032-change-risk.md)                       | La stima del rischio di una modifica                                 | Accettata in parte, sostituita da 0033        |
 | [0033](0033-reviewer-always-and-direct.md)        | Il revisore sempre, anche sul lavoro diretto, e dall'interfaccia     | Accettata                                     |
 | [0034](0034-remove-experimental-modes.md)         | Via le modalità sperimentali del runtime e la demo                   | Accettata                                     |
+| [0035](0035-handoff-tools-and-english.md)         | Le consegne fra i ruoli come strumenti, e il sistema in inglese      | Accettata                                     |

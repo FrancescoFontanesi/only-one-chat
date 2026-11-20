@@ -162,7 +162,7 @@ export function withRefs(update: ThreadUpdate, cwd: string): ThreadUpdate {
     update.type === 'user' || update.type === 'approval'
       ? update.text
       : update.type === 'turn' && update.status !== 'running'
-        ? (update.text ?? '')
+        ? [update.text ?? '', update.handoff?.text ?? ''].filter(Boolean).join('\n')
         : '';
   if (text === '') return update;
   const { found, missing } = resolveRefs(text, cwd);

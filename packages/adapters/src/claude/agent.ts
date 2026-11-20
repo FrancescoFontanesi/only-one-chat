@@ -33,7 +33,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export type ClaudeAgentConfig = Omit<
   ClaudeTurnOptions,
-  'prompt' | 'appendSystemPrompt' | 'resumeSessionId' | 'onEvent' | 'subagents' | 'questions'
+  | 'prompt'
+  | 'appendSystemPrompt'
+  | 'resumeSessionId'
+  | 'onEvent'
+  | 'subagents'
+  | 'questions'
+  | 'handoff'
 > & {
   /**
    * The model asks the user while it works (ADR 0022): each turn's questions
@@ -112,7 +118,7 @@ export function claudePrompt(prompt: string, skill?: AgentSkillRef): string {
 }
 
 export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactory {
-  return ({ instructions, subagents, resume }): Promise<AgentSession> => {
+  return ({ instructions, subagents, resume, handoff }): Promise<AgentSession> => {
     let sessionId: string | undefined = resume;
     let running: ClaudeTurn | undefined;
     // A resumed turn reports the whole session's usage and cost so far, not
@@ -168,6 +174,7 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
           : {}),
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
+        ...(handoff ? { handoff } : {}),
         prompt: claudePrompt(prompt, options?.skill),
         appendSystemPrompt: subagents ? `${instructions}\n\n${subagents.rules}` : instructions,
         ...(subagents
@@ -284,6 +291,7 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
           quota: result.quota,
           // Unlike usage, the context is the session's own size, known even after a resume.
           context: result.context,
+          ...(result.handoffs ? { handoffs: result.handoffs } : {}),
           identity: {
             provider: 'Claude Code',
             model: result.model,

@@ -11,12 +11,22 @@
 // Flags: app-server (required) | --ignore-eof | --exit-at-start | --fail-initialize
 //        --account=<kind> (see ACCOUNTS) | --log=<file> (received messages, JSONL)
 //        --provider=<id> --provider-name=<name> (config/read; `readError` fails it)
-// Prompts with [delegation] get a valid delegation block to @claude, and a
+// Prompts with [delegation], [spec] or [light] get a `delegate` call (see the handoff
+// calls below) whose context makes a fake implementer report and a fake reviewer approve; a
 // verdict prompt ("Rispondi solo SUCCESS o FAIL") gets SUCCESS. Prompts with
-// [spec] get a gateway's specification to @claude, [light] a light leader's
-// notes to @claude, and a prompt that carries
-// the result template ("<<<OOC-RESULT v1 ...") gets a result block.
+// the result template ("<<<OOC-RESULT v1 ...") get a result block.
 // Unknown arguments (such as Codex `-c key=value` overrides) are ignored.
+//
+// The thread's `config` (mcp_servers.ooc.*, ADR 0035) is in `test/turns` and `test/received`.
+// Handoff calls (ADR 0035): prompt lines, one call each, run in order before the answer:
+//   [handoff <tool> <json>]          a call to the tool of the MCP server `ooc`, main thread
+//   [handoff-sub <tool> <json>]      the same on the sub-agent's thread (thread-child)
+//   [handoff@<server> <tool> <json>] a call to a tool of another MCP server, main thread
+// <json> is the call's arguments, one line. Like Codex, the fake first asks with an
+// `mcpServer/elicitation/request` (serverName, mode form, _meta.codex_approval_kind
+// "mcp_tool_call" with tool_params); only if the client answers action "accept" does it
+// emit the `mcpToolCall` item (item/started, item/completed). The client's answers are
+// in `test/received`.
 
 import { spawn } from 'node:child_process';
 import { appendFileSync, writeSync } from 'node:fs';
@@ -46,6 +56,29 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const received = [];
 const awaitingClient = new Map();
+const SHORTCUT_REPORT = {
+  outcome: 'done',
+  summary: 'The calculator is implemented.',
+  changes: [{ path: 'calc.py', change: 'the calculator, for C1' }],
+  criteria: [{ id: 'C1', status: 'verified', evidence: 'python -m unittest: OK' }],
+};
+const SHORTCUT_REVIEW = {
+  verdict: 'approved',
+  summary: 'It holds.',
+  criteria: [{ id: 'C1', status: 'verified', evidence: 'python -m unittest: OK' }],
+  axes: { honesty: 'clean', security: 'clean', currency: 'clean' },
+};
+// The brief reaches the implementer and the reviewer: each fake finds its own line there.
+const SHORTCUT_DELEGATE = {
+  goal: 'Implement the calculator.',
+  context: [
+    'Empty working folder.',
+    `[handoff report ${JSON.stringify(SHORTCUT_REPORT)}]`,
+    `[handoff review ${JSON.stringify(SHORTCUT_REVIEW)}]`,
+  ].join('\n'),
+  acceptance_criteria: ['1 + 2 → 3.'],
+  verification: 'python -m unittest',
+};
 let initialized = false;
 let nextServerRequestId = 1000;
 const threads = new Map();
@@ -288,6 +321,61 @@ const handlers = {
       }
       childDone('completed');
     }
+    // `[delegation]`, `[spec]` and `[light]`: a leader that delegates (a `delegate` call whose
+    // context carries the line that makes a fake implementer report), then the usual answer.
+    const shortcut = /\[(?:delegation|spec|light)\]/.test(text)
+      ? [{ sub: undefined, server: 'ooc', tool: 'delegate', args: SHORTCUT_DELEGATE }]
+      : [];
+    const calls = [...text.matchAll(/^\[handoff(-sub)?(?:@(\S+))? (\S+) (.*)\]$/gm)].map(
+      ([, sub, server = 'ooc', tool, json]) => ({ sub, server, tool, args: JSON.parse(json) }),
+    );
+    for (const { sub, server, tool, args } of [...shortcut, ...calls]) {
+      const callThread = sub ? 'thread-child' : threadId;
+      const serverId = nextServerRequestId++;
+      const reply = new Promise((resolve) => awaitingClient.set(serverId, resolve));
+      send({
+        id: serverId,
+        method: 'mcpServer/elicitation/request',
+        params: {
+          threadId: callThread,
+          turnId,
+          serverName: server,
+          mode: 'form',
+          message: `Allow the ${server} MCP server to run tool "${tool}"?`,
+          requestedSchema: { type: 'object', properties: {} },
+          _meta: {
+            codex_approval_kind: 'mcp_tool_call',
+            tool_params: args,
+            tool_description: `The ${tool} tool`,
+          },
+        },
+      });
+      if ((await reply).result?.action !== 'accept') continue;
+      const item = {
+        type: 'mcpToolCall',
+        id: `mcp-${server}-${tool}-${String(serverId)}`,
+        server,
+        tool,
+        status: 'inProgress',
+        arguments: args,
+      };
+      notify('item/started', {
+        item,
+        threadId: callThread,
+        turnId,
+        startedAtMs: Date.now(),
+      });
+      notify('item/completed', {
+        item: {
+          ...item,
+          status: 'completed',
+          result: { content: [{ type: 'text', text: 'received' }] },
+        },
+        threadId: callThread,
+        turnId,
+        completedAtMs: Date.now(),
+      });
+    }
     if (text.includes('[mcp]')) {
       const item = {
         type: 'mcpToolCall',
@@ -307,47 +395,8 @@ const handlers = {
     }
     let answer = `Risposta: ${text}`;
     // For the benchmark runner's --fake mode: a planner's specification and its verdict.
-    if (text.includes('[delegation]')) {
-      answer = [
-        'Specifica pronta.',
-        '<<<DELEGA @claude',
-        '## Obiettivo',
-        'Implementa la calcolatrice.',
-        '## Contesto',
-        'Cartella di lavoro vuota.',
-        '## Vincoli',
-        'Solo libreria standard.',
-        '## Assunzioni',
-        'Nessuna',
-        '## Domande aperte',
-        'Nessuna',
-        '## Output atteso',
-        'Rapporto con file e test.',
-        'DELEGA>>>',
-      ].join('\n');
-    } else if (text.includes('Rispondi solo SUCCESS o FAIL')) {
+    if (text.includes('Rispondi solo SUCCESS o FAIL')) {
       answer = 'SUCCESS';
-    } else if (text.includes('[spec]')) {
-      // A gateway's specification (gateway mode).
-      answer = [
-        'Autonomous decisions:',
-        'None',
-        '<<<DELEGA @claude',
-        ...['Purpose', 'Context', 'Steps', 'Tests', 'Verification', 'Constraints', 'Stop if'].map(
-          (section) => `## ${section}\nNone`,
-        ),
-        'DELEGA>>>',
-      ].join('\n');
-    } else if (text.includes('[light]')) {
-      // A light leader's notes (gateway mode, light): the runtime forwards the brief.
-      answer = [
-        'Autonomous decisions:',
-        'None',
-        '<<<DELEGA @claude',
-        '## Notes',
-        'None',
-        'DELEGA>>>',
-      ].join('\n');
     } else {
       // A gateway's result: the template's start line, then a short block.
       const start = text.split('\n').find((line) => line.startsWith('<<<OOC-RESULT v1'));

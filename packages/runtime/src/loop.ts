@@ -1,7 +1,9 @@
 // The loop of a request (ADR 0018, 0020): in `leader` mode the user's request
-// goes to the leader, which answers by itself or delegates with a block; the
-// implementer works, its report is reviewed (by a reviewer, ADR 0029, and by
-// the leader unless the review is deferred) and the leader answers the user.
+// goes to the leader, which answers by itself or delegates by calling the
+// `delegate` tool (ADR 0035); the implementer works and calls `report`, its
+// report is reviewed (by a reviewer, ADR 0029, that calls `findings` and
+// `review`, and by the leader unless the review is deferred) and the leader
+// answers the user.
 // A brief pasted from the reasoning chat goes to the implementer at once and
 // ends with the result for that chat. In `review` mode (ADR 0033) work the
 // leader did not delegate is reviewed before the leader reads it.
@@ -18,6 +20,7 @@ import type {
   AgentTurnResult,
   ApprovalRequest,
   ApprovalDecision,
+  HandoffServer,
   ContextUsage,
   QuotaSnapshot,
   QuestionAnswers,
@@ -27,18 +30,23 @@ import type {
   SubagentPolicy,
   TurnUsage,
 } from './agent.js';
-import { delegationStart, parseDelegation, type DelegationParse } from './delegation.js';
 import { extractResult, parseBrief, type Brief } from './brief.js';
 import type { EventLog } from './event-log.js';
 import { checkReport, checkReview, contractFacts } from './contract.js';
 import {
-  parseReviewerTurn,
-  reportOutcome,
-  type ReviewerTurn,
+  handoffTools,
+  readHandoff,
+  renderBrief,
+  renderFindings,
+  renderReport,
+  renderReview,
+  type Report,
+  type ReportOutcome,
   type ReviewVerdict,
-} from './review.js';
+} from './handoff.js';
 import {
   DEFAULT_REVIEW_ROUNDS,
+  EMPTY_LEADER_TURN_PROMPT,
   EMPTY_REVIEW,
   IMPLEMENTER_ROLE_INSTRUCTIONS,
   MAX_REVIEW_ROUNDS,
@@ -48,9 +56,10 @@ import {
   fixPrompt,
   leaderResultPrompt,
   leaderReviewPrompt,
-  lightDelegation,
+  reportRepairPrompt,
   resultPrompt,
   reviewFollowUpPrompt,
+  reviewRepairPrompt,
   reviewRequestPrompt,
 } from './prompts.js';
 import { checkSubagent, subagentLabel, type SubagentState } from './subagents.js';
@@ -58,7 +67,7 @@ import { checkSubagent, subagentLabel, type SubagentState } from './subagents.js
 /** `reviewer`: when the loop is given one (ADR 0029). */
 type Role = 'orchestrator' | 'worker' | 'reviewer';
 
-export const APPROVAL_DENIED_MESSAGE = 'approvazione rifiutata: non supportata in questa versione';
+export const APPROVAL_DENIED_MESSAGE = 'approval declined: not supported in this version';
 
 export interface InterceptedMessage {
   readonly kind: 'delegation' | 'review';
@@ -87,6 +96,18 @@ export type MalformedDecision =
   | { readonly action: 'edit'; readonly text: string }
   | { readonly action: 'cancel' };
 
+/** The handoff a turn made (ADR 0035), rendered: the turn's own text no longer holds it. */
+export interface ThreadHandoff {
+  /** `delegate`, `report`, `findings` or `review`. */
+  readonly tool: string;
+  /** The Markdown the other roles read. */
+  readonly text: string;
+  /** `report` only. */
+  readonly outcome?: ReportOutcome;
+  /** `review` only, as the agent wrote it (the runtime's own verdict is in `reviewed`). */
+  readonly verdict?: ReviewVerdict;
+}
+
 export type ThreadEvent =
   | { readonly type: 'turn_started'; readonly role: Role; readonly agent: string }
   | { readonly type: 'text'; readonly role: Role; readonly text: string }
@@ -98,6 +119,8 @@ export type ThreadEvent =
       /** Written by the runtime from `identity`; see agentLabel. */
       readonly label: string;
       readonly identity: AgentIdentity;
+      /** The valid handoff call the turn made, rendered; absent when it made none. */
+      readonly handoff?: ThreadHandoff;
       readonly usage?: TurnUsage;
       readonly quota?: QuotaSnapshot | null;
       readonly context?: ContextUsage | null;
@@ -181,6 +204,8 @@ export type LoopOutcome =
       readonly status: 'delegated';
       readonly spec: string;
       readonly report: string;
+      /** The implementer's `report` call, null when it made no valid one. */
+      readonly reportData: Report | null;
       readonly facts: string;
       /** The reviewer's report, when the work was reviewed (ADR 0029). */
       readonly review?: string;
@@ -193,8 +218,9 @@ export type LoopOutcome =
       readonly resultFound: boolean;
       /** What the implementer received. */
       readonly spec: string;
-      /** The implementer's report. */
+      /** The implementer's report, rendered. */
       readonly report: string;
+      readonly reportData: Report | null;
       /** What the runtime verified after the implementer's turn. */
       readonly facts: string;
     }
@@ -205,10 +231,12 @@ export type LoopOutcome =
 export interface LoopOptions {
   readonly request: string;
   readonly worker: AgentFactory;
+  /** How the CLIs launch the handoff server (ADR 0035), for the sessions the loop creates. */
+  readonly handoffServer: HandoffServer;
   readonly log: EventLog;
   /** Shows a message before it reaches an agent; nothing is sent without approval. */
   intercept(message: InterceptedMessage, signal: AbortSignal): Promise<InterceptDecision>;
-  /** The leader's delegation does not follow the format: the user decides. */
+  /** The leader's `delegate` call never validated: the user decides. */
   onMalformedDelegation(
     problem: MalformedDelegation,
     signal: AbortSignal,
@@ -231,7 +259,13 @@ export interface LoopOptions {
   readonly reviewOf?: {
     /** What the implementer was asked: a brief, or the user's own message. */
     readonly brief: string;
+    /** The implementer's report, rendered (or its answer, when it made no report). */
     readonly report: string;
+    /**
+     * The report as the implementer's `report` call: undefined when unknown, and
+     * then the report is not checked against the brief.
+     */
+    readonly reportData?: Report | null;
     /** The brief is the user's message to the implementer, not the leader's brief. */
     readonly direct?: boolean;
     /** The user's own request to the reviewer. */
@@ -278,7 +312,7 @@ export interface LoopOptions {
   /**
    * Benchmark runs only (ADR 0008): messages between agents are approved
    * without asking; each is still intercepted, logged and shown as an
-   * `auto_approve` decision, and a malformed block gets one automatic
+   * `auto_approve` decision, and an invalid `delegate` call gets one automatic
    * correction. `intercept` and `onMalformedDelegation` are not called.
    */
   readonly autoApprove?: boolean;
@@ -313,8 +347,8 @@ export interface LoopOptions {
    * checks the work against the brief, in a session of its own opened for
    * that delegation and closed with the loop; its findings go back to the
    * implementer for `reviewRounds` rounds at most, then its report reaches
-   * the leader in place of the implementer's. A report that ends `bloccato`
-   * is not reviewed. The reviewer may write tests, never the code: the
+   * the leader in place of the implementer's. A report whose outcome is
+   * `blocked` is not reviewed. The reviewer may write tests, never the code: the
    * caller guards its turns (`guardReviewer`) or opens it read-only.
    */
   readonly reviewer?: AgentFactory;
@@ -347,9 +381,34 @@ export function agentLabel(identity: AgentIdentity): string {
   return [
     identity.provider,
     identity.model,
-    `effort ${identity.effort ?? 'predefinito'}`,
-    `sessione ${identity.sessionId}`,
+    `effort ${identity.effort ?? 'default'}`,
+    `session ${identity.sessionId}`,
   ].join(' · ');
+}
+
+/** The valid handoff of a turn, rendered; a review wins over findings in the same turn. */
+function handoffOf(role: Role, result: AgentTurnResult): ThreadHandoff | undefined {
+  if (role === 'orchestrator') {
+    const { value } = readHandoff(result.handoffs, 'delegate');
+    return value ? { tool: 'delegate', text: renderBrief(value) } : undefined;
+  }
+  if (role === 'worker') {
+    const { value } = readHandoff(result.handoffs, 'report');
+    return value
+      ? { tool: 'report', text: renderReport(value), outcome: value.outcome }
+      : undefined;
+  }
+  const review = readHandoff(result.handoffs, 'review').value;
+  if (review) return { tool: 'review', text: renderReview(review), verdict: review.verdict };
+  const findings = readHandoff(result.handoffs, 'findings').value;
+  return findings ? { tool: 'findings', text: renderFindings(findings) } : undefined;
+}
+
+/** What an implementer turn amounts to: its report as text, and the call it came from. */
+interface Work {
+  readonly text: string;
+  /** Null: no valid `report` call. Undefined: unknown, so not checked. */
+  readonly data: Report | null | undefined;
 }
 
 class Stopped extends Error {}
@@ -421,7 +480,7 @@ export function runLoop(options: LoopOptions): Loop {
       const runningNow = [...subagents.values()].filter((s) => s.status === 'running').length;
       const reason = checkSubagent(policy, next, runningNow);
       if (reason === undefined) return;
-      violation = `Sotto-agente non conforme di ${session.name}: ${reason}. Turno interrotto.`;
+      violation = `Non-conforming sub-agent of ${session.name}: ${reason}. Turn interrupted.`;
       void emit({ type: 'subagent_violation', role, message: violation });
       void started.turn?.stop();
     }
@@ -514,6 +573,7 @@ export function runLoop(options: LoopOptions): Loop {
       });
       if (violation !== undefined) throw new Error(violation);
       checkStopped();
+      const handoff = handoffOf(role, result);
       await emit({
         type: 'message',
         role,
@@ -521,6 +581,7 @@ export function runLoop(options: LoopOptions): Loop {
         text: result.text,
         label: agentLabel(result.identity),
         identity: result.identity,
+        ...(handoff ? { handoff } : {}),
         ...(result.usage ? { usage: result.usage } : {}),
         ...(result.quota !== undefined ? { quota: result.quota } : {}),
         ...(result.context ? { context: result.context } : {}),
@@ -561,26 +622,6 @@ export function runLoop(options: LoopOptions): Loop {
     return decision.action === 'edit' ? decision.text : message.text;
   }
 
-  /** Format errors, plus recipient errors: the block must name the implementer. */
-  function check(answer: string, workerId: string): DelegationParse {
-    const parsed = parseDelegation(answer);
-    if (parsed.status !== 'valid') return parsed;
-    const { recipient } = parsed.delegation;
-    if (recipient === null) {
-      return {
-        status: 'malformed',
-        errors: [`the start line must name the recipient: "${delegationStart(workerId)}"`],
-      };
-    }
-    if (recipient !== workerId.toLowerCase()) {
-      return {
-        status: 'malformed',
-        errors: [`unknown recipient "#${recipient}": the only agent is "#${workerId}"`],
-      };
-    }
-    return parsed;
-  }
-
   const reviewOnly = options.mode === 'review';
   /** A report is held to a brief: the leader's, or the one a review is asked of (ADR 0031). */
   const held = !reviewOnly || options.reviewOf?.direct !== true;
@@ -589,11 +630,11 @@ export function runLoop(options: LoopOptions): Loop {
    * The facts after an implementer's turn, with the runtime's checks of its
    * report against the brief (ADR 0031), shown in the thread as well.
    */
-  async function factsFor(brief: string, report: string): Promise<string> {
+  async function factsFor(brief: string, work: Work): Promise<string> {
     const facts = (await options.facts?.()) ?? '';
     const note =
-      held && (brief.trim() !== '' || report.trim() !== '')
-        ? contractFacts('Controlli sul rapporto', checkReport(brief, report, facts))
+      held && work.data !== undefined && (brief.trim() !== '' || work.text.trim() !== '')
+        ? contractFacts('Checks on the report', checkReport(brief, work.data, facts))
         : '';
     if (note === '') return facts;
     await emit({ type: 'contract', role: 'worker', message: note });
@@ -601,34 +642,87 @@ export function runLoop(options: LoopOptions): Loop {
   }
 
   /**
+   * An implementer turn. On a brief it must end with a valid `report` call: if
+   * it does not, one more turn asks for it, and then the agent's own text stands
+   * for the report, which the contract checks flag (ADR 0035). A message the
+   * user wrote directly to the implementer has no report to require.
+   */
+  async function implement(worker: AgentSession, prompt: string): Promise<Work> {
+    let result = await turn(worker, 'worker', prompt);
+    let read = readHandoff(result.handoffs, 'report');
+    let text = result.text;
+    if (read.value === null && held) {
+      result = await turn(worker, 'worker', reportRepairPrompt(read.errors));
+      read = readHandoff(result.handoffs, 'report');
+      text = [text, result.text].filter((part) => part.trim() !== '').join('\n\n');
+    }
+    return read.value ? { text: renderReport(read.value), data: read.value } : { text, data: null };
+  }
+
+  /**
+   * A reviewer turn: the guard runs around it, and it must end with a valid
+   * `review` or `findings` call, or one more turn asks for it.
+   */
+  async function reviewerTurn(reviewer: AgentSession, prompt: string, roundsLeft: number) {
+    let restored = '';
+    const guarded = async (text: string): Promise<AgentTurnResult> => {
+      const undo = options.guardReviewer?.() ?? null;
+      const result = await turn(reviewer, 'reviewer', text);
+      const put = undo ? undo() : '';
+      if (put !== '') {
+        await emit({ type: 'contract', role: 'reviewer', message: put });
+        restored = restored === '' ? put : `${restored}\n${put}`;
+      }
+      return result;
+    };
+    let result = await guarded(prompt);
+    let text = result.text;
+    let review = readHandoff(result.handoffs, 'review');
+    let findings = readHandoff(result.handoffs, 'findings');
+    if (review.value === null && findings.value === null) {
+      result = await guarded(
+        reviewRepairPrompt([...review.errors, ...findings.errors], roundsLeft),
+      );
+      text = [text, result.text].filter((part) => part.trim() !== '').join('\n\n');
+      review = readHandoff(result.handoffs, 'review');
+      findings = readHandoff(result.handoffs, 'findings');
+    }
+    return { text, review: review.value, findings: findings.value, restored };
+  }
+
+  /**
    * The review of a delegation (ADR 0029): the reviewer reads the brief, the
-   * report and the facts; while it answers with findings and rounds are left,
-   * the implementer answers them and the reviewer looks again. Anything else
-   * it writes ends the review and is what the leader reads. These messages go
-   * on without the user, like the reports (ADR 0018), each shown and logged.
+   * report and the facts; while it calls `findings` and rounds are left, the
+   * implementer answers them and the reviewer looks again. A `review` call ends
+   * the review and is what the leader reads. These messages go on without the
+   * user, like the reports (ADR 0018), each shown and logged.
    */
   async function reviewed(
     worker: AgentSession,
     brief: string,
-    firstReport: string,
+    first: Work,
     exchange: number,
     of: { readonly direct?: boolean; readonly asked?: string } = {},
-  ): Promise<{ reviewer: string; review: string; report: string; facts: string }> {
+  ): Promise<{ reviewer: string; review: string; work: Work; facts: string }> {
     if (!options.reviewer) throw new Error('reviewed() needs a reviewer');
     const rounds = Math.max(
       0,
       Math.min(options.reviewRounds ?? DEFAULT_REVIEW_ROUNDS, MAX_REVIEW_ROUNDS),
     );
     const reviewer = await options.reviewer(
-      agentSessionOptions(REVIEWER_ROLE_INSTRUCTIONS, options.subagents?.reviewer),
+      agentSessionOptions(
+        REVIEWER_ROLE_INSTRUCTIONS,
+        options.subagents?.reviewer,
+        handoffTools('reviewer', options.handoffServer),
+      ),
     );
     sessions.push(reviewer);
-    let report = firstReport;
-    let facts = await factsFor(brief, report);
+    let work = first;
+    let facts = await factsFor(brief, work);
     let prompt = reviewRequestPrompt(
       worker.name,
       brief,
-      report,
+      work.text,
       facts,
       rounds,
       options.reviewerNote,
@@ -639,41 +733,43 @@ export function runLoop(options: LoopOptions): Loop {
         { kind: 'review', from: worker.name, to: reviewer.name, text: prompt, exchange },
         true,
       );
-      const undo = options.guardReviewer?.() ?? null;
-      const written = (await turn(reviewer, 'reviewer', sent ?? prompt)).text;
-      const restored = undo ? undo() : '';
-      if (restored !== '') await emit({ type: 'contract', role: 'reviewer', message: restored });
-      const withRestored = (text: string) => (restored === '' ? text : `${text}\n\n${restored}`);
-      const answer: ReviewerTurn =
-        written.trim() === ''
-          ? { kind: 'review', text: EMPTY_REVIEW, verdict: null }
-          : parseReviewerTurn(written);
-      if (answer.kind === 'review' || round >= rounds) {
-        // An empty answer has nothing to check: EMPTY_REVIEW already says so.
-        const checked =
-          answer.kind === 'review' && written.trim() !== ''
-            ? checkReview(brief, answer.text)
-            : null;
-        const note = checked ? contractFacts('Controlli sulla revisione', checked.issues) : '';
-        if (note !== '') await emit({ type: 'contract', role: 'reviewer', message: note });
-        await emit({
-          type: 'reviewed',
-          reviewer: reviewer.name,
-          implementer: worker.name,
-          verdict: checked ? checked.verdict : null,
-          rounds: round,
-        });
-        const review = withRestored(note === '' ? answer.text : `${answer.text}\n\n${note}`);
-        return { reviewer: reviewer.name, review, report, facts };
+      const answer = await reviewerTurn(reviewer, sent ?? prompt, rounds - round);
+      const withRestored = (text: string) =>
+        answer.restored === '' ? text : `${text}\n\n${answer.restored}`;
+      if (answer.review === null && answer.findings !== null && round < rounds) {
+        const findings = withRestored(
+          findingsPrompt(reviewer.name, renderFindings(answer.findings)),
+        );
+        const passed = await intercept(
+          { kind: 'review', from: reviewer.name, to: worker.name, text: findings, exchange },
+          true,
+        );
+        work = await implement(worker, relay(passed ?? findings));
+        facts = await factsFor(brief, work);
+        prompt = reviewFollowUpPrompt(worker.name, work.text, facts, rounds - round - 1);
+        continue;
       }
-      const findings = withRestored(findingsPrompt(reviewer.name, answer.text));
-      const passed = await intercept(
-        { kind: 'review', from: reviewer.name, to: worker.name, text: findings, exchange },
-        true,
-      );
-      report = (await turn(worker, 'worker', relay(passed ?? findings))).text;
-      facts = await factsFor(brief, report);
-      prompt = reviewFollowUpPrompt(worker.name, report, facts, rounds - round - 1);
+      // The review, or what is left of it: findings with no round left, or the
+      // agent's whole answer, which has nothing to check; an empty one says so.
+      const checked = answer.review ? checkReview(brief, answer.review) : null;
+      const note = checked ? contractFacts('Checks on the review', checked.issues) : '';
+      if (note !== '') await emit({ type: 'contract', role: 'reviewer', message: note });
+      await emit({
+        type: 'reviewed',
+        reviewer: reviewer.name,
+        implementer: worker.name,
+        verdict: checked ? checked.verdict : null,
+        rounds: round,
+      });
+      const text = answer.review
+        ? renderReview(answer.review)
+        : answer.findings
+          ? renderFindings(answer.findings)
+          : answer.text.trim() === ''
+            ? EMPTY_REVIEW
+            : answer.text.trim();
+      const review = withRestored(note === '' ? text : `${text}\n\n${note}`);
+      return { reviewer: reviewer.name, review, work, facts };
     }
   }
 
@@ -689,11 +785,18 @@ export function runLoop(options: LoopOptions): Loop {
       if (!of || !worker || !options.reviewer) {
         throw new Error('review mode needs reviewOf, workerSession and reviewer');
       }
-      const judged = await reviewed(worker, relay(of.brief), of.report, 1, of);
+      const judged = await reviewed(
+        worker,
+        relay(of.brief),
+        { text: of.report, data: of.reportData },
+        1,
+        of,
+      );
       return {
         status: 'delegated',
         spec: of.brief,
-        report: judged.report,
+        report: judged.work.text,
+        reportData: judged.work.data ?? null,
         facts: judged.facts,
         review: judged.review,
       };
@@ -707,7 +810,11 @@ export function runLoop(options: LoopOptions): Loop {
     const worker =
       options.workerSession ??
       (await options.worker(
-        agentSessionOptions(IMPLEMENTER_ROLE_INSTRUCTIONS, options.subagents?.worker),
+        agentSessionOptions(
+          IMPLEMENTER_ROLE_INSTRUCTIONS,
+          options.subagents?.worker,
+          handoffTools('implementer', options.handoffServer),
+        ),
       ));
     // A continued implementer session outlives this request, like the leader's.
     if (worker !== options.workerSession) sessions.push(worker);
@@ -716,8 +823,12 @@ export function runLoop(options: LoopOptions): Loop {
     const first = options.preface ? `${options.preface}\n\n${options.request}` : options.request;
     /** A draft the user approved: the implementer starts from it, with no leader turn first. */
     const draft = options.delegation;
-    let answer =
-      draft === undefined ? (await turn(leader, 'orchestrator', first, options.skill)).text : '';
+    let answered =
+      draft === undefined ? await turn(leader, 'orchestrator', first, options.skill) : undefined;
+    // An empty turn with no call is never an answer (a refused command can end it so): once more.
+    if (answered && answered.text.trim() === '' && (answered.handoffs ?? []).length === 0) {
+      answered = await turn(leader, 'orchestrator', EMPTY_LEADER_TURN_PROMPT);
+    }
     // One delegation per request.
     const exchange = 1;
     let fixes = 0;
@@ -727,13 +838,15 @@ export function runLoop(options: LoopOptions): Loop {
       if (draft !== undefined) {
         delegation = draft;
       } else {
-        const parsed = check(answer, worker.id);
+        if (!answered) throw new Error('the leader has not answered');
+        const call = readHandoff(answered.handoffs, 'delegate');
         // The leader answered by itself: a question, or a request for clarification.
-        if (parsed.status === 'absent') {
-          return { status: 'completed', conclusion: answer, exchanges: 0 };
+        if (call.value === null && call.errors.length === 0) {
+          return { status: 'completed', conclusion: answered.text, exchanges: 0 };
         }
-        if (parsed.status === 'malformed') {
-          await emit({ type: 'delegation_invalid', errors: parsed.errors });
+        if (call.value === null) {
+          const errors = call.errors;
+          await emit({ type: 'delegation_invalid', errors });
           const canAskOrchestrator = fixes < 1;
           const decision: MalformedDecision = options.autoApprove
             ? canAskOrchestrator
@@ -741,14 +854,14 @@ export function runLoop(options: LoopOptions): Loop {
               : { action: 'cancel' }
             : await abortable(
                 options.onMalformedDelegation(
-                  { answer, errors: parsed.errors, exchange, canAskOrchestrator },
+                  { answer: answered.text, errors, exchange, canAskOrchestrator },
                   controller.signal,
                 ),
                 controller.signal,
               );
           if (options.autoApprove && decision.action === 'cancel') {
             throw new Error(
-              'The delegation block is still malformed after the one automatic correction',
+              'The delegate call is still invalid after the one automatic correction',
             );
           }
           checkStopped();
@@ -761,17 +874,15 @@ export function runLoop(options: LoopOptions): Loop {
           if (decision.action === 'cancel') return { status: 'cancelled', at: 'malformed' };
           if (decision.action === 'ask_orchestrator') {
             if (!canAskOrchestrator) {
-              throw new Error('The delegation block is still malformed after the one correction');
+              throw new Error('The delegate call is still invalid after the one correction');
             }
             fixes++;
-            answer = (await turn(leader, 'orchestrator', fixPrompt(parsed.errors))).text;
+            answered = await turn(leader, 'orchestrator', fixPrompt(errors));
             continue;
           }
           delegation = decision.text;
-        } else if (brief) {
-          delegation = lightDelegation(brief, parsed.delegation.text);
         } else {
-          delegation = parsed.delegation.text;
+          delegation = renderBrief(call.value);
         }
       }
 
@@ -785,18 +896,20 @@ export function runLoop(options: LoopOptions): Loop {
       if (fromDraft) await options.log.append('draft_delegation', { text: delegation });
       if (approved === undefined) return { status: 'cancelled', at: 'delegation' };
 
-      const result = await turn(worker, 'worker', relay(approved));
+      const work = await implement(worker, relay(approved));
       // A report that stopped on a missing decision goes to the leader as it is.
       const judged =
-        options.reviewer && reportOutcome(result.text) !== 'bloccato'
-          ? await reviewed(worker, relay(approved), result.text, exchange)
+        options.reviewer && work.data?.outcome !== 'blocked'
+          ? await reviewed(worker, relay(approved), work, exchange)
           : undefined;
-      const facts = judged?.facts ?? (await factsFor(relay(approved), result.text));
+      const facts = judged?.facts ?? (await factsFor(relay(approved), work));
+      const finalWork = judged?.work ?? work;
       if (options.review === 'deferred') {
         return {
           status: 'delegated',
           spec: approved,
-          report: judged?.report ?? result.text,
+          report: finalWork.text,
+          reportData: finalWork.data ?? null,
           facts,
           ...(judged ? { review: judged.review } : {}),
         };
@@ -810,7 +923,7 @@ export function runLoop(options: LoopOptions): Loop {
             to: leader.name,
             text: judged
               ? leaderReviewPrompt(judged.reviewer, judged.review, facts)
-              : leaderResultPrompt(worker.name, result.text, facts),
+              : leaderResultPrompt(worker.name, work.text, facts),
             exchange,
           },
           true,
@@ -825,7 +938,7 @@ export function runLoop(options: LoopOptions): Loop {
           from,
           to: leader.name,
           // A brief from the web app: the result is written on the review, when there is one.
-          text: resultPrompt(from, judged?.review ?? result.text, facts, brief),
+          text: resultPrompt(from, judged?.review ?? work.text, facts, brief),
           exchange,
         },
         true,
@@ -838,7 +951,8 @@ export function runLoop(options: LoopOptions): Loop {
         result: block ?? final,
         resultFound: block !== null,
         spec: approved,
-        report: judged?.report ?? result.text,
+        report: finalWork.text,
+        reportData: finalWork.data ?? null,
         facts,
       };
     }

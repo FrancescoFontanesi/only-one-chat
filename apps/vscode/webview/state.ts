@@ -6,6 +6,7 @@ import type {
   QuestionItem,
   StepView,
   ThreadUpdate,
+  TurnHandoff,
   TurnRole,
   TurnUsageSummary,
 } from '../src/webview/protocol.js';
@@ -37,6 +38,8 @@ export type ThreadItem =
       readonly status: 'running' | 'done' | 'failed';
       readonly label?: string;
       readonly text: string;
+      /** The handoff the turn made (ADR 0035); absent in turns saved before it. */
+      readonly handoff?: TurnHandoff;
       readonly usage?: TurnUsageSummary;
       readonly activity: readonly string[];
       readonly subagents: readonly SubagentRow[];
@@ -135,6 +138,7 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
             subagents: [],
             steps: [],
             ...(update.label ? { label: update.label } : {}),
+            ...(update.handoff ? { handoff: update.handoff } : {}),
             ...(update.usage ? { usage: update.usage } : {}),
             ...(update.refs ? { refs: update.refs } : {}),
           },
@@ -149,6 +153,7 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
           agent: update.agent || turn.agent,
           text: update.text ?? turn.text,
           ...(update.label ? { label: update.label } : {}),
+          ...(update.handoff ? { handoff: update.handoff } : {}),
           ...(update.usage ? { usage: update.usage } : {}),
           ...(update.refs ? { refs: update.refs } : {}),
         };

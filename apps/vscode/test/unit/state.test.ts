@@ -63,6 +63,17 @@ describe('the webview thread', () => {
     expect(items[0]).toMatchObject({ status: 'done', agent: 'Claude', text: 'ok' });
   });
 
+  it('keeps the handoff a turn made (ADR 0035); a turn saved before it has none', () => {
+    const handoff = { tool: 'report', text: '## Outcome - done', outcome: 'done' };
+    const items = apply([
+      { type: 'turn', id: 't-1', role: 'implementer', agent: 'Claude', status: 'running' },
+      { type: 'turn', id: 't-1', role: 'implementer', agent: 'Claude', status: 'done', handoff },
+      { type: 'turn', id: 't-2', role: 'leader', agent: 'Codex', status: 'done', text: 'old' },
+    ]);
+    expect(items[0]).toMatchObject({ kind: 'turn', handoff });
+    expect(items[1]).not.toHaveProperty('handoff');
+  });
+
   it('updates a sub-agent row in place, and closes an approval', () => {
     const items = apply([
       { type: 'turn', id: 't-1', role: 'leader', agent: 'Codex', status: 'running' },

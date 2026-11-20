@@ -1,5 +1,4 @@
-// The contract between the roles (ADR 0031), on texts shaped like the real
-// reports and reviews of the role evaluations.
+// The contract between the roles (ADR 0031, 0035), on the structured handoffs.
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -8,92 +7,58 @@ import {
   checkReview,
   contractFacts,
   criteriaOf,
-  criterionStatuses,
+  type Report,
+  type Review,
 } from '../src/index.js';
 
 const brief = [
-  '## Obiettivo',
-  'round(x) e round(x, n).',
-  '## Criteri di accettazione',
-  'Ingresso → risultato atteso:',
+  '## Goal',
+  'round(x) and round(x, n).',
+  '## Acceptance criteria',
+  'Input → expected result:',
   '- C1. `round(2.4)` → `2`',
   '- C2. `round(2.5)` → `2`',
-  'C3. Errore per `round(1, -1)`; vedi anche C1.',
-  '- **C4.** `python -m unittest` passa.',
-  '## Confini',
-  'C9 qui non è un criterio.',
+  'C3. Error for `round(1, -1)`; see also C1.',
+  '- **C4.** `python -m unittest` passes.',
+  '## Scope',
+  'C9 is not a criterion here.',
 ].join('\n');
 
 const facts = [
-  'File cambiati dall’inizio della richiesta:',
+  'Files changed since the start of the request:',
   '- modified evaluator.py',
   '- added tests\\test_round.py',
   '',
-  'Verifica eseguita dal runtime: python -m unittest → exit 0',
+  'Verification run by the runtime: python -m unittest → exit 0',
 ].join('\n');
 
-const report = (
-  verifica: string,
-  esito = 'completato',
-  modifiche = '@evaluator.py — round\n@tests/test_round.py — test',
-) =>
-  [
-    '<<<RAPPORTO',
-    '## Esito',
-    `${esito} — fatto.`,
-    '## Modifiche',
-    modifiche,
-    '## Verifica',
-    verifica,
-    '## Decisioni',
-    'nessuno',
-    '## Bloccato su',
-    'nessuno',
-    '## Fuori ambito',
-    'nessuno',
-    'RAPPORTO>>>',
-  ].join('\n');
+const verified = (ids: string[]) =>
+  ids.map((id) => ({ id, status: 'verified' as const, evidence: 'test_round' }));
 
-describe('the criteria and their statuses', () => {
-  it('reads the criteria as each line of the acceptance criteria opens, and only there', () => {
+const report = (over: Partial<Report> = {}): Report => ({
+  outcome: 'done',
+  summary: 'round added.',
+  changes: [
+    { path: 'evaluator.py', change: 'round' },
+    { path: 'tests/test_round.py', change: 'tests' },
+  ],
+  criteria: verified(['C1', 'C2', 'C3', 'C4']),
+  ...over,
+});
+
+describe('the criteria of a brief', () => {
+  it('reads them as each line of the acceptance criteria opens, and only there', () => {
     expect(criteriaOf(brief)).toEqual(['C1', 'C2', 'C3', 'C4']);
     expect(criteriaOf('## Acceptance criteria\n1. C1 nothing\nC2. ok')).toEqual(['C2']);
-    expect(criteriaOf('## Obiettivo\nC1. x')).toEqual([]);
+    expect(criteriaOf('## Goal\nC1. x')).toEqual([]);
   });
 
-  it('reads one status per line, for the criteria and ranges before it', () => {
-    const statuses = criterionStatuses(
-      [
-        'C1–C2: verificato — `test_round`.',
-        '- C3 non verificato — i comandi sono stati negati.',
-        'C4 — non soddisfatto — exit 1; C1 verificato non conta, C1 è già letto.',
-        'Comandi eseguiti: `python -m unittest` verificato.',
-      ].join('\n'),
-    );
-    expect(Object.fromEntries(statuses)).toEqual({
-      C1: 'verificato',
-      C2: 'verificato',
-      C3: 'non verificato',
-      C4: 'non soddisfatto',
-    });
-  });
-
-  it('reads plurals, and "parziale" as not verified (as a real report wrote them)', () => {
-    const statuses = criterionStatuses(
-      [
-        '- C1, C3–C4: verificati. Gli stessi test di prima passano ancora.',
-        '- C2: parziale. Non ho provato un symlink vero.',
-        '- C5 e C6: non verificati.',
-      ].join('\n'),
-    );
-    expect(Object.fromEntries(statuses)).toEqual({
-      C1: 'verificato',
-      C2: 'non verificato',
-      C3: 'verificato',
-      C4: 'verificato',
-      C5: 'non verificato',
-      C6: 'non verificato',
-    });
+  it('reads the numbering the runtime writes, and a draft kept in Italian', () => {
+    expect(criteriaOf('## Acceptance criteria\n\n- C1 — a\n  more of a\n- C2 — b')).toEqual([
+      'C1',
+      'C2',
+    ]);
+    expect(criteriaOf('## Criteri di accettazione\nC1. x')).toEqual(['C1']);
   });
 
   it('reads the files the runtime saw change, with forward slashes', () => {
@@ -103,130 +68,152 @@ describe('the criteria and their statuses', () => {
 
 describe('checkReport', () => {
   it('has nothing to say about a report that keeps the contract', () => {
-    expect(checkReport(brief, report('C1–C4: verificato — `test_round`.'), facts)).toEqual([]);
-  });
-
-  it('names the criteria the Verifica leaves out, and the files Modifiche leaves out', () => {
-    expect(
-      checkReport(brief, report('C1, C2: verificato.', 'completato', '@evaluator.py'), facts),
-    ).toEqual([
-      { code: 'criteria-missing', message: 'la Verifica non dice come sono andati C3, C4.' },
-      {
-        code: 'files-undeclared',
-        message: 'file cambiati che il rapporto non nomina in Modifiche: tests/test_round.py.',
-      },
-    ]);
-  });
-
-  it('finds an outcome that its own Verifica contradicts', () => {
-    const issues = checkReport(brief, report('C1–C3: verificato.\nC4: non verificato.'), facts);
-    expect(issues).toEqual([
-      {
-        code: 'outcome-incoherent',
-        message: 'l’esito è "completato" ma C4 non risultano verificati.',
-      },
-    ]);
-    // "parziale" with something unverified is what it should be.
-    expect(
-      checkReport(brief, report('C1–C3: verificato.\nC4: non verificato.', 'parziale'), facts),
-    ).toEqual([]);
+    expect(checkReport(brief, report(), facts)).toEqual([]);
   });
 
   it('says there is no report when there is none', () => {
-    expect(checkReport(brief, 'Fatto, tutto bene.', facts)).toEqual([
-      { code: 'no-report', message: 'l’implementatore non ha scritto il rapporto.' },
+    expect(checkReport(brief, null, facts)).toEqual([
+      { code: 'no-report', message: 'the implementer did not call the report tool.' },
     ]);
+  });
+
+  it('names the criteria the report leaves out, and the files it leaves out', () => {
+    expect(
+      checkReport(
+        brief,
+        report({
+          criteria: verified(['C1', 'C2']),
+          changes: [{ path: 'evaluator.py', change: 'x' }],
+        }),
+        facts,
+      ),
+    ).toEqual([
+      { code: 'criteria-missing', message: 'the report does not say how C3, C4 went.' },
+      {
+        code: 'files-undeclared',
+        message: 'files changed that the report does not list in changes: tests/test_round.py.',
+      },
+    ]);
+  });
+
+  it('matches the paths however the report writes them', () => {
+    const changes = [
+      { path: '@evaluator.py', change: 'x' },
+      { path: 'F:\\work\\tests\\test_round.py', change: 'y' },
+    ];
+    expect(checkReport(brief, report({ changes }), facts)).toEqual([]);
+  });
+
+  it('finds an outcome that its own criteria contradict', () => {
+    const criteria = [
+      ...verified(['C1', 'C2', 'C3']),
+      { id: 'C4', status: 'not_verified' as const, evidence: 'no commands' },
+    ];
+    expect(checkReport(brief, report({ criteria }), facts)).toEqual([
+      {
+        code: 'outcome-incoherent',
+        message: 'the outcome is "done" but these criteria are not verified: C4.',
+      },
+    ]);
+    // "partial" with something unverified is what it should be.
+    expect(checkReport(brief, report({ criteria, outcome: 'partial' }), facts)).toEqual([]);
+  });
+
+  it('finds a done outcome that still blocks on a decision, and accepts "none" for that', () => {
+    expect(checkReport(brief, report({ blocked_on: 'Which rounding mode?' }), facts)).toEqual([
+      {
+        code: 'outcome-incoherent',
+        message: 'the outcome is "done" but "blocked_on" asks for a decision.',
+      },
+    ]);
+    for (const none of ['', 'None', 'none.', 'nessuno', 'n/a']) {
+      expect(checkReport(brief, report({ blocked_on: none }), facts)).toEqual([]);
+    }
   });
 });
 
-const review = (
-  verdetto: string,
-  criteri: string,
-  giudizio: string,
-  rilievi = 'Aperti: nessuno\nChiusi: nessuno',
-) =>
-  [
-    '<<<REVISIONE',
-    '## Verdetto',
-    `${verdetto} — un giro.`,
-    '## Criteri',
-    criteri,
-    '## Giudizio',
-    giudizio,
-    '## Modifiche',
-    '@evaluator.py — round',
-    '## Rilievi',
-    rilievi,
-    'REVISIONE>>>',
-  ].join('\n');
-const clean = 'Onestà: pulita — ok.\nSicurezza: pulita — ok.\nAggiornamento: pulito — Python 3.12.';
+const review = (over: Partial<Review> = {}): Review => ({
+  verdict: 'approved',
+  summary: 'one round.',
+  criteria: verified(['C1', 'C2', 'C3', 'C4']),
+  axes: { honesty: 'clean', security: 'clean', currency: 'clean' },
+  ...over,
+});
 
 describe('checkReview', () => {
   it('keeps an approval that rests on every criterion verified and every axis clean', () => {
-    expect(checkReview(brief, review('approvato', 'C1–C4 — verificato — test.', clean))).toEqual({
-      verdict: 'approvato',
-      issues: [],
-    });
+    expect(checkReview(brief, review())).toEqual({ verdict: 'approved', issues: [] });
   });
 
-  it('lowers an approval with a criterion not verified, or an axis in doubt, to "con riserve"', () => {
+  it('lowers an approval with a criterion not verified, or an axis in doubt, to with_reservations', () => {
     const checked = checkReview(
       brief,
-      review(
-        'approvato',
-        'C1–C3 — verificato.\nC4 — non verificato — sessione in sola lettura.',
-        'Onestà: pulita.\nSicurezza: dubbia — symlink non provati.\nAggiornamento: pulito.',
-      ),
+      review({
+        criteria: [
+          ...verified(['C1', 'C2', 'C3']),
+          { id: 'C4', status: 'not_verified', evidence: 'read-only session' },
+        ],
+        axes: { honesty: 'clean', security: 'doubtful', currency: 'clean' },
+      }),
     );
-    expect(checked.verdict).toBe('con riserve');
+    expect(checked.verdict).toBe('with_reservations');
     expect(checked.issues).toEqual([
       {
         code: 'verdict-lowered',
         message:
-          'il revisore ha scritto "approvato", il runtime lo tiene come "con riserve": C4 non verificati; giudizio dubbio su Sicurezza.',
+          'the reviewer wrote "approved", the runtime keeps it as "with_reservations": C4 not verified; doubtful on security.',
       },
     ]);
   });
 
-  it('lowers an approval to "respinto" with an axis failed or a blocking finding open', () => {
+  it('lowers an approval to rejected with an axis failed or a blocking finding open', () => {
     expect(
       checkReview(
         brief,
-        review(
-          'approvato',
-          'C1–C4 — verificato.',
-          clean.replace('pulita — ok.\nSicurezza', 'aggirata — test scritti a mano.\nSicurezza'),
-        ),
+        review({ axes: { honesty: 'bypassed', security: 'clean', currency: 'clean' } }),
       ).verdict,
-    ).toBe('respinto');
+    ).toBe('rejected');
     expect(
       checkReview(
         brief,
-        review(
-          'approvato',
-          'C1–C4 — verificato.',
-          clean,
-          'Aperti: R1 [bloccante] — byte nullo.\nChiusi: nessuno',
-        ),
+        review({ axes: { honesty: 'clean', security: 'clean', currency: 'outdated' } }),
       ).verdict,
-    ).toBe('respinto');
+    ).toBe('rejected');
+    expect(
+      checkReview(
+        brief,
+        review({ open_findings: [{ id: 'R1', severity: 'blocking', issue: 'null byte' }] }),
+      ).verdict,
+    ).toBe('rejected');
+    expect(
+      checkReview(
+        brief,
+        review({ open_findings: [{ id: 'R2', severity: 'minor', issue: 'a name' }] }),
+      ).verdict,
+    ).toBe('with_reservations');
   });
 
-  it('names the criteria a review leaves out, and leaves other verdicts as they are', () => {
-    expect(checkReview(brief, review('con riserve', 'C1 — verificato.', clean))).toEqual({
-      verdict: 'con riserve',
+  it('names the criteria a review leaves out, lowers an approval for them, and keeps other verdicts', () => {
+    expect(
+      checkReview(brief, review({ verdict: 'with_reservations', criteria: verified(['C1']) })),
+    ).toEqual({
+      verdict: 'with_reservations',
       issues: [
-        { code: 'criteria-missing', message: 'la revisione non dice come sono andati C2, C3, C4.' },
+        { code: 'criteria-missing', message: 'the review does not say how C2, C3, C4 went.' },
       ],
     });
+    const lowered = checkReview(brief, review({ criteria: verified(['C1', 'C2', 'C3']) }));
+    expect(lowered.verdict).toBe('with_reservations');
+    expect(lowered.issues.map((i) => i.code)).toEqual(['criteria-missing', 'verdict-lowered']);
+    expect(lowered.issues[1]?.message).toContain('C4 not cited');
   });
 });
 
 describe('contractFacts', () => {
   it('is empty with nothing to say, a list of facts otherwise', () => {
-    expect(contractFacts('Controlli sul rapporto', [])).toBe('');
+    expect(contractFacts('Checks on the report', [])).toBe('');
     expect(
-      contractFacts('Controlli sul rapporto', [{ code: 'no-report', message: 'manca.' }]),
-    ).toBe('Controlli sul rapporto, fatti dal runtime:\n- manca.');
+      contractFacts('Checks on the report', [{ code: 'no-report', message: 'missing.' }]),
+    ).toBe('Checks on the report, made by the runtime:\n- missing.');
   });
 });

@@ -135,8 +135,43 @@ export interface AgentTurn {
     readonly quota?: QuotaSnapshot | null;
     /** The main session's context after the turn, when the CLI reports it. */
     readonly context?: ContextUsage | null;
+    /** The main agent's calls to the handoff tools this turn, in order (ADR 0035). */
+    readonly handoffs?: readonly HandoffCall[];
   }>;
   stop(): Promise<void>;
+}
+
+/**
+ * Handoff tools (ADR 0035; runtime: HandoffTools), restated here like the rest.
+ * The adapter registers `server` as the MCP server `ooc`, with the environment
+ * variable OOC_HANDOFF_TOOLS set to the JSON of `tools`, and lets the agent
+ * call those tools, and only those of `ooc`, without asking anyone.
+ */
+export interface HandoffTools {
+  readonly server: {
+    readonly command: string;
+    readonly args: readonly string[];
+    readonly env?: Readonly<Record<string, string>>;
+  };
+  readonly tools: readonly {
+    readonly name: string;
+    readonly description: string;
+    readonly inputSchema: Readonly<Record<string, unknown>>;
+  }[];
+}
+
+/** A call of the main agent to a handoff tool: its name without prefix, arguments as reported. */
+export interface HandoffCall {
+  readonly tool: string;
+  readonly arguments: unknown;
+}
+
+/** The server `ooc` as the CLIs register it: name, command, args, env (ADR 0035). */
+export const HANDOFF_SERVER_NAME = 'ooc';
+
+/** What a CLI's server entry carries for `ooc`: the server's env plus the tools' JSON. */
+export function handoffEnv(handoff: HandoffTools): Record<string, string> {
+  return { ...handoff.server.env, OOC_HANDOFF_TOOLS: JSON.stringify(handoff.tools) };
 }
 
 /** A skill of the CLI named for a turn (ADR 0019); the path where the CLI needs it (Codex). */
@@ -177,4 +212,6 @@ export type AgentFactory = (options: {
   readonly subagents?: AgentSubagentOptions;
   /** The CLI's own session to continue; see the runtime's AgentSessionOptions. */
   readonly resume?: string;
+  /** The handoff tools this role may call (ADR 0035). */
+  readonly handoff?: HandoffTools;
 }) => Promise<AgentSession>;

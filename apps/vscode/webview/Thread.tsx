@@ -6,22 +6,12 @@
 
 import { Fragment, type ComponentChildren } from 'preact';
 import { useContext, useState } from 'preact/hooks';
-import type { SessionInfo } from '../src/webview/protocol.js';
+import type { SessionInfo, TurnHandoff } from '../src/webview/protocol.js';
 import { refTokens } from '../src/webview/refs.js';
 import { Markdown } from './markdown.js';
 import { Progress } from './motion.js';
 import type { ThreadItem } from './state.js';
-import {
-  isFacts,
-  opsSummary,
-  readFacts,
-  readOp,
-  readReport,
-  readReviewBlock,
-  readUserMessage,
-  withoutDelegation,
-  type Op,
-} from './threadModel.js';
+import { isFacts, opsSummary, readFacts, readOp, readUserMessage, type Op } from './threadModel.js';
 import { duration, kilo, post, ShownNode, useWho } from './ui.js';
 
 type Item<K extends ThreadItem['kind']> = Extract<ThreadItem, { kind: K }>;
@@ -394,115 +384,59 @@ function Steps({ item }: { item: Item<'turn'> }) {
   );
 }
 
-const OUTCOME = {
-  completato: '■ COMPLETATO',
-  parziale: '▲ PARZIALE',
-  bloccato: '× BLOCCATO',
-} as const;
+const OUTCOME: Record<string, string> = {
+  done: '■ DONE',
+  partial: '▲ PARTIAL',
+  blocked: '× BLOCKED',
+};
+
+const VERDICT: Record<string, string> = {
+  approved: '■ APPROVED',
+  with_reservations: '▲ WITH RESERVATIONS',
+  rejected: '× REJECTED',
+};
+
+const HANDOFF: Record<string, { label: string; aria: string }> = {
+  report: { label: 'REPORT', aria: 'The implementer’s report' },
+  review: { label: 'REVIEW', aria: 'The reviewer’s review' },
+  findings: { label: 'FINDINGS', aria: 'The reviewer’s findings for the implementer' },
+};
 
 /**
- * The implementer's report (ADR 0020) as a card: its outcome first, then its
- * sections; one that says "nessuno" is left out.
+ * A handoff a role made with a tool call (ADR 0035): the report, the review or
+ * the findings as the runtime rendered them, with the outcome or the verdict.
+ * A delegation has no card here: its brief is the approval record's.
  */
-function ReportCard({ text, refs }: { text: string; refs: readonly string[] | undefined }) {
-  const report = readReport(text);
-  if (!report) return null;
-  const shown = report.sections.filter(
-    (section) => section.body !== '' && !/^nessun[oa]\.?$/i.test(section.body),
-  );
+function HandoffCard({
+  handoff,
+  refs,
+}: {
+  handoff: TurnHandoff;
+  refs: readonly string[] | undefined;
+}) {
+  const kind = HANDOFF[handoff.tool];
+  if (!kind) return null;
   return (
-    <>
-      {report.before !== '' && (
-        <p class="t-body txt">
-          <Linked text={report.before} refs={refs} />
-        </p>
-      )}
-      <section class="rep" aria-label="Rapporto dell’implementatore">
-        <div class="rep__h">
-          <span class="cn-tag">
-            <b>RAPPORTO</b>
-          </span>
-          {report.outcome && <span class="cn-tag">{OUTCOME[report.outcome]}</span>}
-        </div>
-        <dl class="rep__l">
-          {shown.map((section) => (
-            <Fragment key={section.name}>
-              <dt>{section.name.toUpperCase()}</dt>
-              <dd class="txt">
-                <Linked text={section.body} refs={refs} />
-              </dd>
-            </Fragment>
-          ))}
-        </dl>
-      </section>
-      {report.after !== '' && (
-        <p class="t-body txt">
-          <Linked text={report.after} refs={refs} />
-        </p>
-      )}
-    </>
-  );
-}
-
-const VERDICT = {
-  approvato: '■ APPROVATO',
-  'con riserve': '▲ CON RISERVE',
-  respinto: '× RESPINTO',
-} as const;
-
-/**
- * The reviewer's block (ADR 0029) as a card like the report's: its review for
- * the leader, with the verdict and its sections, or its findings for the
- * implementer, as it wrote them.
- */
-function ReviewCard({ text, refs }: { text: string; refs: readonly string[] | undefined }) {
-  const block = readReviewBlock(text);
-  if (!block) return null;
-  const review = block.kind === 'review';
-  const shown = block.sections.filter(
-    (section) => section.body !== '' && !/^nessun[oa]\.?$/i.test(section.body),
-  );
-  return (
-    <>
-      {block.before !== '' && (
-        <p class="t-body txt">
-          <Linked text={block.before} refs={refs} />
-        </p>
-      )}
-      <section
-        class="rep"
-        aria-label={review ? 'Rapporto di revisione' : 'Rilievi per l’implementatore'}
-      >
-        <div class="rep__h">
-          <span class="cn-tag">
-            <b>{review ? 'REVISIONE' : 'RILIEVI'}</b>
-          </span>
-          {block.verdict && <span class="cn-tag">{VERDICT[block.verdict]}</span>}
-          {!review && <span class="cn-tag">→ IMPLEMENTATORE</span>}
-        </div>
-        {shown.length > 0 ? (
-          <dl class="rep__l">
-            {shown.map((section) => (
-              <Fragment key={section.name}>
-                <dt>{section.name.toUpperCase()}</dt>
-                <dd class="txt">
-                  <Linked text={section.body} refs={refs} />
-                </dd>
-              </Fragment>
-            ))}
-          </dl>
-        ) : (
-          <p class="t-body txt">
-            <Linked text={block.body} refs={refs} />
-          </p>
+    <section class="rep" aria-label={kind.aria}>
+      <div class="rep__h">
+        <span class="cn-tag">
+          <b>{kind.label}</b>
+        </span>
+        {handoff.outcome && (
+          <span class="cn-tag">{OUTCOME[handoff.outcome] ?? handoff.outcome.toUpperCase()}</span>
         )}
-      </section>
-      {block.after !== '' && (
-        <p class="t-body txt">
-          <Linked text={block.after} refs={refs} />
-        </p>
-      )}
-    </>
+        {handoff.verdict && (
+          <span class="cn-tag">{VERDICT[handoff.verdict] ?? handoff.verdict.toUpperCase()}</span>
+        )}
+        {handoff.tool === 'findings' && <span class="cn-tag">→ IMPLEMENTER</span>}
+      </div>
+      <Markdown
+        class="t-body"
+        text={handoff.text}
+        refs={refs}
+        leaf={(text) => <Linked text={text} refs={refs} />}
+      />
+    </section>
   );
 }
 
@@ -512,7 +446,8 @@ function Turn({ item }: { item: Item<'turn'> }) {
   const [first = '', ...rest] = item.text.split('\n');
   const leader = item.role === 'leader';
   const text = leader && /^via:/i.test(first.trim()) ? rest.join('\n').trimStart() : item.text;
-  const { text: body, writing } = leader ? withoutDelegation(text) : { text, writing: false };
+  const body = text;
+  const handoff = item.handoff;
   const [provider, model] = identity(item);
   const usage = item.usage;
   const running = item.status === 'running';
@@ -528,7 +463,11 @@ function Turn({ item }: { item: Item<'turn'> }) {
         ) : (
           <span>{STATUS[item.status]}</span>
         )}
-        <span class="who__acts">{body !== '' && !running && <Copy text={body} />}</span>
+        <span class="who__acts">
+          {(body !== '' || handoff) && !running && (
+            <Copy text={[body, handoff?.text ?? ''].filter(Boolean).join('\n\n')} />
+          )}
+        </span>
       </div>
       <div class="tb">
         {item.steps.length > 0 ? (
@@ -539,21 +478,17 @@ function Turn({ item }: { item: Item<'turn'> }) {
         ) : (
           (ops.length > 0 || item.subagents.length > 0) && <ToolLog item={item} ops={ops} />
         )}
-        {body !== '' && !running && item.role === 'reviewer' && readReviewBlock(body) ? (
-          <ReviewCard text={body} refs={item.refs} />
-        ) : body !== '' && !running && readReport(body) ? (
-          <ReportCard text={body} refs={item.refs} />
-        ) : body !== '' ? (
+        {body !== '' ? (
           <Markdown
-            class={running && !writing ? 't-body cn-cursor' : 't-body'}
+            class={running ? 't-body cn-cursor' : 't-body'}
             text={body}
             refs={item.refs}
             leaf={(text) => <Linked text={text} refs={item.refs} />}
           />
         ) : (
-          running && !writing && <Progress label="LAVORA" />
+          running && <Progress label="LAVORA" />
         )}
-        {running && writing && <Progress label="SCRIVE IL BRIEF" />}
+        {handoff && !running && <HandoffCard handoff={handoff} refs={item.refs} />}
         {usage && (
           <div class="tfoot">
             <span>CONTESTO {kilo(usage.context)}</span>

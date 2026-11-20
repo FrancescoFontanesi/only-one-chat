@@ -6,11 +6,8 @@ import {
   opsSummary,
   readFacts,
   readOp,
-  readReport,
-  readReviewBlock,
   readUserMessage,
   waitingItems,
-  withoutDelegation,
   wordAt,
 } from '../../webview/threadModel.js';
 
@@ -108,113 +105,11 @@ describe('the chat thread as the Chat board reads it (ADR 0016)', () => {
   });
 });
 
-describe('a leader text without its delegation block (ADR 0018)', () => {
-  it('keeps the text before and after the block, which its card shows', () => {
-    expect(
-      withoutDelegation('Ecco il brief.\n<<<DELEGA #claude\nfai x\nDELEGA>>>\nPoi ne parliamo.'),
-    ).toEqual({
-      text: 'Ecco il brief.\n\nPoi ne parliamo.',
-      writing: false,
-    });
-    expect(withoutDelegation('Prima.\n<<<DELEGA @claude\nx\nDELEGA>>>')).toEqual({
-      text: 'Prima.',
-      writing: false,
-    });
-  });
-
-  it('while the block streams, shows the text before it and says it is being written', () => {
-    expect(withoutDelegation('Ecco.\n<<<DELEGA #claude\nfai')).toEqual({
-      text: 'Ecco.',
-      writing: true,
-    });
-    expect(withoutDelegation('Solo testo.')).toEqual({ text: 'Solo testo.', writing: false });
-  });
-});
-
 describe('the $ word of the composer (ADR 0019)', () => {
   it('finds a skill name being typed anywhere, after a space', () => {
     expect(wordAt('usa $td', 7, '$')).toEqual({ start: 4, query: 'td' });
     expect(wordAt('$', 1, '$')).toEqual({ start: 0, query: '' });
     expect(wordAt('costa 5$', 8, '$')).toBeNull();
-  });
-});
-
-describe('the implementer’s report (ADR 0020)', () => {
-  it('reads its outcome and sections, and the text around it', () => {
-    const text = [
-      'Ecco.',
-      '<<<RAPPORTO',
-      '## Esito',
-      'completato — round(x, n) aggiunto.',
-      '## Modifiche',
-      '@calc.py — la funzione',
-      '## Bloccato su',
-      'nessuno',
-      'RAPPORTO>>>',
-    ].join('\n');
-    expect(readReport(text)).toEqual({
-      before: 'Ecco.',
-      outcome: 'completato',
-      sections: [
-        { name: 'Esito', body: 'completato — round(x, n) aggiunto.' },
-        { name: 'Modifiche', body: '@calc.py — la funzione' },
-        { name: 'Bloccato su', body: 'nessuno' },
-      ],
-      after: '',
-    });
-  });
-
-  it('reads a report written without its markers, from its Esito on', () => {
-    expect(readReport('## Esito\nbloccato. Niente.\n## Modifiche\nnessuno')).toMatchObject({
-      before: '',
-      outcome: 'bloccato',
-      sections: [{ name: 'Esito' }, { name: 'Modifiche' }],
-    });
-  });
-
-  it('is not one while its block is still open, nor in a text without it', () => {
-    expect(readReport('<<<RAPPORTO\n## Esito\nparziale')).toBeNull();
-    expect(readReport('Fatto.')).toBeNull();
-  });
-});
-
-describe('the reviewer’s blocks (ADR 0029)', () => {
-  it('reads a review: the verdict, the sections, the text around the block', () => {
-    const text = [
-      'Ho finito.',
-      '<<<REVISIONE',
-      '## Verdetto',
-      'Approvato con riserve — resta R2, due giri.',
-      '## Criteri',
-      'C1 — verificato — pnpm test: 12 passed',
-      '## Rilievi',
-      'nessuno',
-      'REVISIONE>>>',
-      'Fine.',
-    ].join('\r\n');
-    expect(readReviewBlock(text)).toMatchObject({
-      kind: 'review',
-      before: 'Ho finito.',
-      verdict: 'con riserve',
-      sections: [
-        { name: 'Verdetto', body: 'Approvato con riserve — resta R2, due giri.' },
-        { name: 'Criteri', body: 'C1 — verificato — pnpm test: 12 passed' },
-        { name: 'Rilievi', body: 'nessuno' },
-      ],
-      after: 'Fine.',
-    });
-  });
-
-  it('reads the findings as they are written; a block still open is not one', () => {
-    const text = '<<<RILIEVI\nR1 [bloccante] C1 — ans vale 0.\nProva: python calc.py\nRILIEVI>>>';
-    expect(readReviewBlock(text)).toMatchObject({
-      kind: 'findings',
-      verdict: null,
-      sections: [],
-      body: 'R1 [bloccante] C1 — ans vale 0.\nProva: python calc.py',
-    });
-    expect(readReviewBlock('<<<REVISIONE\n## Verdetto\nrespinto')).toBeNull();
-    expect(readReviewBlock('Tutto bene.')).toBeNull();
   });
 });
 

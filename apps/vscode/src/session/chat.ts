@@ -21,10 +21,13 @@ import {
   agentSessionOptions,
   leaderInstructions,
   openEventLog,
+  handoffTools,
   pendingReportsPreface,
-  reportOutcome,
+  readHandoff,
+  renderReport,
   runLoop,
   type AgentFactory,
+  type HandoffServer,
   type LoopOptions,
   type AgentSession,
   type EventLog,
@@ -32,6 +35,7 @@ import {
   type AgentQuestion,
   type QuestionAnswers,
   type PendingReport,
+  type Report,
   type ContextUsage,
   type QuotaSnapshot,
   type SubagentPolicy,
@@ -74,6 +78,8 @@ export interface ChatConfig {
   };
   readonly codexExecutable: string;
   readonly claudeExecutable: string;
+  /** How the CLIs launch the MCP server of the role handoffs (ADR 0035). */
+  readonly handoffServer: HandoffServer;
   /** For the nodes on Antigravity (ADR 0023); absent: `agy` on the PATH. */
   readonly antigravityExecutable?: string;
   /** Arguments before each CLI's own: the fake CLIs' scripts in fake mode. */
@@ -253,7 +259,15 @@ export class ChatSession {
   /** The reviewer now: the panel switches it on and off during the chat (ADR 0033). */
   private reviewerConfig: ReviewerConfig | undefined;
   /** The last implementer work, what a review the user asks for looks at (ADR 0033). */
-  private lastWork: { brief: string; report: string; direct: boolean } | undefined;
+  private lastWork:
+    | {
+        brief: string;
+        report: string;
+        direct: boolean;
+        /** The `report` call behind `report`; absent when unknown (then it is not checked). */
+        reportData?: Report | null;
+      }
+    | undefined;
 
   constructor(
     private readonly config: ChatConfig,
@@ -448,6 +462,7 @@ export class ChatSession {
         agentSessionOptions(
           brief ? `${instructions}\n\n${HANDOFF_PREFACE}\n${brief}` : instructions,
           { ...this.policy(this.roles.implementer), proactive: true },
+          handoffTools('implementer', this.config.handoffServer),
         ),
       );
     }
@@ -570,6 +585,7 @@ export class ChatSession {
     const result = await turn.done;
     this.currentTurn.delete('implementer');
     const usage = summarize(result.usage);
+    const report = readHandoff(result.handoffs, 'report').value;
     this.events.update({
       type: 'turn',
       id,
@@ -578,12 +594,15 @@ export class ChatSession {
       status: 'done',
       label: agentLabel(result.identity),
       text: result.text,
+      ...(report
+        ? { handoff: { tool: 'report', text: renderReport(report), outcome: report.outcome } }
+        : {}),
       ...(usage ? { usage } : {}),
     });
     this.events.turnUsage?.(result.identity.provider, usage, result.quota ?? null);
     if (result.context) this.events.context?.('implementer', result.context);
     if (keep) this.noteSession('implementer', result.identity.sessionId);
-    return result;
+    return { ...result, report };
   }
 
   /**
@@ -876,12 +895,15 @@ ${this.diffChecks()}`;
     of: NonNullable<LoopOptions['reviewOf']>,
     baseline: ReturnType<typeof snapshot>,
     shown: { facts: boolean },
-  ): Promise<{ report: string; facts: string; review: string } | undefined> {
+  ): Promise<
+    { report: string; reportData: Report | null; facts: string; review: string } | undefined
+  > {
     const { config } = this;
     const reviewer = this.reviewerOptions(baseline);
     if (!reviewer) return undefined;
     const loop = runLoop({
       request: '',
+      handoffServer: config.handoffServer,
       mode: 'review',
       reviewOf: of,
       relay: (message) => plainRefs(message, config.cwd),
@@ -911,7 +933,12 @@ ${this.diffChecks()}`;
     this.stopRunning = () => loop.stop();
     const outcome = await loop.done;
     return outcome.status === 'delegated' && outcome.review !== undefined
-      ? { report: outcome.report, facts: outcome.facts, review: outcome.review }
+      ? {
+          report: outcome.report,
+          reportData: outcome.reportData,
+          facts: outcome.facts,
+          review: outcome.review,
+        }
       : undefined;
   }
 
@@ -944,16 +971,24 @@ ${this.diffChecks()}`;
       true,
       skill,
     );
-    this.lastWork = { brief: text, report: result.text, direct: true };
+    // The report call, rendered; a turn that made none is its text.
+    const report = result.report ? renderReport(result.report) : result.text;
+    this.lastWork = { brief: text, report, direct: true };
     // A report that stopped on a missing decision goes to the leader as it is.
     const judged =
-      this.reviewerConfig && reportOutcome(result.text) !== 'bloccato'
-        ? await this.reviewWork({ brief: text, report: result.text, direct: true }, baseline, shown)
+      this.reviewerConfig && result.report?.outcome !== 'blocked'
+        ? await this.reviewWork({ brief: text, report, direct: true }, baseline, shown)
         : undefined;
     if (judged) {
       this.lastWork = { brief: text, report: judged.report, direct: true };
       this.keepForLeader(
-        { source: 'direct', request: text, ...judged },
+        {
+          source: 'direct',
+          request: text,
+          report: judged.report,
+          facts: judged.facts,
+          review: judged.review,
+        },
         'questo lavoro e la sua revisione',
       );
       return;
@@ -961,10 +996,7 @@ ${this.diffChecks()}`;
     const facts = await this.facts(baseline);
     shown.facts = true;
     this.events.update({ type: 'notice', level: 'info', text: facts });
-    this.keepForLeader(
-      { source: 'direct', request: text, report: result.text, facts },
-      'questo rapporto',
-    );
+    this.keepForLeader({ source: 'direct', request: text, report, facts }, 'questo rapporto');
   }
 
   /**
@@ -981,15 +1013,36 @@ ${this.diffChecks()}`;
       {
         brief: work?.brief ?? '',
         report: work?.report ?? '',
-        ...(work?.direct ? { direct: true } : {}),
+        // A direct message has no brief to hold the report to.
+        ...(work?.direct
+          ? { direct: true }
+          : work?.reportData !== undefined
+            ? { reportData: work.reportData }
+            : {}),
         asked: text,
       },
       baseline,
       shown,
     );
     if (!judged) return;
-    if (work) this.lastWork = { ...work, report: judged.report };
-    this.keepForLeader({ source: 'review', request: text, ...judged }, 'la revisione');
+    if (work) {
+      this.lastWork = {
+        brief: work.brief,
+        direct: work.direct,
+        report: judged.report,
+        ...(!work.direct ? { reportData: judged.reportData } : {}),
+      };
+    }
+    this.keepForLeader(
+      {
+        source: 'review',
+        request: text,
+        report: judged.report,
+        facts: judged.facts,
+        review: judged.review,
+      },
+      'la revisione',
+    );
   }
 
   /** A message to the leader; with `draft`, a delegation already approved goes straight on. */
@@ -1013,6 +1066,7 @@ ${this.diffChecks()}`;
           leaderInstructions(this.roles.implementer.cli),
         ),
         leaderPolicy,
+        handoffTools('leader', config.handoffServer),
       ),
     );
     // A draft sent later has no message of the user: what the leader has not seen waits for one.
@@ -1028,6 +1082,7 @@ ${this.diffChecks()}`;
     const reviewer = this.reviewerOptions(baseline);
     const loop = runLoop({
       request: text,
+      handoffServer: config.handoffServer,
       ...(preface !== '' ? { preface } : {}),
       ...(draft !== undefined ? { delegation: draft } : {}),
       ...(skill ? { skill } : {}),
@@ -1091,6 +1146,13 @@ ${this.diffChecks()}`;
     this.stopRunning = () => loop.stop();
     const outcome = await loop.done;
     if (outcome.status === 'delegated') {
+      if (this.lastWork && !this.lastWork.direct) {
+        this.lastWork = {
+          ...this.lastWork,
+          report: outcome.report,
+          reportData: outcome.reportData,
+        };
+      }
       this.unseen.push({
         source: 'delegation',
         request: outcome.spec,
@@ -1267,11 +1329,18 @@ ${this.diffChecks()}`;
           status: 'done',
           label: event.label,
           text: event.text,
+          ...(event.handoff ? { handoff: event.handoff } : {}),
           ...(usage ? { usage } : {}),
         });
         this.events.turnUsage?.(event.identity.provider, usage, event.quota ?? null);
         if (role === 'implementer' && this.lastWork) {
-          this.lastWork = { ...this.lastWork, report: event.text };
+          // The data of the report call is not in the event: unknown until the loop ends.
+          const { brief, direct } = this.lastWork;
+          this.lastWork = {
+            brief,
+            direct,
+            report: event.handoff?.tool === 'report' ? event.handoff.text : event.text,
+          };
         }
         // The reviewer's session lasts one review: nothing of it is kept to resume.
         if (role === 'reviewer') break;
@@ -1344,11 +1413,13 @@ ${this.diffChecks()}`;
         break;
       }
       case 'reviewed': {
-        const verdict = event.verdict ? event.verdict.toUpperCase() : 'SENZA VERDETTO';
+        const verdict = event.verdict
+          ? event.verdict.replace('_', ' ').toUpperCase()
+          : 'SENZA VERDETTO';
         const rounds = event.rounds === 1 ? '1 giro' : `${String(event.rounds)} giri`;
         update({
           type: 'notice',
-          level: event.verdict === 'respinto' || event.verdict === null ? 'warn' : 'info',
+          level: event.verdict === 'rejected' || event.verdict === null ? 'warn' : 'info',
           text: `Revisione di ${event.reviewer}: ${verdict} · ${rounds} di correzione`,
         });
         break;
@@ -1360,7 +1431,7 @@ ${this.diffChecks()}`;
         update({
           type: 'notice',
           level: 'warn',
-          text: `Blocco di delega non valido: ${event.errors.join('; ')}`,
+          text: `Chiamata di delega non valida: ${event.errors.join('; ')}`,
         });
         break;
       case 'subagent_violation':

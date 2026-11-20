@@ -3,9 +3,11 @@
 // agrees with that, it names the files the runtime saw change; a review covers
 // the criteria, and an approval rests on nothing left unverified, dubious or
 // open. The runtime does not ask again: it tells the leader what does not
-// hold, and lowers an approval that its own review contradicts. Text only.
+// hold, and lowers an approval that its own review contradicts. The checks are
+// comparisons between the fields of the handoffs (ADR 0035); only the brief
+// stays text, because the user can edit it before it is sent.
 
-import { reportOutcome, reviewVerdict, type ReviewVerdict } from './review.js';
+import type { Report, Review, ReviewVerdict } from './handoff.js';
 
 /** A point where a report or a review does not keep the contract. */
 interface ContractIssue {
@@ -18,14 +20,12 @@ interface ContractIssue {
   readonly message: string;
 }
 
-/** The body of a `## name` section, up to the next `## ` heading or a closing marker. */
+/** The body of a `## name` section, up to the next `## ` heading. */
 function section(text: string, name: string): string | null {
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   const at = lines.findIndex((line) => line.trim().toLowerCase() === `## ${name.toLowerCase()}`);
   if (at < 0) return null;
-  const end = lines.findIndex(
-    (line, index) => index > at && (/^##\s/.test(line) || /^[A-Z]+>>>\s*$/.test(line.trim())),
-  );
+  const end = lines.findIndex((line, index) => index > at && /^##\s/.test(line));
   return lines
     .slice(at + 1, end < 0 ? undefined : end)
     .join('\n')
@@ -34,46 +34,14 @@ function section(text: string, name: string): string | null {
 
 /** The criteria of a brief, `C1`, `C2`…, as each line of its acceptance criteria opens. */
 export function criteriaOf(brief: string): string[] {
-  // The web app's briefs are in English (ADR 0009).
+  // The runtime's briefs and the web app's are in English (ADR 0009, 0035); a draft kept from before is Italian.
   const body =
-    section(brief, 'Criteri di accettazione') ?? section(brief, 'Acceptance criteria') ?? '';
+    section(brief, 'Acceptance criteria') ?? section(brief, 'Criteri di accettazione') ?? '';
   const ids = new Set<string>();
   for (const match of body.matchAll(/^\s*(?:[-*]\s*)?(?:\*\*)?C(\d+)\b/gm)) {
     ids.add(`C${match[1] ?? ''}`);
   }
   return [...ids];
-}
-
-type Status = 'verificato' | 'non verificato' | 'non soddisfatto';
-// Plurals and "parziale" too: reports write "C1, C3–C8: verificati" and "C2: parziale".
-const STATUS = /\b(non soddisfatt[oi]|non verificat[oi]|verificat[oi]|parziale)\b/i;
-const statusOf = (word: string): Status => {
-  const w = word.toLowerCase();
-  if (w.startsWith('non soddisfatt')) return 'non soddisfatto';
-  if (w.startsWith('verificat')) return 'verificato';
-  return 'non verificato';
-};
-
-/**
- * The status of each criterion a section names: one status word per line,
- * for the criteria and ranges written before it (`C1–C10: verificato`).
- */
-export function criterionStatuses(body: string): Map<string, Status> {
-  const statuses = new Map<string, Status>();
-  for (const line of body.split('\n')) {
-    const found = STATUS.exec(line);
-    if (!found) continue;
-    const status = statusOf(found[1] ?? '');
-    for (const id of line.slice(0, found.index).matchAll(/C(\d+)(?:\s*[–—-]\s*C?(\d+))?/g)) {
-      const from = Number(id[1]);
-      const to = id[2] === undefined ? from : Number(id[2]);
-      // A range written backwards or absurdly long is not a range of criteria.
-      if (to < from || to - from > 100) continue;
-      for (let n = from; n <= to; n++)
-        if (!statuses.has(`C${String(n)}`)) statuses.set(`C${String(n)}`, status);
-    }
-  }
-  return statuses;
 }
 
 /** The files the runtime saw change, from its facts (`- modified path`). */
@@ -85,67 +53,61 @@ export function changedFiles(facts: string): string[] {
 
 const listed = (ids: readonly string[]) => ids.join(', ');
 
-/** What does not hold in an implementer's report on a brief; none when it keeps the contract. */
-export function checkReport(brief: string, report: string, facts: string): ContractIssue[] {
-  if (!/<<<RAPPORTO|^##\s+Esito\s*$/m.test(report)) {
-    return [{ code: 'no-report', message: 'l’implementatore non ha scritto il rapporto.' }];
+/** A path as a report names it: forward slashes, no `@`, no leading `./`. */
+const normalized = (path: string) =>
+  path.trim().replaceAll('\\', '/').replace(/^@/, '').replace(/^\.\//, '');
+
+/** True when a free-text field says there is nothing ("", "none", "nessuno"). */
+const saysNone = (text: string | undefined) =>
+  text === undefined || text.trim() === '' || /^(none|nessun[oa]|n\/?a|-)\.?$/i.test(text.trim());
+
+/** The status of each criterion, the first entry of an id winning. */
+function statusesOf(criteria: readonly { id: string; status: string }[]): Map<string, string> {
+  const statuses = new Map<string, string>();
+  for (const { id, status } of criteria) if (!statuses.has(id)) statuses.set(id, status);
+  return statuses;
+}
+
+/**
+ * What does not hold in an implementer's report on a brief; none when it keeps
+ * the contract. `report` is null when the implementer made no valid call.
+ */
+export function checkReport(brief: string, report: Report | null, facts: string): ContractIssue[] {
+  if (report === null) {
+    return [{ code: 'no-report', message: 'the implementer did not call the report tool.' }];
   }
   const issues: ContractIssue[] = [];
-  const criteria = criteriaOf(brief);
-  const statuses = criterionStatuses(section(report, 'Verifica') ?? '');
-  const missing = criteria.filter((id) => !statuses.has(id));
+  const statuses = statusesOf(report.criteria);
+  const missing = criteriaOf(brief).filter((id) => !statuses.has(id));
   if (missing.length > 0) {
     issues.push({
       code: 'criteria-missing',
-      message: `la Verifica non dice come sono andati ${listed(missing)}.`,
+      message: `the report does not say how ${listed(missing)} went.`,
     });
   }
-  const outcome = reportOutcome(report);
-  const open = [...statuses].filter(([, status]) => status !== 'verificato').map(([id]) => id);
-  const blocked = (section(report, 'Bloccato su') ?? '').trim();
-  if (outcome === 'completato' && open.length > 0) {
+  const open = [...statuses].filter(([, status]) => status !== 'verified').map(([id]) => id);
+  if (report.outcome === 'done' && open.length > 0) {
     issues.push({
       code: 'outcome-incoherent',
-      message: `l’esito è "completato" ma ${listed(open)} non risultano verificati.`,
+      message: `the outcome is "done" but these criteria are not verified: ${listed(open)}.`,
     });
-  } else if (outcome === 'completato' && blocked !== '' && !/^nessun[oa]\b/i.test(blocked)) {
+  } else if (report.outcome === 'done' && !saysNone(report.blocked_on)) {
     issues.push({
       code: 'outcome-incoherent',
-      message: 'l’esito è "completato" ma "Bloccato su" chiede una decisione.',
+      message: 'the outcome is "done" but "blocked_on" asks for a decision.',
     });
   }
-  const declared = (section(report, 'Modifiche') ?? '').replaceAll('\\', '/');
-  const undeclared = changedFiles(facts).filter((path) => !declared.includes(path));
+  const declared = report.changes.map((change) => normalized(change.path));
+  const undeclared = changedFiles(facts).filter(
+    (path) => !declared.some((d) => d === path || d.endsWith(`/${path}`)),
+  );
   if (undeclared.length > 0) {
     issues.push({
       code: 'files-undeclared',
-      message: `file cambiati che il rapporto non nomina in Modifiche: ${undeclared.join(', ')}.`,
+      message: `files changed that the report does not list in changes: ${undeclared.join(', ')}.`,
     });
   }
   return issues;
-}
-
-/** The axes of a review's Giudizio that are not clean, by their word. */
-function dubiousAxes(review: string): { dubious: string[]; failed: string[] } {
-  const body = section(review, 'Giudizio') ?? '';
-  const dubious: string[] = [];
-  const failed: string[] = [];
-  for (const match of body.matchAll(
-    /^\s*(?:[-*]\s*)?(Onestà|Sicurezza|Aggiornamento):\s*(\p{L}+)/gimu,
-  )) {
-    const [, axis = '', word = ''] = match;
-    if (/^(aggirata|falla|superato)$/i.test(word)) failed.push(axis);
-    else if (!/^pulit[oa]$/i.test(word)) dubious.push(axis);
-  }
-  return { dubious, failed };
-}
-
-/** Findings still open in a review: the text between "Aperti:" and "Chiusi:". */
-function openFindings(review: string): { any: boolean; blocking: boolean } {
-  const body = section(review, 'Rilievi') ?? '';
-  const open = /Aperti:\s*([\s\S]*?)(?:\n\s*Chiusi:|$)/i.exec(body)?.[1]?.trim() ?? body.trim();
-  const any = open !== '' && !/^nessun[oa]\.?$/i.test(open);
-  return { any, blocking: any && /bloccante/i.test(open) };
 }
 
 /**
@@ -155,35 +117,46 @@ function openFindings(review: string): { any: boolean; blocking: boolean } {
  */
 export function checkReview(
   brief: string,
-  review: string,
-): { verdict: ReviewVerdict | null; issues: ContractIssue[] } {
-  const said = reviewVerdict(review);
+  review: Review,
+): { verdict: ReviewVerdict; issues: ContractIssue[] } {
   const issues: ContractIssue[] = [];
-  const criteria = criteriaOf(brief);
-  const statuses = criterionStatuses(section(review, 'Criteri') ?? '');
-  const missing = criteria.filter((id) => !statuses.has(id));
+  const statuses = statusesOf(review.criteria);
+  const missing = criteriaOf(brief).filter((id) => !statuses.has(id));
   if (missing.length > 0) {
     issues.push({
       code: 'criteria-missing',
-      message: `la revisione non dice come sono andati ${listed(missing)}.`,
+      message: `the review does not say how ${listed(missing)} went.`,
     });
   }
-  if (said !== 'approvato') return { verdict: said, issues };
-  const unverified = [...statuses].filter(([, s]) => s !== 'verificato').map(([id]) => id);
-  const { dubious, failed } = dubiousAxes(review);
-  const open = openFindings(review);
-  const reasons = [
-    ...(unverified.length > 0 ? [`${listed(unverified)} non verificati`] : []),
-    ...(missing.length > 0 ? [`${listed(missing)} non citati`] : []),
-    ...(dubious.length > 0 ? [`giudizio dubbio su ${dubious.join(', ')}`] : []),
-    ...(failed.length > 0 ? [`giudizio negativo su ${failed.join(', ')}`] : []),
-    ...(open.any ? ['rilievi ancora aperti'] : []),
+  if (review.verdict !== 'approved') return { verdict: review.verdict, issues };
+  const unverified = [...statuses].filter(([, s]) => s !== 'verified').map(([id]) => id);
+  const { honesty, security, currency } = review.axes;
+  const dubious = [
+    ...(honesty === 'doubtful' ? ['honesty'] : []),
+    ...(security === 'doubtful' ? ['security'] : []),
+    ...(currency === 'doubtful' ? ['currency'] : []),
   ];
-  if (reasons.length === 0) return { verdict: said, issues };
-  const verdict: ReviewVerdict = failed.length > 0 || open.blocking ? 'respinto' : 'con riserve';
+  const failed = [
+    ...(honesty === 'bypassed' ? ['honesty'] : []),
+    ...(security === 'flaw' ? ['security'] : []),
+    ...(currency === 'outdated' ? ['currency'] : []),
+  ];
+  const open = review.open_findings ?? [];
+  const reasons = [
+    ...(unverified.length > 0 ? [`${listed(unverified)} not verified`] : []),
+    ...(missing.length > 0 ? [`${listed(missing)} not cited`] : []),
+    ...(dubious.length > 0 ? [`doubtful on ${dubious.join(', ')}`] : []),
+    ...(failed.length > 0 ? [`negative on ${failed.join(', ')}`] : []),
+    ...(open.length > 0 ? ['findings still open'] : []),
+  ];
+  if (reasons.length === 0) return { verdict: review.verdict, issues };
+  const verdict: ReviewVerdict =
+    failed.length > 0 || open.some((f) => f.severity === 'blocking')
+      ? 'rejected'
+      : 'with_reservations';
   issues.push({
     code: 'verdict-lowered',
-    message: `il revisore ha scritto "approvato", il runtime lo tiene come "${verdict}": ${reasons.join('; ')}.`,
+    message: `the reviewer wrote "approved", the runtime keeps it as "${verdict}": ${reasons.join('; ')}.`,
   });
   return { verdict, issues };
 }
@@ -192,5 +165,5 @@ export function checkReview(
 export function contractFacts(title: string, issues: readonly ContractIssue[]): string {
   return issues.length === 0
     ? ''
-    : [`${title}, fatti dal runtime:`, ...issues.map((issue) => `- ${issue.message}`)].join('\n');
+    : [`${title}, made by the runtime:`, ...issues.map((issue) => `- ${issue.message}`)].join('\n');
 }

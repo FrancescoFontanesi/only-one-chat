@@ -134,6 +134,21 @@ describe('@ paths in any text (ADR 0018)', () => {
         cwd,
       ),
     ).toMatchObject({ refs: ['src/calc.py'] });
+    // The paths of a handoff card, in the turn that made it, are links too.
+    expect(
+      withRefs(
+        {
+          type: 'turn',
+          id: 't',
+          role: 'implementer',
+          agent: 'C',
+          status: 'done',
+          text: 'Fatto.',
+          handoff: { tool: 'report', text: '- @src/calc.py - round' },
+        },
+        cwd,
+      ),
+    ).toMatchObject({ refs: ['src/calc.py'] });
     const running: ThreadUpdate = {
       type: 'turn',
       id: 't',

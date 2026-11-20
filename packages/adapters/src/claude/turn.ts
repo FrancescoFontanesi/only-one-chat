@@ -14,10 +14,17 @@
 // explicitly is not a custom one.
 
 import { execFile, spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
+import { onJsonLines } from '../lines.js';
 import { getEnv, withoutApiKeys } from '../environment.js';
 import { OWN_PROCESS_GROUP, terminateTree } from '../process-tree.js';
-import type { AgentQuestionAnswers, AgentUserQuestion } from '../agent.js';
+import {
+  HANDOFF_SERVER_NAME,
+  handoffEnv,
+  type AgentQuestionAnswers,
+  type AgentUserQuestion,
+  type HandoffCall,
+  type HandoffTools,
+} from '../agent.js';
 import { QUESTION_TOOL, claudeAnswers, claudeQuestions } from './questions.js';
 import {
   claudeQuota,
@@ -170,6 +177,8 @@ export interface ClaudeTurnResult {
    * (input, cache reads and writes, output), and the model's `contextWindow`.
    */
   readonly context: ContextUsage | null;
+  /** The main conversation's calls to the handoff tools, in order (ADR 0035). */
+  readonly handoffs?: readonly HandoffCall[];
 }
 
 export interface ClaudeTurnOptions {
@@ -254,7 +263,17 @@ export interface ClaudeTurnOptions {
     readonly env: Readonly<Record<string, string>>;
     readonly askAll?: boolean;
   };
+  /**
+   * The handoff tools (ADR 0035): the server is registered as the only MCP
+   * server, `ooc`, and its tools are allowed without asking, in every mode.
+   */
+  readonly handoff?: HandoffTools;
 }
+
+/** Claude Code's name for a tool of the MCP server `ooc`. */
+const oocPrefix = `mcp__${HANDOFF_SERVER_NAME}__`;
+const oocToolNames = (handoff: HandoffTools): string[] =>
+  handoff.tools.map((tool) => `${oocPrefix}${tool.name}`);
 
 /**
  * Environment that holds Claude's sub-agents to a model and effort (Claude Code
@@ -321,6 +340,17 @@ function run(file: string, args: readonly string[], env: NodeJS.ProcessEnv): Pro
   });
 }
 
+/** `--allowedTools`: the sandbox's rules and the handoff tools, when there are any. */
+function allowedTools(options: ClaudeTurnOptions): string[] {
+  const rules = [
+    ...(options.sandbox && options.permissionHook?.askAll !== true
+      ? sandboxAllowedTools(options.sandbox.commands)
+      : []),
+    ...(options.handoff ? oocToolNames(options.handoff) : []),
+  ];
+  return rules.length > 0 ? ['--allowedTools', rules.join(',')] : [];
+}
+
 /** Command-line arguments of a turn; exported for tests and documentation. */
 export function claudeTurnArgs(options: ClaudeTurnOptions): string[] {
   return [
@@ -346,10 +376,24 @@ export function claudeTurnArgs(options: ClaudeTurnOptions): string[] {
         ? DENIED_TOOLS.filter((tool) => tool !== 'Bash')
         : DENIED_TOOLS
     ).join(','),
-    ...(options.sandbox && options.permissionHook?.askAll !== true
-      ? ['--allowedTools', sandboxAllowedTools(options.sandbox.commands).join(',')]
+    ...allowedTools(options),
+    // Only `ooc` (inline JSON, as --settings; the executable is native, no shell
+    // mangles the quotes). Strict: the claude.ai connectors include tools that write elsewhere.
+    ...(options.handoff
+      ? [
+          '--mcp-config',
+          JSON.stringify({
+            mcpServers: {
+              [HANDOFF_SERVER_NAME]: {
+                type: 'stdio',
+                command: options.handoff.server.command,
+                args: options.handoff.server.args,
+                env: handoffEnv(options.handoff),
+              },
+            },
+          }),
+        ]
       : []),
-    // No MCP servers: the claude.ai connectors include tools that write elsewhere.
     '--strict-mcp-config',
     // The PermissionRequest hook, for this run only: it asks the user.
     ...(options.permissionHook ? ['--settings', options.permissionHook.settings] : []),
@@ -515,6 +559,7 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
           ? main['contextWindow']
           : null;
       };
+      const handoffs: HandoffCall[] = [];
       let settled = false;
       const settle = (outcome: () => void) => {
         if (settled) return;
@@ -552,6 +597,15 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
         };
         const questions = options.questions;
         const input = request['input'];
+        // A handoff tool has no effects (ADR 0035): allowed, as --allowedTools does.
+        if (
+          options.handoff &&
+          typeof request['tool_name'] === 'string' &&
+          oocToolNames(options.handoff).includes(request['tool_name'])
+        ) {
+          reply({ behavior: 'allow', updatedInput: isRecord(input) ? input : {} });
+          return;
+        }
         if (!questions || request['tool_name'] !== QUESTION_TOOL || !isRecord(input)) {
           deny(questions?.denyMessage ?? 'Denied: nobody answers here.');
           return;
@@ -576,7 +630,7 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
           });
       };
 
-      createInterface({ input: spawned.stdout, crlfDelay: Infinity }).on('line', (line) => {
+      onJsonLines(spawned.stdout, (line) => {
         let message: unknown;
         try {
           message = JSON.parse(line);
@@ -655,10 +709,18 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
                 parentToolUseId,
               });
             } else if (block['type'] === 'tool_use') {
+              const name = String(block['name']);
+              if (
+                parentToolUseId === null &&
+                options.handoff &&
+                oocToolNames(options.handoff).includes(name)
+              ) {
+                handoffs.push({ tool: name.slice(oocPrefix.length), arguments: block['input'] });
+              }
               options.onEvent?.({
                 type: 'tool_use',
                 id: String(block['id']),
-                name: String(block['name']),
+                name,
                 input: block['input'],
                 parentToolUseId,
                 model: blockModel,
@@ -712,6 +774,7 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
               typeof message['total_cost_usd'] === 'number' ? message['total_cost_usd'] : null,
             quota,
             context: lastContext === null ? null : { used: lastContext, window: windowOf(message) },
+            ...(handoffs.length > 0 ? { handoffs } : {}),
           };
           // One turn only: end the input so Claude exits, force it if it lingers, and
           // resolve only once nothing of the turn is left running.

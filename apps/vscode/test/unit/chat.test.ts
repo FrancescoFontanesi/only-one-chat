@@ -26,6 +26,21 @@ const FIXTURES = join(
   'fixtures',
 );
 
+/** A prompt line that makes a fake CLI call a handoff tool (ADR 0035). */
+const call = (tool: string, args: object) => `[handoff ${tool} ${JSON.stringify(args)}]`;
+const REPORT = call('report', {
+  outcome: 'done',
+  summary: 'round added.',
+  changes: [{ path: 'calc.py', change: 'round' }],
+  criteria: [],
+});
+const REVIEW = call('review', {
+  verdict: 'approved',
+  summary: 'It holds.',
+  criteria: [],
+  axes: { honesty: 'clean', security: 'clean', currency: 'clean' },
+});
+
 let root: string;
 let cwd: string;
 
@@ -65,6 +80,8 @@ function session(
     },
     codexExecutable: process.execPath,
     claudeExecutable: process.execPath,
+    // The fake CLIs make the handoff calls themselves: the server is never launched.
+    handoffServer: { command: process.execPath, args: ['handoff-server.js'] },
     codexLauncherArgs: [join(FIXTURES, 'fake-app-server.mjs'), '--account=chatgpt'],
     claudeLauncherArgs: [
       join(FIXTURES, 'fake-claude.mjs'),
@@ -299,8 +316,10 @@ describe('chat session: roles changed during the chat (ADR 0012)', () => {
     }
     const runs = claudeRuns();
     // Read-only: no writing tools any more, in the same session.
-    expect(runs[0]).toContain('--allowedTools');
-    expect(runs[1]).not.toContain('--allowedTools');
+    const allowed = (run: string[] | undefined) => run?.[run.indexOf('--allowedTools') + 1];
+    expect(allowed(runs[0])).toContain('Edit');
+    // Only the handoff tool is left (ADR 0035).
+    expect(allowed(runs[1])).toBe('mcp__ooc__report');
     expect(runs[1]).toContain('--resume');
   });
 
@@ -401,8 +420,15 @@ describe('chat session: any provider in any role (ADR 0022)', () => {
       },
     );
     try {
-      // The fake Claude echoes its prompt after "ECHO: ": the leader writes this delegation back.
-      await chat.send('Ecco il brief.\n<<<DELEGA #codex\nAggiungi round(x).\nDELEGA>>>');
+      // The fake Claude leader makes the `delegate` call its prompt asks for; the fake Codex
+      // implementer reports because the brief's context asks it to.
+      await chat.send(
+        `Ecco il brief.\n${call('delegate', {
+          goal: 'Aggiungi round(x).',
+          context: REPORT,
+          acceptance_criteria: ['round(2.5) → 2'],
+        })}`,
+      );
     } finally {
       await chat.dispose();
     }
@@ -420,7 +446,7 @@ describe('chat session: any provider in any role (ADR 0022)', () => {
     expect(after('--tools')).not.toMatch(/Edit|Write/);
     expect(after('--permission-prompt-tool')).toBe('stdio');
     expect(leader).not.toContain('--settings');
-    expect(after('--append-system-prompt')).toContain('<<<DELEGA #codex');
+    expect(after('--append-system-prompt')).toContain('call the `delegate` tool');
   });
 
   it('shows a Claude leader’s questions like Codex’s and denies the rest as its role', async () => {
@@ -524,7 +550,7 @@ describe('chat session', () => {
     const { chat, updates } = session('auto');
     writeFileSync(join(cwd, 'main.py'), 'print(1)\n');
     try {
-      // The fake leader answers [spec] with a delegation block to @claude.
+      // The fake leader answers [spec] with a `delegate` call.
       await chat.send('[spec] aggiungi una funzione');
     } finally {
       await chat.dispose();
@@ -537,6 +563,12 @@ describe('chat session', () => {
     ]);
     const notices = updates.flatMap((u) => (u.type === 'notice' ? [u.text] : []));
     expect(notices.some((text) => text.startsWith('File cambiati'))).toBe(true);
+    // Each turn carries its handoff, rendered; the text is only the agent's prose.
+    const [leader, implementer] = doneTurns(updates);
+    expect(leader?.handoff).toMatchObject({ tool: 'delegate' });
+    expect(leader?.handoff?.text).toContain('## Acceptance criteria');
+    expect(implementer?.handoff).toMatchObject({ tool: 'report', outcome: 'done' });
+    expect(implementer?.handoff?.text).toContain('## Outcome');
   });
 
   it('adds the checks on the diff to the facts, from the folder as it was before the message (ADR 0030)', async () => {
@@ -607,18 +639,17 @@ describe('chat session', () => {
       ['leader', 'Codex'],
     ]);
     // The fake reviewer echoes its prompt: the brief and the report as data, the rounds it has.
-    expect(done[2]?.text).toContain('Revisione del lavoro di Claude');
+    expect(done[2]?.text).toContain('Review of the work of Claude');
     expect(done[2]?.text).toContain('<<<BRIEF');
-    expect(done[2]?.text).toContain('Giri di correzione rimasti: 1.');
-    // It wrote no block, so the review ends there and the thread says how.
+    expect(done[2]?.text).toContain('Correction rounds left: 1.');
+    // Its `review` call ends the review, and the thread says how; the card carries the verdict.
+    expect(done[2]?.handoff).toMatchObject({ tool: 'review', verdict: 'approved' });
     const notices = updates.flatMap((u) => (u.type === 'notice' ? [u.text] : []));
-    expect(notices.some((text) => /^Revisione di Claude.*SENZA VERDETTO · 0 giri/.test(text))).toBe(
-      true,
-    );
+    expect(notices.some((text) => /^Revisione di Claude.*APPROVED · 0 giri/.test(text))).toBe(true);
     // Its session: the reviewer's prompt and the user's instructions for it, no tool that writes.
     const reviewer = claudeRuns().find((argv) => argv.includes('haiku')) ?? [];
     const after = (flag: string) => reviewer[reviewer.indexOf(flag) + 1] ?? '';
-    expect(after('--append-system-prompt')).toContain('<<<REVISIONE');
+    expect(after('--append-system-prompt')).toContain('You are the reviewer');
     expect(after('--append-system-prompt')).toContain('Guarda soprattutto i test.');
     expect(after('--tools').split(',')).toEqual(expect.arrayContaining(['Read', 'Bash']));
     expect(after('--tools')).not.toMatch(/Edit|Write/);
@@ -654,9 +685,7 @@ describe('chat session', () => {
     const after = (flag: string) => reviewer[reviewer.indexOf(flag) + 1] ?? '';
     expect(after('--tools')).toMatch(/Edit|Write/);
     // Its prompt says what it may and may not change.
-    expect(after('--append-system-prompt')).toContain(
-      'Il codice che verifichi non lo modifichi mai',
-    );
+    expect(after('--append-system-prompt')).toContain('The code you verify you never modify');
   });
 
   const haiku = {
@@ -683,16 +712,18 @@ describe('chat session', () => {
       haiku,
     );
     try {
-      await chat.send('aggiungi round', undefined, 'implementer');
+      // The fake implementer reports; the fake reviewer finds its `review` call in the message it reviews.
+      await chat.send(`aggiungi round\n${REPORT}\n${REVIEW}`, undefined, 'implementer');
       await chat.send('com’è andata?');
     } finally {
       await chat.dispose();
     }
     const done = doneTurns(updates);
     expect(done.map((t) => t.role)).toEqual(['implementer', 'reviewer', 'leader']);
-    expect(done[1]?.text).toContain('direttamente all’implementatore, senza brief del leader');
-    expect(done[2]?.text).toContain('Un messaggio diretto dell’utente all’implementatore');
-    expect(done[2]?.text).toContain('Il lavoro è stato rivisto');
+    expect(done[0]?.handoff).toMatchObject({ tool: 'report', outcome: 'done' });
+    expect(done[1]?.text).toContain('directly to the implementer, with no brief from the leader');
+    expect(done[2]?.text).toContain('A direct message from the user to the implementer');
+    expect(done[2]?.text).toContain('The work was reviewed');
   });
 
   it('takes a review the user asks for, of the last work, back to the leader (ADR 0033)', async () => {
@@ -707,8 +738,8 @@ describe('chat session', () => {
       haiku,
     );
     try {
-      await chat.send('aggiungi round', undefined, 'implementer');
-      await chat.send('controlla i casi negativi', undefined, 'reviewer');
+      await chat.send(`aggiungi round\n${REPORT}\n${REVIEW}`, undefined, 'implementer');
+      await chat.send(`controlla i casi negativi\n${REVIEW}`, undefined, 'reviewer');
       await chat.send('e quindi?');
     } finally {
       await chat.dispose();
@@ -716,14 +747,49 @@ describe('chat session', () => {
     const done = doneTurns(updates);
     expect(done.map((t) => t.role)).toEqual(['implementer', 'reviewer', 'reviewer', 'leader']);
     expect(updates).toContainEqual(
-      expect.objectContaining({ type: 'user', text: 'controlla i casi negativi', to: 'reviewer' }),
+      expect.objectContaining({
+        type: 'user',
+        text: expect.stringContaining('controlla i casi negativi') as string,
+        to: 'reviewer',
+      }),
     );
-    expect(done[2]?.text).toContain('L’utente ti chiede questa revisione direttamente');
+    expect(done[2]?.text).toContain('The user asks you for this review directly');
     expect(done[2]?.text).toContain('controlla i casi negativi');
     expect(done[2]?.text).toContain('aggiungi round');
-    expect(done[3]?.text).toContain(
-      'Una revisione che l’utente ha chiesto direttamente al revisore',
+    expect(done[3]?.text).toContain('A review the user asked the reviewer for directly');
+  });
+
+  it('does not review a report that stopped on a missing decision', async () => {
+    const { chat, updates } = session(
+      'auto',
+      'always',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      haiku,
     );
+    const blocked = call('report', {
+      outcome: 'blocked',
+      summary: 'Stopped.',
+      changes: [],
+      criteria: [],
+      blocked_on: 'Which rounding?',
+    });
+    try {
+      await chat.send(
+        `aggiungi round
+${blocked}`,
+        undefined,
+        'implementer',
+      );
+    } finally {
+      await chat.dispose();
+    }
+    const done = doneTurns(updates);
+    expect(done.map((t) => t.role)).toEqual(['implementer']);
+    expect(done[0]?.handoff).toMatchObject({ tool: 'report', outcome: 'blocked' });
   });
 
   it('with the reviewer switched off, reviews nothing and refuses a review request', async () => {
@@ -766,7 +832,7 @@ describe('chat session', () => {
     expect(done[0]?.text).toContain('aggiungi round');
     expect(done[0]?.text).not.toContain('@impl');
     // The fake leader echoes its prompt: the report came before the user's message.
-    expect(done[1]?.text).toMatch(/Nel frattempo l’implementatore ha lavorato/);
+    expect(done[1]?.text).toMatch(/Meanwhile the implementer worked/);
     expect(done[1]?.text?.endsWith('com’è andata?')).toBe(true);
   });
 
@@ -803,7 +869,7 @@ describe('chat session', () => {
     }
     const done = updates.flatMap((u) => (u.type === 'turn' && u.status === 'done' ? [u] : []));
     expect(done.map((u) => u.role)).toEqual(['leader', 'implementer', 'leader']);
-    expect(done[2]?.text).toMatch(/Nel frattempo/);
+    expect(done[2]?.text).toMatch(/Meanwhile the implementer worked/);
   });
 
   it('waits for the user before a delegation in manual mode', async () => {
@@ -942,7 +1008,7 @@ describe('chat session: the delegation cycle (ADR 0018)', () => {
         expect.objectContaining({ type: 'notice', level: 'warn' }),
       );
       expect(second.updates.some((u) => u.type === 'user')).toBe(false);
-      second.chat.decide(draft.id, 'edit', 'Brief modificato.');
+      second.chat.decide(draft.id, 'edit', `Brief modificato.\n${REPORT}`);
       // Two real processes in turn: under a loaded test run they take longer than the default.
       await expect.poll(() => doneTurns(second.updates).length, { timeout: 15_000 }).toBe(2);
       await expect.poll(() => second.chat.busy, { timeout: 15_000 }).toBe(false);

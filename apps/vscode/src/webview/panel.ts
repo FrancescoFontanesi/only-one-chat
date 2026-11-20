@@ -743,6 +743,15 @@ export class OnlyOneChatPanel {
     };
   }
 
+  /** The MCP server of the role handoffs, run by the editor's own Node (ADR 0035). */
+  private handoffServer() {
+    return {
+      command: process.execPath,
+      args: [path.join(this.context.extensionPath, 'dist', 'handoff-server.js')],
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+    };
+  }
+
   /**
    * The reviewer of the settings for the chat (ADR 0029, 0033), or none: off,
    * a choice its CLI does not offer, or a CLI the chat could not start.
@@ -818,6 +827,7 @@ export class OnlyOneChatPanel {
         },
         codexExecutable: codex.executable,
         claudeExecutable: claude.executable,
+        handoffServer: this.handoffServer(),
         ...(codex.launcherArgs.length > 0 ? { codexLauncherArgs: codex.launcherArgs } : {}),
         ...(claude.launcherArgs.length > 0 ? { claudeLauncherArgs: claude.launcherArgs } : {}),
         ...(antigravity.executable !== '' ? { antigravityExecutable: antigravity.executable } : {}),

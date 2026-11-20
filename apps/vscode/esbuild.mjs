@@ -36,6 +36,15 @@ const targets = [
     external: ['vscode'],
   },
   {
+    // The MCP server of the role handoffs (ADR 0035): the CLIs launch it as its own process.
+    ...common,
+    entryPoints: ['../../packages/runtime/src/handoff-main.ts'],
+    outfile: 'dist/handoff-server.js',
+    platform: 'node',
+    format: 'cjs',
+    target: 'node22',
+  },
+  {
     ...common,
     entryPoints: ['webview/main.tsx'],
     outfile: 'dist/webview/main.js',

@@ -12,18 +12,18 @@ export interface SubagentState {
 }
 
 const SUBAGENT_STATUS: Readonly<Record<SubagentState['status'], string>> = {
-  running: 'in corso',
-  completed: 'completato',
-  interrupted: 'interrotto',
-  failed: 'fallito',
+  running: 'running',
+  completed: 'completed',
+  interrupted: 'interrupted',
+  failed: 'failed',
 };
 
 /** Label of a sub-agent: parent agent, name, model, effort and status, as observed. */
 export function subagentLabel(parent: string, subagent: SubagentState): string {
   return [
     `${parent} › ${subagent.name}`,
-    subagent.model ?? 'modello non riportato',
-    `effort ${subagent.effort ?? 'non riportato'}`,
+    subagent.model ?? 'model not reported',
+    `effort ${subagent.effort ?? 'not reported'}`,
     SUBAGENT_STATUS[subagent.status],
   ].join(' · ');
 }
@@ -48,16 +48,16 @@ export function checkSubagent(
 ): string | undefined {
   const forbidden = policy.forbiddenNames.find((name) => hasWord(subagent.name, name));
   if (forbidden !== undefined) {
-    return `il nome "${subagent.name}" coincide con l'agente esterno "${forbidden}"`;
+    return `the name "${subagent.name}" matches the external agent "${forbidden}"`;
   }
   if (subagent.model !== null && subagent.model.toLowerCase() !== policy.model.toLowerCase()) {
-    return `modello ${subagent.model} invece di ${policy.model}`;
+    return `model ${subagent.model} instead of ${policy.model}`;
   }
   if (subagent.effort !== null && subagent.effort.toLowerCase() !== policy.effort.toLowerCase()) {
-    return `effort ${subagent.effort} invece di ${policy.effort}`;
+    return `effort ${subagent.effort} instead of ${policy.effort}`;
   }
   if (running > policy.maxConcurrent) {
-    return `${String(running)} sotto-agenti contemporanei, al massimo ${String(policy.maxConcurrent)}`;
+    return `${String(running)} sub-agents at once, at most ${String(policy.maxConcurrent)}`;
   }
   return undefined;
 }

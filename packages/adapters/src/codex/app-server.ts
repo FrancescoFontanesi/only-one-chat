@@ -9,7 +9,7 @@
 // its stdio is closed, terminating the process tree when it has to.
 
 import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
+import { onJsonLines } from '../lines.js';
 import { OWN_PROCESS_GROUP, terminateOrphans, terminateTree } from '../process-tree.js';
 
 export type AppServerErrorKind =
@@ -284,7 +284,7 @@ export async function startJsonRpc(options: JsonRpcOptions): Promise<JsonRpcClie
     );
   });
 
-  createInterface({ input: child.stdout, crlfDelay: Infinity }).on('line', (line) => {
+  onJsonLines(child.stdout, (line) => {
     if (line.trim() === '') return;
     let message: unknown;
     try {

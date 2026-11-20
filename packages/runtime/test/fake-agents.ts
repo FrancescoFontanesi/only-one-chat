@@ -1,5 +1,6 @@
 // Deterministic in-process agents for the loop tests. Each turn plays the next
-// scripted step: an answer (streamed in two chunks), an approval request
+// scripted step: an answer (streamed in two chunks) that may carry the calls to
+// the handoff tools the adapter would report (ADR 0035), an approval request
 // followed by an answer, or a hang that only stop() ends.
 
 import type {
@@ -10,13 +11,24 @@ import type {
   AgentTurn,
   AgentTurnHandlers,
   ApprovalDecision,
+  HandoffCall,
+  HandoffServer,
   SubagentEvent,
   TurnOptions,
 } from '../src/index.js';
 
 export type Step =
-  | { readonly answer: string; readonly subagents?: readonly SubagentEvent[] }
-  | { readonly approval: string; readonly answer: string }
+  | {
+      readonly answer: string;
+      readonly subagents?: readonly SubagentEvent[];
+      /** The handoff calls of the turn, as the adapter reports them. */
+      readonly handoffs?: readonly HandoffCall[];
+    }
+  | {
+      readonly approval: string;
+      readonly answer: string;
+      readonly handoffs?: readonly HandoffCall[];
+    }
   /** Asks the user (ADR 0019); `answer` then carries the answers given, as JSON, after it. */
   | { readonly ask: readonly AgentQuestion[]; readonly answer: string }
   | { readonly hang: true; readonly subagents?: readonly SubagentEvent[] };
@@ -96,6 +108,7 @@ export function fakeAgent(
       return {
         text: answer,
         identity: { provider: name, model: 'fake-model', effort: 'low', sessionId: `${id}-1` },
+        ...('handoffs' in step ? { handoffs: step.handoffs } : {}),
       };
     })();
     return {
@@ -139,26 +152,54 @@ export function fakeAgent(
   };
 }
 
-export function delegationBlock(
-  goal = 'Verifica le proposte su executable.ts',
-  recipient?: string,
-): string {
-  return [
-    'Piano: analizzo il file e chiedo una verifica.',
-    '',
-    recipient ? `<<<DELEGA @${recipient}` : '<<<DELEGA',
-    '## Obiettivo',
-    goal,
-    '## Contesto',
-    'packages/adapters/src/codex/executable.ts',
-    '## Vincoli',
-    'Sola lettura.',
-    '## Assunzioni',
-    'Il file compila.',
-    '## Domande aperte',
-    'Nessuna',
-    '## Output atteso',
-    'Elenco delle proposte confermate o respinte.',
-    'DELEGA>>>',
-  ].join('\n');
-}
+export const SERVER: HandoffServer = { command: 'node', args: ['handoff-main.js'] };
+
+export const call = (tool: string, args: unknown): HandoffCall => ({ tool, arguments: args });
+
+type Args = Record<string, unknown>;
+
+/** Valid arguments of each tool, with the fields a test changes. */
+export const delegateArgs = (over: Args = {}): Args => ({
+  goal: 'ans reuses the last result.',
+  context: 'calc.py',
+  acceptance_criteria: ['1 + 2, then ans * 10 → 30.', '1/0, then ans → an error, ans unchanged.'],
+  verification: '`python -m unittest`',
+  ...over,
+});
+export const reportArgs = (over: Args = {}): Args => ({
+  outcome: 'done',
+  summary: 'ans added.',
+  changes: [{ path: 'calc.py', change: 'ans, for C1' }],
+  criteria: [
+    { id: 'C1', status: 'verified', evidence: 'test_ans' },
+    { id: 'C2', status: 'verified', evidence: 'python -m unittest: exit 0' },
+  ],
+  ...over,
+});
+export const findingsArgs = (over: Args = {}): Args => ({
+  items: [
+    {
+      id: 'R1',
+      severity: 'blocking',
+      issue: 'ans is 0 after an error.',
+      evidence: 'python calc.py "1/0" "ans" → expected an error, got 0.',
+      criterion: 'C1',
+    },
+  ],
+  ...over,
+});
+export const reviewArgs = (over: Args = {}): Args => ({
+  verdict: 'approved',
+  summary: 'One round.',
+  criteria: [
+    { id: 'C1', status: 'verified', evidence: 'python calc.py: 30' },
+    { id: 'C2', status: 'verified', evidence: 'unittest: ok' },
+  ],
+  axes: { honesty: 'clean', security: 'clean', currency: 'clean' },
+  ...over,
+});
+
+export const delegate = (over: Args = {}) => call('delegate', delegateArgs(over));
+export const report = (over: Args = {}) => call('report', reportArgs(over));
+export const findings = (over: Args = {}) => call('findings', findingsArgs(over));
+export const review = (over: Args = {}) => call('review', reviewArgs(over));

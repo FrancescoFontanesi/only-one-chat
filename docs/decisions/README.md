@@ -39,3 +39,4 @@ Each decision has its own `NNNN-title.md` file with Status, Context, Decision, a
 | [0033](0033-reviewer-always-and-direct.md)        | Review every job, including direct work, and expose review in the UI | Accepted                                        |
 | [0034](0034-remove-experimental-modes.md)         | Remove experimental runtime modes and the demo                       | Accepted                                        |
 | [0035](0035-handoff-tools-and-english.md)         | Structured handoff tools and English across the project              | Accepted                                        |
+| [0036](0036-verification-traceability.md)         | Traceability for reported verification commands                      | Accepted, implementation pending                |

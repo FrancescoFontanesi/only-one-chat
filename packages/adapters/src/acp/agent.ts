@@ -97,6 +97,7 @@ export function acpToolStep(call: Json): Extract<AgentTurnStep, { kind: 'command
       command: title,
       status,
       exitCode: null,
+      evidence: 'title',
       durationMs: null,
       output: tail(toolOutput(call['content'])),
     };

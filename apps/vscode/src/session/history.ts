@@ -66,10 +66,11 @@ function pendingReports(value: unknown): PendingReport[] {
     return (
       typeof r === 'object' &&
       r !== null &&
-      (r.source === 'delegation' || r.source === 'direct') &&
+      (r.source === 'delegation' || r.source === 'direct' || r.source === 'review') &&
       typeof r.request === 'string' &&
       typeof r.report === 'string' &&
-      typeof r.facts === 'string'
+      typeof r.facts === 'string' &&
+      (r.review === undefined || typeof r.review === 'string')
     );
   });
 }

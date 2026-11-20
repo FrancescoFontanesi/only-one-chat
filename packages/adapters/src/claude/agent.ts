@@ -16,6 +16,7 @@ import type {
   AgentTurnHandlers,
   AgentTurnStep,
 } from '../agent.js';
+import { HANDOFF_SERVER_NAME } from '../agent.js';
 import { tail } from '../steps.js';
 import {
   AUTO_PERMISSION_MODE,
@@ -49,6 +50,13 @@ export type ClaudeAgentConfig = Omit<
 };
 
 const lines = (text: string) => (text === '' ? [] : text.split('\n'));
+
+/** These handoffs carry command references for in-memory correlation. */
+const isEvidenceHandoff = (name: string) =>
+  name === `mcp__${HANDOFF_SERVER_NAME}__report` || name === `mcp__${HANDOFF_SERVER_NAME}__review`;
+
+const toolActivity = (name: string, input: unknown) =>
+  isEvidenceHandoff(name) ? name : `${name} ${JSON.stringify(input)}`;
 
 /**
  * The step of a Claude tool call (ADR 0019): Bash a command, Edit and Write a
@@ -88,6 +96,7 @@ export function claudeToolStep(id: string, name: string, input: unknown): AgentT
       ],
     };
   }
+  if (isEvidenceHandoff(name)) return { kind: 'tool', id, name, detail: '', status: 'running' };
   const detail =
     text('file_path') ||
     text('pattern') ||
@@ -152,6 +161,7 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
       const children = new Map<string, { identified: boolean }>();
       /** The tool calls shown as steps, waiting for their result (ADR 0019). */
       const toolSteps = new Map<string, AgentTurnStep>();
+      const bashSteps = new Map<string, Extract<AgentTurnStep, { kind: 'command' }>>();
       let stepCount = 0;
       /** The first message of a sub-agent tells which model actually ran it. */
       function identify(id: string, model: string | null): void {
@@ -205,7 +215,7 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
               type: 'activity',
               id: event.parentToolUseId,
               kind: 'tool',
-              detail: `${event.name} ${JSON.stringify(event.input)}`,
+              detail: toolActivity(event.name, event.input),
             });
           } else if (event.type === 'tool_use' && event.name === SUBAGENT_TOOL) {
             const input = isRecord(event.input) ? event.input : {};
@@ -222,15 +232,20 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
           } else if (event.type === 'tool_use') {
             handlers.onActivity?.({
               kind: 'tool',
-              detail: `${event.name} ${JSON.stringify(event.input)}`,
+              detail: toolActivity(event.name, event.input),
             });
             const step = claudeToolStep(event.id, event.name, event.input);
             toolSteps.set(event.id, step);
+            if (step.kind === 'command') bashSteps.set(event.id, step);
             handlers.onStep?.(step);
           } else if (event.type === 'tool_result' && toolSteps.has(event.toolUseId)) {
             const step = toolSteps.get(event.toolUseId);
             toolSteps.delete(event.toolUseId);
-            if (step) handlers.onStep?.(endStep(step, event.isError, event.content ?? ''));
+            if (step) {
+              const ended = endStep(step, event.isError, event.content ?? '');
+              if (ended.kind === 'command') bashSteps.set(ended.id, ended);
+              handlers.onStep?.(ended);
+            }
           } else if (event.type === 'tool_result' && children.has(event.toolUseId)) {
             children.delete(event.toolUseId);
             handlers.onSubagent?.({
@@ -264,6 +279,9 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
         sessionId = result.sessionId;
         for (const denial of result.permissionDenials) {
           handlers.onActivity?.({ kind: 'permission_denied', detail: JSON.stringify(denial) });
+          const id = isRecord(denial) ? denial['tool_use_id'] : undefined;
+          const bash = typeof id === 'string' ? bashSteps.get(id) : undefined;
+          if (bash) handlers.onStep?.({ ...bash, status: 'failed', evidence: 'denied' });
         }
         if (result.isError && result.apiErrorStatus === 429) {
           throw new ClaudeError(

@@ -118,6 +118,9 @@ contents. Fill in every field; the optional ones with nothing to say can be left
 - `criteria`: one entry per criterion: verified | not_verified | not_met, with the proof: the test
   or the command you ran yourself, with the output line that matters. One entry per criterion; in
   the summary, in one line, the cases you tried beyond the implementer's tests.
+  For commands you cite, fill the optional `commands` list with the exact shell-tool inputs in
+  the order you describe them in your evidence. Include only commands from this work round.
+  If you are retrying a missing handoff, include eligible commands from the preceding turn.
 - `axes`: honesty (clean | doubtful | bypassed), security (clean | doubtful | flaw), currency
   (clean | doubtful | outdated); the why of each, with the versions checked, goes in the summary.
 - `changes`: @path — what changed there and for which criterion, one line per file. All the files

@@ -6,6 +6,7 @@ import * as assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import * as path from 'node:path';
+import { handoffTools } from '@only-one-chat/runtime';
 import * as vscode from 'vscode';
 
 const EXTENSION_ID = 'francesco-fontanesi.only-one-chat';
@@ -15,7 +16,7 @@ describe('Handoff server in the editor', () => {
     const extension = vscode.extensions.getExtension(EXTENSION_ID);
     assert.ok(extension, `${EXTENSION_ID} is not installed in the test host`);
     assert.ok(process.versions.electron, 'not running in the editor');
-    const tools = [{ name: 'report', description: 'd', inputSchema: { type: 'object' } }];
+    const tools = handoffTools('implementer', { command: process.execPath, args: [] }).tools;
     const child = spawn(
       process.execPath,
       [path.join(extension.extensionPath, 'dist', 'handoff-server.js')],
@@ -33,7 +34,7 @@ describe('Handoff server in the editor', () => {
     const answered = new Promise<void>((resolve, reject) => {
       createInterface({ input: child.stdout }).on('line', (line) => {
         replies.push(JSON.parse(line) as (typeof replies)[number]);
-        if (replies.length === 2) resolve();
+        if (replies.length === 4) resolve();
       });
       child.on('error', reject);
       child.on('exit', () => {
@@ -41,10 +42,21 @@ describe('Handoff server in the editor', () => {
       });
     });
     try {
-      const send = (id: number, method: string) =>
-        child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params: {} })}\n`);
+      const send = (id: number, method: string, params: object = {}) =>
+        child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
+      const report = (commands: unknown) => ({
+        name: 'report',
+        arguments: {
+          outcome: 'done',
+          summary: 'Local test.',
+          changes: [],
+          criteria: [{ id: 'C1', status: 'verified', evidence: 'A command.', commands }],
+        },
+      });
       send(1, 'initialize');
       send(2, 'tools/list');
+      send(3, 'tools/call', report(['fake-check']));
+      send(4, 'tools/call', report([{ command: 'fake-check', exitCode: 0 }]));
       await answered;
     } finally {
       child.removeAllListeners('exit');
@@ -52,5 +64,7 @@ describe('Handoff server in the editor', () => {
     }
     assert.deepEqual(replies[0]?.result['serverInfo'], { name: 'ooc', version: '1' });
     assert.deepEqual(replies[1]?.result['tools'], tools);
+    assert.equal(replies[2]?.result['isError'], undefined);
+    assert.equal(replies[3]?.result['isError'], true);
   });
 });

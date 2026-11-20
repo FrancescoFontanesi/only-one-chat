@@ -23,6 +23,7 @@ export interface CriterionResult {
   readonly id: string;
   readonly status: CriterionStatus;
   readonly evidence: string;
+  readonly commands?: readonly string[];
 }
 
 /** The leader's brief to the implementer. */
@@ -124,17 +125,27 @@ const findingId: Schema = {
   description: 'The finding number, "R1", "R2"…',
 };
 
+const referencedCommands = list(
+  { ...required('Exact command text as submitted to the shell tool.'), maxLength: 2048 },
+  {
+    maxItems: 8,
+    description:
+      'Optional commands you ran for this criterion in this work round, including before a handoff retry. List them in the order you describe them in evidence. Leave out manual checks.',
+  },
+);
+
 const CRITERIA_RESULTS: Schema = list(
   object(
     {
       id: criterionId('The criterion of the brief'),
       status: choice(
         CRITERION_STATUSES,
-        'verified: shown by a command or test you ran in this turn; not_verified: not shown; not_met: shown to fail.',
+        'verified: shown by a command or test you ran in this round; not_verified: not shown; not_met: shown to fail.',
       ),
       evidence: required(
         'The test (file and name) or command that shows it, with the output line that matters; for not_verified, why.',
       ),
+      commands: referencedCommands,
     },
     ['id', 'status', 'evidence'],
   ),
@@ -176,7 +187,7 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
     {
       outcome: choice(
         REPORT_OUTCOMES,
-        'done: every criterion verified by a command you ran in this turn and nothing blocks; partial: a criterion is missing or not verified; blocked: you stopped for a missing decision.',
+        'done: every criterion verified by a command you ran in this round and nothing blocks; partial: a criterion is missing or not verified; blocked: you stopped for a missing decision.',
       ),
       summary: required('What changed, in 1-2 sentences.'),
       changes: list(
@@ -259,6 +270,7 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
             evidence: required(
               'The test or command you ran yourself, with the output line that matters; for not_verified, why.',
             ),
+            commands: referencedCommands,
           },
           ['id', 'status', 'evidence'],
         ),
@@ -367,7 +379,10 @@ function strip(schema: Schema, value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value).flatMap(([key, child]) => {
         const sub = properties[key];
-        return sub && child !== null && child !== undefined ? [[key, strip(sub, child)]] : [];
+        // Legacy optional fields accept null as omission. New command references are strict.
+        return sub && child !== undefined && (child !== null || sub === referencedCommands)
+          ? [[key, strip(sub, child)]]
+          : [];
       }),
     );
   }

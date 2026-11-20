@@ -146,6 +146,7 @@ input.on('line', (line) => {
 async function replay(prompt) {
   let answered = null;
   const outcomes = [];
+  const denials = [];
   for (const original of recorded) {
     const message = structuredClone(original);
     if (message.type === 'system' && message.subtype === 'init') {
@@ -191,6 +192,25 @@ async function replay(prompt) {
           },
         });
         answered = JSON.stringify({ bash, ask });
+      }
+      if (prompt.includes('[bash-evidence]')) {
+        for (const [id, command, error] of [
+          ['bash-pass', 'fake-check --success', false],
+          ['bash-fail', 'fake-check --error', true],
+          ['bash-denied', 'fake-check --denied', true],
+        ]) {
+          send({
+            type: 'assistant',
+            message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] },
+          });
+          send({
+            type: 'user',
+            message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: error }] },
+          });
+          if (id === 'bash-denied') {
+            denials.push({ tool_name: 'Bash', tool_use_id: id, tool_input: { command } });
+          }
+        }
       }
       for (const [index, call] of handoffCalls(prompt).entries()) {
         const name = `mcp__${call.server}__${call.tool}`;
@@ -238,6 +258,7 @@ async function replay(prompt) {
     }
     if (flag('echo') && message.type === 'result') message.result = `ECHO: ${prompt}`;
     if (answered !== null && message.type === 'result') message.result = answered;
+    if (denials.length > 0 && message.type === 'result') message.permission_denials = denials;
     if (outcomes.length > 0 && message.type === 'result') {
       message.result = `${message.result} handoffs: ${outcomes.join(', ')}`;
     }

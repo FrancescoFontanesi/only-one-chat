@@ -91,6 +91,7 @@ describe('ACP agent (ADR 0023)', () => {
         kind: 'command',
         id: 't1',
         command: 'dir',
+        evidence: 'title',
         status: 'done',
         exitCode: null,
         durationMs: null,

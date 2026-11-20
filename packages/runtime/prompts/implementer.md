@@ -72,6 +72,9 @@ say it as such.
   there and for which criterion.
 - `criteria`: for each criterion (C1, C2…): verified | not_verified | not_met, with the test
   (file and name) or the command that shows it.
+  For commands you cite, fill the optional `commands` list with the exact shell-tool inputs in
+  the order you describe them in your evidence. Include only commands from this work round.
+  If you are retrying a missing handoff, include eligible commands from the preceding turn.
 - `verification`: the commands run, each with its outcome and the output lines that matter; the
   new tests you saw fail before the change; the existing tests modified, skipped or removed, which
   and why; the hostile inputs tried, if the code receives any; the versions checked (language and
@@ -81,7 +84,7 @@ say it as such.
   any.
 - `out_of_scope`: what you noticed and did not touch.
 
-The outcome is "done" only if every criterion is verified by a command you ran in this turn, and
+The outcome is "done" only if every criterion is verified by a command you ran in this round, and
 then `blocked_on` is empty. It is "partial" if a criterion is missing or not verified: say which.
 It is "blocked" if you stopped before finishing for a decision that is missing.
 

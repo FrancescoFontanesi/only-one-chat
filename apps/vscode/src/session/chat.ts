@@ -15,6 +15,7 @@ import {
   type PermissionBridgeOptions,
 } from '@only-one-chat/adapters';
 import {
+  CommandEvidence,
   IMPLEMENTER_ROLE_INSTRUCTIONS,
   NO_COMMANDS_NOTE,
   agentLabel,
@@ -263,6 +264,7 @@ export class ChatSession {
     | {
         brief: string;
         report: string;
+        reportCommandEvidence?: string | undefined;
         direct: boolean;
         /** The `report` call behind `report`; absent when unknown (then it is not checked). */
         reportData?: Report | null;
@@ -550,6 +552,8 @@ export class ChatSession {
     skill?: SkillRef,
   ) {
     const id = this.id('t');
+    const commands = new CommandEvidence();
+    const observe = commands.nextTurn();
     this.currentTurn.set('implementer', id);
     this.events.update({
       type: 'turn',
@@ -574,6 +578,7 @@ export class ChatSession {
           });
         },
         onStep: (step) => {
+          observe(step);
           this.events.update({ type: 'step', turnId: id, step });
         },
       },
@@ -584,6 +589,8 @@ export class ChatSession {
     this.currentTurn.delete('implementer');
     const usage = summarize(result.usage);
     const report = readHandoff(result.handoffs, 'report').value;
+    const reportText = report ? renderReport(report) : result.text;
+    const reportCommandEvidence = report ? commands.render(report.criteria, 'Implementer') : '';
     this.events.update({
       type: 'turn',
       id,
@@ -593,14 +600,21 @@ export class ChatSession {
       label: agentLabel(result.identity),
       text: result.text,
       ...(report
-        ? { handoff: { tool: 'report', text: renderReport(report), outcome: report.outcome } }
+        ? {
+            handoff: {
+              tool: 'report',
+              text: reportText,
+              outcome: report.outcome,
+              ...(reportCommandEvidence ? { commandEvidence: reportCommandEvidence } : {}),
+            },
+          }
         : {}),
       ...(usage ? { usage } : {}),
     });
     this.events.turnUsage?.(result.identity.provider, usage, result.quota ?? null);
     if (result.context) this.events.context?.('implementer', result.context);
     if (keep) this.noteSession('implementer', result.identity.sessionId);
-    return { ...result, report };
+    return { ...result, report, reportText, reportCommandEvidence };
   }
 
   /**
@@ -970,15 +984,25 @@ ${this.diffChecks()}`;
       skill,
     );
     // The report call, rendered; a turn that made none is its text.
-    const report = result.report ? renderReport(result.report) : result.text;
-    this.lastWork = { brief: text, report, direct: true };
+    const report = result.reportText;
+    const { reportCommandEvidence } = result;
+    this.lastWork = { brief: text, report, reportCommandEvidence, direct: true };
     // A report that stopped on a missing decision goes to the leader as it is.
     const judged =
       this.reviewerConfig && result.report?.outcome !== 'blocked'
-        ? await this.reviewWork({ brief: text, report, direct: true }, baseline, shown)
+        ? await this.reviewWork(
+            { brief: text, report, reportCommandEvidence, direct: true },
+            baseline,
+            shown,
+          )
         : undefined;
     if (judged) {
-      this.lastWork = { brief: text, report: judged.report, direct: true };
+      this.lastWork = {
+        brief: text,
+        report: judged.report,
+        reportCommandEvidence: this.lastWork.reportCommandEvidence,
+        direct: true,
+      };
       this.keepForLeader(
         {
           source: 'direct',
@@ -994,7 +1018,15 @@ ${this.diffChecks()}`;
     const facts = await this.facts(baseline);
     shown.facts = true;
     this.events.update({ type: 'notice', level: 'info', text: facts });
-    this.keepForLeader({ source: 'direct', request: text, report, facts }, 'this report');
+    this.keepForLeader(
+      {
+        source: 'direct',
+        request: text,
+        report,
+        facts: [facts, reportCommandEvidence].filter(Boolean).join('\n\n'),
+      },
+      'this report',
+    );
   }
 
   /**
@@ -1011,6 +1043,7 @@ ${this.diffChecks()}`;
       {
         brief: work?.brief ?? '',
         report: work?.report ?? '',
+        reportCommandEvidence: work?.reportCommandEvidence,
         // A direct message has no brief to hold the report to.
         ...(work?.direct
           ? { direct: true }
@@ -1028,6 +1061,7 @@ ${this.diffChecks()}`;
         brief: work.brief,
         direct: work.direct,
         report: judged.report,
+        reportCommandEvidence: this.lastWork?.reportCommandEvidence,
         ...(!work.direct ? { reportData: judged.reportData } : {}),
       };
     }
@@ -1338,6 +1372,7 @@ ${this.diffChecks()}`;
             brief,
             direct,
             report: event.handoff?.tool === 'report' ? event.handoff.text : event.text,
+            reportCommandEvidence: event.handoff?.commandEvidence,
           };
         }
         // The reviewer's session lasts one review: nothing of it is kept to resume.

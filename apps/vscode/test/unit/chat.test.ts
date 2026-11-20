@@ -848,6 +848,58 @@ ${blocked}`,
     expect(done.map((u) => u.role)).toEqual(['leader']);
   });
 
+  it('attests commands only in the current direct request and excludes a declined invocation', async () => {
+    const { chat, updates, kept } = session(
+      'auto',
+      'always',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { implementer: { cli: 'codex', model: 'gpt-6.1-sol', effort: 'low', permission: 'ask' } },
+    );
+    const synthetic = 'SYNTHETIC_UNOBSERVED_SECRET';
+    const makeReport = (...commands: string[]) =>
+      call('report', {
+        outcome: 'done',
+        summary: 'Verification report',
+        changes: [],
+        criteria: [{ id: 'C1', status: 'verified', evidence: 'The check ran.', commands }],
+      });
+    try {
+      await chat.send(`@impl [steps] [wrapped-evidence]\n${makeReport(' pnpm test ', synthetic)}`);
+      const denied = chat.send(
+        `@impl [denied-evidence]\n${makeReport('pnpm test', 'fake-check --approval', 'fake-check --stale')}`,
+      );
+      await expect.poll(() => updates.some((update) => update.type === 'permission')).toBe(true);
+      const permission = updates.find((update) => update.type === 'permission');
+      if (permission?.type !== 'permission') throw new Error('fake CLI did not ask for permission');
+      expect(permission.summary).toBe('fake-check --approval');
+      chat.permit(permission.id, 'decline');
+      await denied;
+    } finally {
+      await chat.dispose();
+    }
+    const reports = updates.flatMap((update) =>
+      update.type === 'turn' && update.handoff?.tool === 'report' ? [update.handoff] : [],
+    );
+    expect(reports).toHaveLength(2);
+    expect(reports[0]?.commandEvidence).toContain('C1, command 1: observed with outcome (exit 0)');
+    expect(reports[0]?.commandEvidence).toContain('C1, command 2: no matching command observed');
+    expect(reports[0]?.commandEvidence).not.toContain(synthetic);
+    expect(reports[1]?.commandEvidence).toContain('C1, command 1: no matching command observed');
+    expect(reports[1]?.commandEvidence).toContain('C1, command 2: no matching command observed');
+    expect(reports[1]?.commandEvidence).toContain('C1, command 3: no matching command observed');
+    expect(kept.at(-1)?.at(-1)?.report).toBe(reports[1]?.text);
+    expect(kept.at(-1)?.at(-1)?.facts).toContain('C1, command 3: no matching command observed');
+    expect(
+      JSON.stringify(
+        updates.filter((update) => update.type === 'activity' || update.type === 'step'),
+      ),
+    ).not.toContain(synthetic);
+  }, 15_000);
+
   it('reports the unseen work as it changes, to keep it with the chat', async () => {
     const { chat, kept } = session('auto');
     try {
@@ -857,6 +909,36 @@ ${blocked}`,
     }
     expect(kept).toHaveLength(1);
     expect(kept[0]).toMatchObject([{ source: 'direct', request: 'aggiungi round' }]);
+  });
+
+  it('labels Claude Bash outcomes separately from exit codes and ignores its reported denial', async () => {
+    const { chat, updates } = session('auto');
+    const commands = ['fake-check --success', 'fake-check --error', 'fake-check --denied'];
+    try {
+      await chat.send(
+        `@impl [bash-evidence]\n${call('report', {
+          outcome: 'partial',
+          summary: 'Bash results',
+          changes: [],
+          criteria: [{ id: 'C1', status: 'not_verified', evidence: 'Local checks.', commands }],
+        })}`,
+      );
+    } finally {
+      await chat.dispose();
+    }
+    const handoff = updates.find(
+      (update) => update.type === 'turn' && update.handoff?.tool === 'report',
+    );
+    if (handoff?.type !== 'turn') throw new Error('expected a report');
+    expect(handoff.handoff?.commandEvidence).toContain(
+      'C1, command 1: observed with outcome (tool success)',
+    );
+    expect(handoff.handoff?.commandEvidence).toContain(
+      'C1, command 2: observed with outcome (tool error)',
+    );
+    expect(handoff.handoff?.commandEvidence).toContain(
+      'C1, command 3: no matching command observed',
+    );
   });
 
   it('with deferred review, keeps the report for the next message instead of a review turn', async () => {

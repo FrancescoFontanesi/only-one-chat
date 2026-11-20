@@ -31,6 +31,7 @@ import type {
   TurnUsage,
 } from './agent.js';
 import { extractResult, parseBrief, type Brief } from './brief.js';
+import { CommandEvidence, reportWithoutCommandReferences } from './command-evidence.js';
 import type { EventLog } from './event-log.js';
 import { checkReport, checkReview, contractFacts } from './contract.js';
 import {
@@ -102,6 +103,8 @@ export interface ThreadHandoff {
   readonly tool: string;
   /** The Markdown the other roles read. */
   readonly text: string;
+  /** Assessment produced by the runtime from observed command events. */
+  readonly commandEvidence?: string;
   /** `report` only. */
   readonly outcome?: ReportOutcome;
   /** `review` only, as the agent wrote it (the runtime's own verdict is in `reviewed`). */
@@ -261,6 +264,7 @@ export interface LoopOptions {
     readonly brief: string;
     /** The implementer's report, rendered (or its answer, when it made no report). */
     readonly report: string;
+    readonly reportCommandEvidence?: string | undefined;
     /**
      * The report as the implementer's `report` call: undefined when unknown, and
      * then the report is not checked against the brief.
@@ -387,19 +391,37 @@ export function agentLabel(identity: AgentIdentity): string {
 }
 
 /** The valid handoff of a turn, rendered; a review wins over findings in the same turn. */
-function handoffOf(role: Role, result: AgentTurnResult): ThreadHandoff | undefined {
+function handoffOf(
+  role: Role,
+  result: AgentTurnResult,
+  commands: CommandEvidence | undefined,
+): ThreadHandoff | undefined {
   if (role === 'orchestrator') {
     const { value } = readHandoff(result.handoffs, 'delegate');
     return value ? { tool: 'delegate', text: renderBrief(value) } : undefined;
   }
   if (role === 'worker') {
     const { value } = readHandoff(result.handoffs, 'report');
+    const commandEvidence = value && commands?.render(value.criteria, 'Implementer');
     return value
-      ? { tool: 'report', text: renderReport(value), outcome: value.outcome }
+      ? {
+          tool: 'report',
+          text: renderReport(value),
+          ...(commandEvidence ? { commandEvidence } : {}),
+          outcome: value.outcome,
+        }
       : undefined;
   }
   const review = readHandoff(result.handoffs, 'review').value;
-  if (review) return { tool: 'review', text: renderReview(review), verdict: review.verdict };
+  if (review) {
+    const commandEvidence = commands?.render(review.criteria, 'Reviewer');
+    return {
+      tool: 'review',
+      text: renderReview(review),
+      ...(commandEvidence ? { commandEvidence } : {}),
+      verdict: review.verdict,
+    };
+  }
   const findings = readHandoff(result.handoffs, 'findings').value;
   return findings ? { tool: 'findings', text: renderFindings(findings) } : undefined;
 }
@@ -407,6 +429,7 @@ function handoffOf(role: Role, result: AgentTurnResult): ThreadHandoff | undefin
 /** What an implementer turn amounts to: its report as text, and the call it came from. */
 interface Work {
   readonly text: string;
+  readonly commandEvidence?: string | undefined;
   /** Null: no valid `report` call. Undefined: unknown, so not checked. */
   readonly data: Report | null | undefined;
 }
@@ -458,9 +481,11 @@ export function runLoop(options: LoopOptions): Loop {
     role: Role,
     prompt: string,
     skill?: SkillRef,
-  ): Promise<AgentTurnResult> {
+    commands?: CommandEvidence,
+  ): Promise<AgentTurnResult & { readonly threadHandoff?: ThreadHandoff }> {
     checkStopped();
     await emit({ type: 'turn_started', role, agent: session.name });
+    const observe = commands?.nextTurn();
     const policy = options.subagents?.[role];
     const subagents = new Map<string, SubagentState>();
     let violation: string | undefined;
@@ -545,6 +570,7 @@ export function runLoop(options: LoopOptions): Loop {
         },
         onSubagent,
         onStep: (step: TurnStep) => {
+          observe?.(step);
           options.onEvent?.({ type: 'step', role, step });
         },
         ...(options.onQuestion
@@ -573,7 +599,7 @@ export function runLoop(options: LoopOptions): Loop {
       });
       if (violation !== undefined) throw new Error(violation);
       checkStopped();
-      const handoff = handoffOf(role, result);
+      const handoff = handoffOf(role, result, commands);
       await emit({
         type: 'message',
         role,
@@ -586,7 +612,7 @@ export function runLoop(options: LoopOptions): Loop {
         ...(result.quota !== undefined ? { quota: result.quota } : {}),
         ...(result.context ? { context: result.context } : {}),
       });
-      return result;
+      return handoff ? { ...result, threadHandoff: handoff } : result;
     } catch (error) {
       if (violation === undefined) checkStopped();
       throw error;
@@ -636,9 +662,8 @@ export function runLoop(options: LoopOptions): Loop {
       held && work.data !== undefined && (brief.trim() !== '' || work.text.trim() !== '')
         ? contractFacts('Checks on the report', checkReport(brief, work.data, facts))
         : '';
-    if (note === '') return facts;
-    await emit({ type: 'contract', role: 'worker', message: note });
-    return `${facts}\n\n${note}`;
+    if (note !== '') await emit({ type: 'contract', role: 'worker', message: note });
+    return [facts, note, work.commandEvidence].filter(Boolean).join('\n\n');
   }
 
   /**
@@ -648,15 +673,22 @@ export function runLoop(options: LoopOptions): Loop {
    * user wrote directly to the implementer has no report to require.
    */
   async function implement(worker: AgentSession, prompt: string): Promise<Work> {
-    let result = await turn(worker, 'worker', prompt);
+    const commands = new CommandEvidence();
+    let result = await turn(worker, 'worker', prompt, undefined, commands);
     let read = readHandoff(result.handoffs, 'report');
     let text = result.text;
     if (read.value === null && held) {
-      result = await turn(worker, 'worker', reportRepairPrompt(read.errors));
+      result = await turn(worker, 'worker', reportRepairPrompt(read.errors), undefined, commands);
       read = readHandoff(result.handoffs, 'report');
       text = [text, result.text].filter((part) => part.trim() !== '').join('\n\n');
     }
-    return read.value ? { text: renderReport(read.value), data: read.value } : { text, data: null };
+    return read.value && result.threadHandoff
+      ? {
+          text: result.threadHandoff.text,
+          commandEvidence: result.threadHandoff.commandEvidence,
+          data: reportWithoutCommandReferences(read.value),
+        }
+      : { text, data: null };
   }
 
   /**
@@ -665,9 +697,10 @@ export function runLoop(options: LoopOptions): Loop {
    */
   async function reviewerTurn(reviewer: AgentSession, prompt: string, roundsLeft: number) {
     let restored = '';
-    const guarded = async (text: string): Promise<AgentTurnResult> => {
+    const commands = new CommandEvidence();
+    const guarded = async (text: string) => {
       const undo = options.guardReviewer?.() ?? null;
-      const result = await turn(reviewer, 'reviewer', text);
+      const result = await turn(reviewer, 'reviewer', text, undefined, commands);
       const put = undo ? undo() : '';
       if (put !== '') {
         await emit({ type: 'contract', role: 'reviewer', message: put });
@@ -687,7 +720,13 @@ export function runLoop(options: LoopOptions): Loop {
       review = readHandoff(result.handoffs, 'review');
       findings = readHandoff(result.handoffs, 'findings');
     }
-    return { text, review: review.value, findings: findings.value, restored };
+    return {
+      text,
+      review: review.value,
+      findings: findings.value,
+      restored,
+      handoff: result.threadHandoff,
+    };
   }
 
   /**
@@ -761,15 +800,15 @@ export function runLoop(options: LoopOptions): Loop {
         verdict: checked ? checked.verdict : null,
         rounds: round,
       });
-      const text = answer.review
-        ? renderReview(answer.review)
-        : answer.findings
-          ? renderFindings(answer.findings)
-          : answer.text.trim() === ''
-            ? EMPTY_REVIEW
-            : answer.text.trim();
+      const text = answer.handoff?.text ?? (answer.text.trim() || EMPTY_REVIEW);
       const review = withRestored(note === '' ? text : `${text}\n\n${note}`);
-      return { reviewer: reviewer.name, review, work, facts };
+      const reviewEvidence = answer.handoff?.commandEvidence;
+      return {
+        reviewer: reviewer.name,
+        review,
+        work,
+        facts: [facts, reviewEvidence].filter(Boolean).join('\n\n'),
+      };
     }
   }
 
@@ -788,7 +827,7 @@ export function runLoop(options: LoopOptions): Loop {
       const judged = await reviewed(
         worker,
         relay(of.brief),
-        { text: of.report, data: of.reportData },
+        { text: of.report, data: of.reportData, commandEvidence: of.reportCommandEvidence },
         1,
         of,
       );

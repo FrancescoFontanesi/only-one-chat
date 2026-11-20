@@ -943,6 +943,25 @@ describe('the steps of a turn (ADR 0019)', () => {
       status: 'running',
     });
     expect(itemStep({ type: 'userMessage', id: 'u' }, true)).toBeUndefined();
+  });
+
+  it('extracts the literal Codex PowerShell input only from the recorded launcher form', () => {
+    const command = `"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'pytest -k "test_round"'`;
+    const item = {
+      id: 'cmd',
+      type: 'commandExecution',
+      command,
+      status: 'completed',
+      exitCode: 0,
+    };
+    expect(itemStep({ ...item, source: 'unifiedExecStartup' }, true)).toMatchObject({
+      command,
+      commandInput: 'pytest -k "test_round"',
+    });
+    expect(itemStep(item, true)).not.toHaveProperty('commandInput');
+    expect(
+      itemStep({ ...item, source: 'unifiedExecStartup', command: `${command}; other` }, true),
+    ).not.toHaveProperty('commandInput');
     expect(tail('abcdef', 3)).toBe('…def');
     expect(diffCounts('--- a\n+++ b\n-x\n+y\n+z')).toEqual({ added: 2, removed: 1 });
   });

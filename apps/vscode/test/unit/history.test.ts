@@ -129,6 +129,37 @@ describe('chat history (R5)', () => {
     expect(history.load('chat-old')?.unseen).toEqual([]);
   });
 
+  it('restores a pending direct review and its command assessment after reopening the chat', () => {
+    const pending = {
+      source: 'review' as const,
+      request: 'Check the boundary',
+      report: '',
+      facts: '## Runtime command evidence\n\n- C1, command 1: no matching command observed',
+      review: 'Reviewer response',
+    };
+    new ChatHistory(dir).save({ ...record('chat-v', 1), unseen: [pending] });
+    expect(new ChatHistory(dir).load('chat-v')?.unseen).toEqual([pending]);
+  });
+
+  it('drops a malformed pending review without discarding its valid neighbors', () => {
+    const history = new ChatHistory(dir);
+    const pending = {
+      source: 'review',
+      request: 'Check',
+      report: '',
+      facts: '',
+      review: 'Reviewed.',
+    };
+    writeFileSync(
+      join(dir, 'chat-v.json'),
+      JSON.stringify({
+        ...record('chat-v', 1),
+        unseen: [{ ...pending, review: { text: 'Wrong shape' } }, pending],
+      }),
+    );
+    expect(history.load('chat-v')?.unseen).toEqual([pending]);
+  });
+
   it('keeps the roles a chat runs with, dropping a role of the wrong shape', () => {
     const history = new ChatHistory(dir);
     const leader = { cli: 'codex', model: 'gpt-6.1-sol', effort: 'low', permission: 'auto' };

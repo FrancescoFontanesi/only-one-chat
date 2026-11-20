@@ -284,16 +284,28 @@ function itemActivity(item: Json): { kind: string; detail: string } | undefined 
     return { kind: 'command', detail: String(item['command']) };
   }
   if (item['type'] === 'mcpToolCall') {
+    const name = `${String(item['server'])}/${String(item['tool'])}`;
     return {
       kind: 'mcp_tool',
-      detail: `${String(item['server'])}/${String(item['tool'])} ${JSON.stringify(item['arguments'])}`,
+      detail: isEvidenceHandoff(item) ? name : `${name} ${JSON.stringify(item['arguments'])}`,
     };
   }
   return undefined;
 }
 
+/** Reports and reviews can carry command references intended only for in-memory correlation. */
+function isEvidenceHandoff(item: Json): boolean {
+  return (
+    item['server'] === HANDOFF_SERVER_NAME &&
+    (item['tool'] === 'report' || item['tool'] === 'review')
+  );
+}
+
 /** A step of the turn, kept for its deltas and sent; `now` at its start and end. */
 function putStep(turn: RunningTurn, step: AgentTurnStep, now = false): void {
+  if (step.kind === 'command' && turn.deniedCommands.has(step.id)) {
+    step = { ...step, evidence: 'denied' };
+  }
   turn.steps.set(step.id, step);
   turn.stream.put(step, now);
 }
@@ -347,6 +359,19 @@ export function itemStep(item: Json, ended: boolean): AgentTurnStep | undefined 
     case 'commandExecution': {
       const exitCode = typeof item['exitCode'] === 'number' ? item['exitCode'] : null;
       const command = item['command'];
+      const state = item['status'];
+      // This exact launcher form appears in Codex's recorded unified-exec events on Windows.
+      const wrapped =
+        item['source'] === 'unifiedExecStartup' && typeof command === 'string'
+          ? /^"[A-Z]:\\[^"\r\n]*\\powershell\.exe" -Command '((?:[^']|'')*)'$/i.exec(command)
+          : null;
+      const commandInput = wrapped?.[1]?.replaceAll("''", "'");
+      const evidence =
+        state === 'declined'
+          ? ('denied' as const)
+          : ended && exitCode === null && state !== 'completed' && state !== 'failed'
+            ? ('incomplete' as const)
+            : undefined;
       return {
         kind: 'command',
         id,
@@ -357,6 +382,8 @@ export function itemStep(item: Json, ended: boolean): AgentTurnStep | undefined 
             : '',
         status: ended && exitCode !== null && exitCode !== 0 ? 'failed' : status(),
         exitCode,
+        ...(commandInput ? { commandInput } : {}),
+        ...(evidence ? { evidence } : {}),
         durationMs: typeof item['durationMs'] === 'number' ? item['durationMs'] : null,
         output: tail(typeof item['aggregatedOutput'] === 'string' ? item['aggregatedOutput'] : ''),
       };
@@ -387,7 +414,9 @@ export function itemStep(item: Json, ended: boolean): AgentTurnStep | undefined 
         kind: 'tool',
         id,
         name: `${String(item['server'])}/${String(item['tool'])}`,
-        detail: JSON.stringify(item['arguments'] ?? null).slice(0, 240),
+        detail: isEvidenceHandoff(item)
+          ? ''
+          : JSON.stringify(item['arguments'] ?? null).slice(0, 240),
         status: status(),
       };
     case 'webSearch':
@@ -418,12 +447,14 @@ type TurnOutcome =
 interface RunningTurn {
   readonly handlers: AgentTurnHandlers;
   turnId?: string;
+  started?: Promise<void>;
   /** The answer's messages: every agent message but the intermediate ones. */
   readonly messages: string[];
   /** The phase of each agent message, from its start (ADR 0019). */
   readonly phases: Map<string, unknown>;
   /** The steps shown so far, by item id, to add the deltas to. */
   readonly steps: Map<string, AgentTurnStep>;
+  readonly deniedCommands: Set<string>;
   readonly stream: StepStream;
   readonly startedAt: number;
   /** The thread's cumulative tokens when the turn started. */
@@ -538,7 +569,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
     const session = await connectCodex({
       ...sessionOptions,
       clientInfo: { name: 'only-one-chat', title: 'Only One Chat', version: '0.0.0' },
-      onNotification(method, params) {
+      onNotification: function notify(method, params) {
         if (!isRecord(params)) return;
         // Usage and quota, kept whether or not a turn is running.
         if (method === 'thread/tokenUsage/updated' && typeof params['threadId'] === 'string') {
@@ -564,12 +595,25 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
           turn.quota = codexQuota(params['rateLimits']) ?? turn.quota;
           return;
         }
+        // A response and its first events can arrive in the same stdout chunk.
+        // Only the turn/start response can associate those events with this request.
+        if (turn.turnId === undefined) {
+          void turn.started?.then(
+            () => {
+              if (current === turn) notify(method, params);
+            },
+            () => undefined,
+          );
+          return;
+        }
         const notifiedThread = params['threadId'];
         if (typeof notifiedThread === 'string' && notifiedThread !== threadId) {
           onChildNotification(turn, notifiedThread, method, params);
           return;
         }
         if (notifiedThread !== threadId) return;
+        if (typeof params['turnId'] === 'string' && params['turnId'] !== turn.turnId) return;
+        if (method.startsWith('item/') && params['turnId'] !== turn.turnId) return;
         const itemId = typeof params['itemId'] === 'string' ? params['itemId'] : '';
         if (method === 'item/agentMessage/delta' && typeof params['delta'] === 'string') {
           // An intermediate message is a step of the turn; the answer streams as text.
@@ -634,7 +678,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
           turn.handlers.onActivity?.({ kind: 'error', detail: String(params['error']['message']) });
         } else if (method === 'turn/completed' && isRecord(params['turn'])) {
           const completed = params['turn'];
-          if (turn.turnId !== undefined && completed['id'] !== turn.turnId) return;
+          if (completed['id'] !== turn.turnId) return;
           turn.stream.flush();
           const status = completed['status'];
           if (status === 'completed') {
@@ -665,6 +709,17 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         }
       },
       async onServerRequest(method, params) {
+        const turn = current;
+        const scope = isRecord(params) ? params : {};
+        if (turn && scope['threadId'] === threadId) {
+          await turn.started?.catch(() => undefined);
+          if (
+            current !== turn ||
+            (typeof scope['turnId'] === 'string' && scope['turnId'] !== turn.turnId)
+          ) {
+            return approvalResponse(method, 'decline');
+          }
+        }
         if (method === 'item/tool/requestUserInput') {
           // Only a turn that can ask gets an answer; otherwise the request fails.
           const turnHandlers = current?.handlers;
@@ -681,9 +736,22 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         }
         const summary = summarize(method, params);
         // Without a turn there is nobody to ask: declined.
-        const decision = current
-          ? await current.handlers.onApprovalRequest({ kind: method, summary })
+        const decision = turn
+          ? await turn.handlers.onApprovalRequest({ kind: method, summary })
           : 'decline';
+        const id = scope['itemId'];
+        if (
+          turn &&
+          decision === 'decline' &&
+          scope['threadId'] === threadId &&
+          scope['turnId'] === turn.turnId &&
+          method === 'item/commandExecution/requestApproval' &&
+          typeof id === 'string'
+        ) {
+          turn.deniedCommands.add(id);
+          const step = turn.steps.get(id);
+          if (step?.kind === 'command') putStep(turn, step, true);
+        }
         return approvalResponse(method, decision);
       },
     });
@@ -776,6 +844,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         messages: [],
         phases: new Map(),
         steps: new Map(),
+        deniedCommands: new Set(),
         stream: new StepStream((step) => handlers.onStep?.(step)),
         startedAt: Date.now(),
         baseline: totals.get(threadId) ?? NO_TOKENS,
@@ -784,7 +853,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         settle,
       };
       current = turn;
-      session
+      turn.started = session
         .request('turn/start', {
           threadId,
           input: codexInput(prompt, options?.skill),
@@ -794,14 +863,15 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
           summary: 'auto',
         })
         .then((response) => {
-          if (isRecord(response) && isRecord(response['turn'])) {
-            const id = response['turn']['id'];
-            if (typeof id === 'string') turn.turnId = id;
-          }
-        })
-        .catch((error: unknown) => {
-          settle(error instanceof Error ? error : new Error(String(error)));
+          const data = isRecord(response) && isRecord(response['turn']) ? response['turn'] : {};
+          const id = data['id'];
+          if (typeof id !== 'string' || id === '')
+            throw new Error('Codex turn/start returned no turn ID');
+          turn.turnId = id;
         });
+      void turn.started.catch((error: unknown) => {
+        settle(error instanceof Error ? error : new Error(String(error)));
+      });
 
       return {
         done,

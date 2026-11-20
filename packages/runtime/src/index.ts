@@ -40,6 +40,7 @@ export type {
   TurnUsage,
 } from './agent.js';
 export { extractResult, parseBrief, resultTemplate, type Brief } from './brief.js';
+export { CommandEvidence } from './command-evidence.js';
 export { openEventLog, type EventLog, type LoggedEvent } from './event-log.js';
 export { changedFiles, checkReport, checkReview, contractFacts, criteriaOf } from './contract.js';
 export {

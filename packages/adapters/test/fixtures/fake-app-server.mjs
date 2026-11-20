@@ -406,6 +406,13 @@ const handlers = {
     // message, the reasoning, a command and its output, a file change, the plan.
     if (text.includes('[steps]')) {
       const item = (body) => ({ threadId, turnId, item: body, startedAtMs: Date.now() });
+      const command = text.includes('[wrapped-evidence]')
+        ? {
+            command:
+              '"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command \'pnpm test\'',
+            source: 'unifiedExecStartup',
+          }
+        : { command: 'pnpm test' };
       notify(
         'item/started',
         item({ type: 'agentMessage', id: 'c1', text: '', phase: 'commentary' }),
@@ -442,7 +449,7 @@ const handlers = {
         item({
           type: 'commandExecution',
           id: 'x1',
-          command: 'pnpm test',
+          ...command,
           status: 'inProgress',
           aggregatedOutput: null,
           exitCode: null,
@@ -460,7 +467,7 @@ const handlers = {
         item({
           type: 'commandExecution',
           id: 'x1',
-          command: 'pnpm test',
+          ...command,
           status: 'completed',
           aggregatedOutput: 'ok 3 tests\n',
           exitCode: 0,
@@ -538,6 +545,45 @@ const handlers = {
         params: { threadId, turnId, itemId: 'cmd-1', command: 'git push', reason: 'needs network' },
       });
       answer = `decision=${JSON.stringify((await reply).result ?? (await reply).error)}`;
+    }
+    if (text.includes('[denied-evidence]')) {
+      notify('item/completed', {
+        threadId,
+        turnId: 'turn-1',
+        item: {
+          type: 'commandExecution',
+          id: 'old-check',
+          command: 'fake-check --stale',
+          status: 'completed',
+          exitCode: 0,
+        },
+      });
+      const staleRequest = nextServerRequestId++;
+      const staleReply = new Promise((resolve) => awaitingClient.set(staleRequest, resolve));
+      send({
+        id: staleRequest,
+        method: 'item/commandExecution/requestApproval',
+        params: {
+          threadId,
+          turnId: 'turn-1',
+          itemId: 'must-not-count',
+          command: 'fake-check --stale',
+        },
+      });
+      await staleReply;
+      const command = 'fake-check --approval';
+      const id = 'must-not-count';
+      const execution = { type: 'commandExecution', id, command };
+      notify('item/started', { threadId, turnId, item: { ...execution, status: 'inProgress' } });
+      const serverId = nextServerRequestId++;
+      const reply = new Promise((resolve) => awaitingClient.set(serverId, resolve));
+      send({
+        id: serverId,
+        method: 'item/commandExecution/requestApproval',
+        params: { threadId, turnId, itemId: id, command },
+      });
+      await reply;
+      notify('item/completed', { threadId, turnId, item: { ...execution, status: 'failed' } });
     }
     const itemId = `msg-${turnId}`;
     const half = Math.ceil(answer.length / 2);

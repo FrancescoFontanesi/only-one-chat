@@ -91,8 +91,12 @@ export type TurnStep =
       readonly kind: 'command';
       readonly id: string;
       readonly command: string;
+      /** Original command when the adapter can identify a provider-added wrapper. */
+      readonly commandInput?: string;
       readonly status: StepStatus;
       readonly exitCode: number | null;
+      /** Special cases where the display step cannot attest a command outcome. */
+      readonly evidence?: 'title' | 'denied' | 'incomplete';
       readonly durationMs: number | null;
       /** The last part of what it printed. */
       readonly output: string;

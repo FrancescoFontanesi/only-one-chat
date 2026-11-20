@@ -244,6 +244,7 @@ export interface TurnHandoff {
   /** `delegate`, `report`, `findings` or `review`. */
   readonly tool: string;
   readonly text: string;
+  readonly commandEvidence?: string;
   /** `report`: `done`, `partial` or `blocked`. */
   readonly outcome?: string;
   /** `review`: `approved`, `with_reservations` or `rejected`. */

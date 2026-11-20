@@ -26,9 +26,11 @@ export interface Schema {
   readonly items?: Schema;
   readonly enum?: readonly (string | number)[];
   readonly minLength?: number;
+  readonly maxLength?: number;
   /** A regular expression the whole string must match. */
   readonly pattern?: string;
   readonly minItems?: number;
+  readonly maxItems?: number;
 }
 
 /** The errors of `value` against `schema`, with their paths; empty when valid. */
@@ -55,6 +57,9 @@ export function validate(schema: Schema, value: unknown, at = '$'): string[] {
     if (schema.minItems !== undefined && value.length < schema.minItems) {
       errors.push(`${at}: at least ${String(schema.minItems)} item(s)`);
     }
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+      return [`${at}: at most ${String(schema.maxItems)} item(s)`];
+    }
     if (schema.items) {
       const items = schema.items;
       value.forEach((item, i) => errors.push(...validate(items, item, `${at}[${String(i)}]`)));
@@ -65,6 +70,9 @@ export function validate(schema: Schema, value: unknown, at = '$'): string[] {
     if (typeof value !== 'string') return [`${at}: expected a string`];
     if (schema.minLength !== undefined && value.trim().length < schema.minLength) {
       errors.push(`${at}: at least ${String(schema.minLength)} character(s)`);
+    }
+    if (schema.maxLength !== undefined && value.length > schema.maxLength) {
+      errors.push(`${at}: at most ${String(schema.maxLength)} character(s)`);
     }
     if (schema.pattern !== undefined && !new RegExp(schema.pattern).test(value)) {
       errors.push(`${at}: must match ${schema.pattern}`);

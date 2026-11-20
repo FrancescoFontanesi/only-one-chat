@@ -438,6 +438,11 @@ function HandoffCard({
         refs={refs}
         leaf={(text) => <Linked text={text} refs={refs} />}
       />
+      {typeof handoff.commandEvidence === 'string' && handoff.commandEvidence && (
+        <aside aria-label="Runtime command evidence" class="rep">
+          <Markdown class="t-body" text={handoff.commandEvidence} />
+        </aside>
+      )}
     </section>
   );
 }
@@ -467,7 +472,9 @@ function Turn({ item }: { item: Item<'turn'> }) {
         )}
         <span class="who__acts">
           {(body !== '' || handoff) && !running && (
-            <Copy text={[body, handoff?.text ?? ''].filter(Boolean).join('\n\n')} />
+            <Copy
+              text={[body, handoff?.text, handoff?.commandEvidence].filter(Boolean).join('\n\n')}
+            />
           )}
         </span>
       </div>

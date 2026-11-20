@@ -25,5 +25,6 @@ Status: Accepted. Extends the runtime's verified facts in ADR 0010. First step o
 
 - The checks read captured file contents and consume no quota.
 - The diff provides independent evidence for claims about tests and checks in the report.
-- **Deferred roadmap items** include identifying files outside the brief's scope and changes to the public interface, which require interpreting the brief and each language. Comparing reported test runs against the turn's command steps also remains deferred until those steps are linked to verified facts.
+- **Deferred roadmap items** include identifying files outside the brief's scope and changes to the public interface, which require interpreting the brief and each language.
+- [ADR 0036](0036-verification-traceability.md) defines how to compare reported verification commands with the CLI's command events.
 - **The checks can produce false alarms.** Pattern matching sees `x as any` in comments and strings. The flags still serve their purpose, and an AST-based check is currently too costly.

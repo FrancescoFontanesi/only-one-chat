@@ -50,12 +50,7 @@ The runtime can identify:
   It can flag a report that claims to have run tests when the command is absent from
   that activity.
 
-Partially implemented in [ADR 0030](decisions/0030-diff-checks.md). The runtime compares
-the workspace before the message with its current state and flags removed tests or
-reductions in cases and assertions, added `skip` and `only`, disabled checks, and changes
-to the lockfile and check configuration. Detecting edits outside the brief's scope,
-changes to the public interface, and mismatches between claimed checks and recorded
-turn activity remains open.
+[ADR 0030](decisions/0030-diff-checks.md) implements checks for removed tests, reduced case and assertion counts, added `skip` or `only`, disabled checks, and changes to lockfiles or check configuration. [ADR 0036](decisions/0036-verification-traceability.md) defines how to link reported verification commands to observed command events. Detecting edits outside the brief's scope and changes to public interfaces remains open.
 
 ### 2. Red-green verification across two worktrees
 

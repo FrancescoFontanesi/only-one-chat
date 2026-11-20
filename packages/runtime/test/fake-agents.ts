@@ -16,8 +16,9 @@ import type {
   SubagentEvent,
   TurnOptions,
 } from '../src/index.js';
+import type { TurnStep } from '../src/agent.js';
 
-export type Step =
+export type Step = (
   | {
       readonly answer: string;
       readonly subagents?: readonly SubagentEvent[];
@@ -31,7 +32,8 @@ export type Step =
     }
   /** Asks the user (ADR 0019); `answer` then carries the answers given, as JSON, after it. */
   | { readonly ask: readonly AgentQuestion[]; readonly answer: string }
-  | { readonly hang: true; readonly subagents?: readonly SubagentEvent[] };
+  | { readonly hang: true; readonly subagents?: readonly SubagentEvent[] }
+) & { readonly commandSteps?: readonly TurnStep[] };
 
 export interface FakeAgent {
   readonly factory: AgentFactory;
@@ -84,6 +86,7 @@ export function fakeAgent(
       for (const event of 'subagents' in step ? (step.subagents ?? []) : []) {
         handlers.onSubagent?.(event);
       }
+      for (const command of step.commandSteps ?? []) handlers.onStep?.(command);
       if ('hang' in step) {
         await new Promise<void>((_resolve, reject) => {
           stop = () => {

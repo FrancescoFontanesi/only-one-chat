@@ -78,12 +78,12 @@ export function expandMentions(text: string, cwd: string): Expanded {
     seen.add(key);
     if (found.folder || from === undefined || to === undefined) {
       mentions.push({ path, kind: found.folder ? 'folder' : 'file' });
-      blocks.push(`- ${path}${found.folder ? ' (cartella)' : ''}`);
+      blocks.push(`- ${path}${found.folder ? ' (folder)' : ''}`);
       continue;
     }
     const lines = { from: Math.min(from, to), to: Math.max(from, to) };
     mentions.push({ path, kind: 'file', lines });
-    const range = `${path}, righe ${String(lines.from)}-${String(lines.to)}`;
+    const range = `${path}, lines ${String(lines.from)}-${String(lines.to)}`;
     let excerpt: string | undefined;
     if (lines.to - lines.from + 1 <= MAX_EXCERPT_LINES) {
       try {
@@ -97,7 +97,7 @@ export function expandMentions(text: string, cwd: string): Expanded {
     const language = extname(path).slice(1);
     blocks.push(
       excerpt === undefined
-        ? `- ${range} (troppe per includerle: leggile dal file)`
+        ? `- ${range} (too many lines to include, read them from the file)`
         : [`- ${range}:`, `\`\`\`${language}`, excerpt, '```'].join('\n'),
     );
   }
@@ -107,8 +107,8 @@ export function expandMentions(text: string, cwd: string): Expanded {
       blocks.length === 0
         ? ''
         : [
-            'Allegati indicati dall’utente (percorsi relativi alla cartella di lavoro; leggi i',
-            'file che ti servono, anche con i tuoi sotto-agenti):',
+            'User attachments (paths are relative to the working folder. Read the',
+            'files you need, using subagents if appropriate):',
             ...blocks,
           ].join('\n'),
   };
@@ -134,7 +134,7 @@ export function resolveRefs(text: string, cwd: string): { found: string[]; missi
 /**
  * A message between agents with its `@` paths as plain paths (ADR 0018), so
  * every CLI reads them the same way: `@a.ts` → `a.ts`, `@a.ts#L3-9` →
- * `a.ts (righe 3-9)`. Tokens that name nothing in the folder stay as written.
+ * `a.ts (lines 3-9)`. Tokens that name nothing in the folder stay as written.
  */
 export function plainRefs(text: string, cwd: string): string {
   let out = '';
@@ -143,8 +143,8 @@ export function plainRefs(text: string, cwd: string): string {
     if (!inside(cwd, token.path.replace(/\/+$/, ''))) continue;
     const range = token.lines
       ? token.lines.from === token.lines.to
-        ? ` (riga ${String(token.lines.from)})`
-        : ` (righe ${String(token.lines.from)}-${String(token.lines.to)})`
+        ? ` (line ${String(token.lines.from)})`
+        : ` (lines ${String(token.lines.from)}-${String(token.lines.to)})`
       : '';
     out += text.slice(at, token.start) + token.path + range;
     at = token.end;

@@ -15,7 +15,7 @@ export function usageWarnings(usage: UsageStore, openChat: () => void): vscode.D
   const unsubscribe = usage.onChange(() => {
     const threshold = setting('notifications.usageThreshold', 80);
     for (const alert of usageAlerts(usage.snapshot(), threshold, seen)) {
-      void vscode.window.showWarningMessage(alert, 'Apri la chat').then((answer) => {
+      void vscode.window.showWarningMessage(alert, 'Open Chat').then((answer) => {
         if (answer) openChat();
       });
     }
@@ -28,7 +28,7 @@ export function notifyChat(kind: 'waiting' | 'turnEnd', text: string, reveal: ()
   if (!setting(`notifications.${kind}`, kind === 'waiting')) return;
   const show =
     kind === 'waiting' ? vscode.window.showWarningMessage : vscode.window.showInformationMessage;
-  void show(text, 'Apri la chat').then((answer) => {
+  void show(text, 'Open Chat').then((answer) => {
     if (answer) reveal();
   });
 }

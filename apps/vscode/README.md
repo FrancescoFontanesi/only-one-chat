@@ -14,15 +14,14 @@ though it reads the repository and runs commands to search and check. Every chan
 implementer.
 
 - **The leader answers, explains and asks** what it needs to decide.
-- **When you ask for the prompt or the work** ("genera il prompt", "procedi"), it writes a brief
-  for the implementer (ADR 0020): Obiettivo, Contesto with `@path`, Vincoli, Criteri di
-  accettazione, Confini, Fermati se. The brief never asks for a report: the implementer's own
-  role prompt has its format, between `<<<RAPPORTO` and `RAPPORTO>>>` (Esito, Modifiche,
-  Verifica, Decisioni, Bloccato su, Fuori ambito), and the thread shows it as a card.
-- **How the brief reaches the implementer** is the delivery, in the leader's dial (CONSEGNA) or
+- **When you ask the leader to delegate**, it sends the implementer a brief with the goal,
+  relevant `@path` references, constraints, and acceptance criteria. The roles use the
+  extension’s MCP tools for delegation, reports, findings, and reviews. The thread shows
+  each handoff in a card (ADR 0035).
+- **How the brief reaches the implementer** is the delivery, in the leader's dial (DELIVERY) or
   in the box:
   - **AUTO:** it goes at once;
-  - **MANUALE:** it waits for you in place of the box, editable as free text, and the chat waits
+  - **MANUAL:** it waits for you in place of the box, editable as free text, and the chat waits
     with it until you send or cancel it. A brief still waiting when the chat closes is kept with
     it and waits again when you reopen it.
 - **The implementer's report reaches the leader as it is**, never edited, with the facts the
@@ -31,7 +30,7 @@ implementer.
   `deferred` it reads them with your next message instead, one leader turn less.
 - **While it works, the leader may ask you questions** (ADR 0019, 0022), with Codex's or
   Claude Code's own tool: they take the box's
-  place, one at a time, as a choice among its options (with "Altro" for your own words) or as a
+  place, one at a time, as a choice among its options (with "Other" for your own words) or as a
   free answer, and its turn goes on with your answers. The implementer does not ask: a decision
   missing from its brief stops it, and it says so in its report.
 - **For a small change, write to the implementer directly:** it is the cheapest way, and the
@@ -40,18 +39,18 @@ implementer.
   runs it and writes tests, never the code (what it changes outside the tests is put back), and
   judges honesty, security, being up to date and the brief's criteria. Its findings go back to
   the implementer for a few rounds, then the leader reads its review in place of the report. You
-  can ask it for a review yourself (REVISORE in the box, `/rev`), and switch it off on the dial or
+  can ask it for a review yourself (REVIEWER in the box, `/rev`), and switch it off on the dial or
   in Squad. By default: Claude Haiku at high reasoning.
 
 ## The chat
 
 The chat opens in an editor tab, which you can move and resize; the layout follows its width.
 
-- **The bar:** the folder and the chat's title, its state (PRONTO, IN CORSO, ASPETTA TE, NON
-  PRONTO), STORICO (the chats of this folder), NUOVA and IMPOSTAZIONI. SQUAD is in the box's foot,
-  between CTX and INVIA.
+- **The bar:** the folder and the chat's title, its state (READY, RUNNING, WAITING, NOT
+  READY), HISTORY (the chats of this folder), NEW CHAT and SETTINGS. SQUAD is in the box's foot,
+  between CTX and SEND.
 - **The thread:** one column; each message opens with a line saying who wrote it, with which
-  model, and its state, and COPIA (and ↺ RIPRISTINA QUI on yours) at hand. A turn shows what the
+  model, and its state, and COPY (and ↺ RESTORE HERE on yours) at hand. A turn shows what the
   agent does as it happens (ADR 0019): its intermediate messages, its reasoning (Codex's summary;
   with Claude only that it reasoned), each command with its exit code, time and output, each
   changed file with its diff, the turn's plan and its other tools; a step opens on a click; its context, output, time and, for
@@ -63,24 +62,24 @@ The chat opens in an editor tab, which you can move and resize; the layout follo
   grows with the text up to about a third of the panel, then scrolls. Under the text, one line:
   each choice shows only what is chosen, with one square per option (point at a square to see
   that option, click it to choose, or click the name to move to the next).
-  - **A — LEADER / IMPLEMENTATORE:** who receives it, one per message. Writing to the implementer
+  - **A — LEADER / IMPLEMENTER:** who receives it, one per message. Writing to the implementer
     directly is the cheapest way when you already know what to ask; the leader reads that report
     with your next message;
-  - **CONSEGNA:** for the leader, whether its briefs go at once (AUTO) or wait for you
-    (MANUALE), when the dials are not shown;
+  - **DELIVERY:** for the leader, whether its briefs go at once (AUTO) or wait for you
+    (MANUAL), when the dials are not shown;
   - **CTX:** how full the session of the agent you write to is, after its latest turn;
   - `@` in the text names a file or a folder, and **+** attaches files (see below); `$` names a skill of the CLI you
     write to, which it invokes in its own way (Claude may also choose skills by itself, as
     Codex does); `/` at the start of the text lists
-    the commands: `/impl`, `/leader`, `/allega`, `/skill`, `/nuova` (or
-    `/ferma` while it works), `/squad`, `/impostazioni`. Any other text that starts with `/`
+    the commands: `/impl`, `/leader`, `/attach`, `/skill`, `/new` (or
+    `/stop` while it works), `/squad`, `/settings`. Any other text that starts with `/`
     reaches the agent as text: the CLIs' own commands (`/clear`, `/plan`…) never run from the
     chat.
 - **On a wide panel,** two dials sit beside the box. On the left, who you talk to, in two steps (ADR 0028): the
   label at the top (↕) chooses the group (the leader and the implementer, named by their alias,
   else by the leader's provider) or a node alone; the outer ring chooses the role inside the
   group, LDR or IMP, and stays empty for a node alone. Its sight sets the reasoning (drag, click a segment or use the wheel);
-  the level reads above the middle line. Under it, for the leader the delivery, AUTO or MANUALE; for the implementer
+  the level reads above the middle line. Under it, for the leader the delivery, AUTO or MANUAL; for the implementer
   its model (↕ moves to the next one) and **HANDOFF**, a new session of the same model that starts
   from a handoff the current one writes; a node has only its model and reasoning there. On the
   right the usage of the provider of who you talk to (Codex, Claude, Antigravity): 5 hours and
@@ -112,7 +111,7 @@ Nothing changes the roles automatically.
 
 ### Nodes
 
-**+ NODO** adds an agent to the board besides the two roles (ADR 0023): Codex, Claude Code or
+**+ NODE** adds an agent to the board besides the two roles (ADR 0023): Codex, Claude Code or
 Antigravity, whose CLI speaks the Agent Client Protocol (`agy acp`).
 
 - **Its own thread:** select it, on the board or on the left dial, and the chat shows its
@@ -122,7 +121,7 @@ Antigravity, whose CLI speaks the Agent Client Protocol (`agy acp`).
   change in Squad; it is kept in the folder's settings (`onlyOneChat.nodes`), and its thread
   with the chat.
 - **On Antigravity,** the model's levels are its reasoning (Gemini 3.8 Flash: low, medium, high).
-  Read-only, every permission it asks for is denied by its role; Chiede asks you; Auto is
+  Read-only, every permission it asks for is denied by its role; Ask asks you; Auto is
   Antigravity's own auto mode.
 
 ![A node's own thread: Gemini on Antigravity](https://raw.githubusercontent.com/FrancescoFontanesi/only-one-chat/main/docs/images/node.png)
@@ -155,12 +154,12 @@ Nothing is read from credential files or session files.
 
 ## Settings
 
-IMPOSTAZIONI in the chat's bar (or "Only One Chat: Settings")
+SETTINGS in the chat's bar (or "Only One Chat: Settings")
 opens a page with all the settings, grouped: roles, delegations, your own instructions per role,
 sub-agents, permissions and unsaved files, the composer, notifications, the CLIs.
 
 - They are VS Code's own settings: the page says whether a value comes from the default, your
-  user settings or the folder's, and SALVA PER chooses where it writes.
+  user settings or the folder's, and SAVE TO chooses where it writes.
 - CLI paths, allowed commands, the verify command and the instructions per role are user
   settings only: a folder's settings cannot change them.
 
@@ -169,7 +168,7 @@ sub-agents, permissions and unsaved files, the composer, notifications, the CLIs
 - **`@` in the box** names a file or a folder in your text, as in Claude Code and Codex (ADR 0026):
   it lists the folder's files and folders, and the one you pick (arrows and Enter) is written as
   `@path`. The thread shows it as a link to the file; the agent receives the relative path.
-- **+ before CTX** (or `/allega`) attaches files to the message's context: VS Code's file picker
+- **+ before CTX** (or `/attach`) attaches files to the message's context: VS Code's file picker
   opens on the folder, and the files go above the text. **Ctrl+Alt+K** in the editor (or "Add
   File or Selection to Chat" in its context menu) attaches the open file, or the selected lines
   as `file#L10-20`.
@@ -182,9 +181,9 @@ sub-agents, permissions and unsaved files, the composer, notifications, the CLIs
 
 - **Before each of your messages** the extension records the folder's files in its own storage
   (no git involved).
-- **After the message** a MODIFICHE card lists each changed file with the lines added and
-  removed. Click a file for VS Code's diff; ACCETTA keeps it, RIFIUTA puts it back as it was.
-- **"↺ ripristina qui"** on one of your messages brings the folder back to before it.
+- **After the message** a CHANGES card lists each changed file with the lines added and
+  removed. Click a file for VS Code's diff; ACCEPT keeps it, REJECT puts it back as it was.
+- **"↺ RESTORE HERE"** on one of your messages brings the folder back to before it.
 - **The conversation is not rewound:** the agents are told, with your next message, which
   files were put back.
 - **Not covered:** files over 2 MB, the excluded folders (`.git`, `node_modules`, …), and what a
@@ -197,7 +196,7 @@ sub-agents, permissions and unsaved files, the composer, notifications, the CLIs
 - **When you open the panel again**, the most recent chat comes back, and the leader and the
   implementer continue their sessions (`--resume` for Claude, `thread/resume` for Codex).
   Reports of the implementer the leader had not read yet reach it with your next message.
-- **Earlier chats** are in STORICO; + NUOVA starts an empty one.
+- **Earlier chats** are in HISTORY; NEW CHAT starts an empty one.
 - **What was running or waiting** when the chat was closed is shown as interrupted.
 
 ## Scope and safety
@@ -216,14 +215,12 @@ sub-agents, permissions and unsaved files, the composer, notifications, the CLIs
     its classifier decides what would otherwise ask, as in the Claude Code extension. Where
     auto mode is not available (plan, model), Claude says so in the chat and works in default
     mode. `bypassPermissions` is never used.
-- **The level can change during the chat** from the left dial (PERMESSI: Legge · Chiede · Auto)
+- **The level can change during the chat** from the left dial (PERMISSIONS: Read · Ask · Auto)
   or from Squad; it applies from the implementer's next turn.
-- **When an agent asks**, a PERMESSO card appears in the chat: once, for the session (the same
+- **When an agent asks**, a PERMISSION card appears in the chat: once, for the session (the same
   command or file only), or no. Stopping the chat declines what is still waiting.
 - **What waits for you** (permissions, delegations to send, questions) is counted on the SQUAD
   button and listed in Squad, where each can be answered. A short notice above the composer
   says when a new one arrives; click it to open Squad.
 - **`onlyOneChat.ignoredPaths`** leaves paths out of the verified facts, the checkpoints and the
   changes card, written as in a `.gitignore` (for example `graft/` for a tool's cache).
-
-License: MIT.

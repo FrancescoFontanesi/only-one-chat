@@ -1,34 +1,23 @@
-# 0002. Riuso dei sorgenti di riferimento: solo reimplementazione
+# 0002. Reuse policy for reference sources
 
-- Stato: Accettata (2026-10-18)
+- Status: Accepted (2026-10-18)
 
-## Contesto
+## Context
 
-L'obiettivo è un progetto indipendente, pubblicabile liberamente sotto MIT, senza
-obblighi verso altri progetti. I riferimenti sono MIT (usturlab, Augani, VS Code samples)
-e Apache-2.0 (Codex). Entrambe le licenze permettono il riuso, ma **obbligano** a conservare
-i copyright notice nelle "porzioni sostanziali" copiate. Apache-2.0 richiede in più di
-conservare il NOTICE e di indicare le modifiche. L'unico modo per non avere obblighi di
-attribuzione è non copiare codice.
+At bootstrap, the intent was to build an independent project that could be published under MIT without taking on attribution obligations from copied reference code. The project license is currently deferred under [ADR 0035](0035-handoff-tools-and-english.md).
 
-## Decisione
+The reference projects use MIT (usturlab, Augani, and VS Code samples) and Apache-2.0 (Codex). Both licenses allow reuse and require preserving copyright notices when substantial portions are copied. Apache-2.0 also requires preserving the NOTICE and indicating changes. Independent implementation avoids attribution obligations from copying reference code.
 
-1. Dai riferimenti si prendono **idee, architetture, pattern e comportamenti osservabili**.
-   Non si prende codice copiato, tradotto riga per riga o parafrasato in modo meccanico.
-2. Il codice si scrive partendo dai requisiti di questo progetto, senza tenere aperto
-   il file di riferimento come modello da trascrivere.
-3. Sono ammesse senza attribuzione le parti non proteggibili o ovvie: nomi dei messaggi
-   di un protocollo, formati dei dati, flag dei CLI e pattern standard dell'API VS Code
-   documentati da Microsoft (per esempio la CSP con nonce).
-4. Se in futuro un riuso diretto diventasse davvero conveniente, serve un nuovo ADR
-   approvato dall'utente che lo autorizzi caso per caso, con `THIRD_PARTY_NOTICES.md`.
-5. Nessun codice proveniente da estensioni proprietarie (per esempio l'estensione
-   ufficiale di Codex), nemmeno come riferimento di lettura.
+## Decision
 
-## Conseguenze
+1. References supply **ideas, architectures, patterns, and observable behavior**. Copying code, translating it line by line, and mechanically paraphrasing it are prohibited.
+2. Implement from this project's requirements. Keep reference files closed while writing the corresponding code to avoid using them as transcription templates.
+3. Unprotectable or commonplace material may be used without attribution. Examples include protocol message names, data formats, CLI flags, and standard VS Code API patterns documented by Microsoft, such as a nonce-based CSP.
+4. Direct reuse requires a new ADR approved by the user on a case-by-case basis, with `THIRD_PARTY_NOTICES.md`.
+5. Code from proprietary extensions, including the official Codex extension, is out of scope even as reading material.
 
-- Il repository resta MIT senza notice di terze parti (fatta eccezione per le dipendenze
-  npm, che hanno le loro licenze e non sono incluse nel repository).
-- Chiunque lavori sul repo, persone o agenti, deve rispettare questa regola.
-- La licenza MIT del progetto è provvisoria e va confermata prima di una distribuzione
-  pubblica.
+## Consequences
+
+- The repository carries no notices for copied reference code. npm dependencies have their own licenses and are distributed separately from the repository.
+- The reuse policy applies to everyone who works on the repository, including agents.
+- MIT was an initial project licensing proposal. The project currently has no declared license. An explicit licensing decision is required before public distribution.

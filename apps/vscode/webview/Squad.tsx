@@ -38,7 +38,7 @@ import {
   writeNode,
 } from './ui.js';
 
-const STATE_TAG = { working: 'LAVORA', waiting: '▲ ASPETTA TE', idle: '○ FERMO' } as const;
+const STATE_TAG = { working: 'WORKING', waiting: '▲ ACTION REQUIRED', idle: '○ IDLE' } as const;
 const LEVEL = { info: '■', warn: '▲', error: '×' } as const;
 const INDEX: Record<TurnRole, string> = { leader: 'A', implementer: 'B', reviewer: 'C' };
 /** A node's letter on the board: D, E, … after the three roles. */
@@ -102,7 +102,7 @@ function Agent({
                   : 'cn-tag'
             }
           >
-            {off ? '× SPENTO' : STATE_TAG[status]}
+            {off ? '× OFF' : STATE_TAG[status]}
           </span>
         </button>
         <div class="xf__b sq-agent__b">
@@ -111,14 +111,14 @@ function Agent({
             {info
               ? [
                   PROVIDER[info.cli],
-                  info.effort || 'nessun reasoning',
+                  info.effort || 'no reasoning levels',
                   PERMISSIONS.find((p) => p.value === info.permission)?.short ?? '',
-                  ...(locked ? ['bloccato'] : []),
+                  ...(locked ? ['locked'] : []),
                 ].join(' · ')
-              : 'ruolo non letto'}
+              : 'role unavailable'}
           </span>
           <dl class="cn-spec sq-agent__s">
-            <dt>Contesto</dt>
+            <dt>Context</dt>
             <dd>
               {value !== null ? (
                 <>
@@ -129,15 +129,15 @@ function Agent({
                 <span class="t-data mut">—</span>
               )}
             </dd>
-            <dt>Ora</dt>
+            <dt>Activity</dt>
             <dd>
               <span class={status === 'working' ? 't-data cn-cursor sq-agent__a' : 't-data mut'}>
-                {agent?.activity ?? (status === 'working' ? 'in corso' : 'niente')}
+                {agent?.activity ?? (status === 'working' ? 'working' : 'idle')}
               </span>
             </dd>
             {agent && agent.subagents.length > 0 && (
               <>
-                <dt>Sotto-agenti</dt>
+                <dt>Subagents</dt>
                 <dd class="sq-agent__subs">
                   {agent.subagents.map((label, index) => (
                     <span key={index} class="t-data">
@@ -151,7 +151,7 @@ function Agent({
         </div>
         <footer class="xf__f">
           <span class="cn-tag">
-            {agent?.context ? `${kilo(agent.context.used)} token` : '— token'}
+            {agent?.context ? `${kilo(agent.context.used)} tokens` : '— tokens'}
           </span>
         </footer>
       </section>
@@ -164,9 +164,9 @@ function Agent({
  * accent) when something waits, and it flashes when it comes; plain when not.
  */
 function waitingTitle(item: Waiting): string {
-  if (item.kind === 'permission') return `Permesso · ${ROLE[item.role]}`;
-  if (item.kind === 'question') return `Domanda · ${ROLE[item.role]}`;
-  return `${item.approval === 'delegation' ? 'Delega' : 'Rapporto'} da approvare`;
+  if (item.kind === 'permission') return `Permission · ${ROLE[item.role]}`;
+  if (item.kind === 'question') return `Question · ${ROLE[item.role]}`;
+  return `${item.approval === 'delegation' ? 'Delegation' : 'Report'} awaiting approval`;
 }
 
 function waitingDetail(item: Waiting): string {
@@ -189,7 +189,7 @@ function WaitingRow({ item, go }: { item: Waiting; go: (id: string) => void }) {
         go(item.id);
       }}
     >
-      <span class="cn-btn__label">{item.kind === 'question' ? 'RISPONDI ↗' : 'VAI ↗'}</span>
+      <span class="cn-btn__label">{item.kind === 'question' ? 'REPLY ↗' : 'OPEN ↗'}</span>
     </button>
   );
   const action = (label: string, run: () => void) => (
@@ -205,23 +205,23 @@ function WaitingRow({ item, go }: { item: Waiting; go: (id: string) => void }) {
       <span class="wlist__a">
         {item.kind === 'permission' && (
           <>
-            {action('CONSENTI', () => {
+            {action('ALLOW', () => {
               post({ type: 'permit', id: item.id, decision: 'accept' });
             })}
-            {action('PER LA SESSIONE', () => {
+            {action('ALLOW FOR SESSION', () => {
               post({ type: 'permit', id: item.id, decision: 'acceptForSession' });
             })}
-            {action('RIFIUTA', () => {
+            {action('DENY', () => {
               post({ type: 'permit', id: item.id, decision: 'decline' });
             })}
           </>
         )}
         {item.kind === 'approval' && (
           <>
-            {action('INVIA', () => {
+            {action('SEND', () => {
               post({ type: 'decide', id: item.id, action: 'approve' });
             })}
-            {action('ANNULLA', () => {
+            {action('CANCEL', () => {
               post({ type: 'decide', id: item.id, action: 'cancel' });
             })}
           </>
@@ -249,8 +249,10 @@ function Alert({
   if (!first) {
     return (
       <section class="cn-cell sq-alert" aria-live="polite">
-        <span class="cn-tag">○ Niente aspetta te</span>
-        <p class="hint">Permessi, deleghe e rapporti da approvare compaiono qui.</p>
+        <span class="cn-tag">○ No action needed</span>
+        <p class="hint">
+          Permission requests, delegations, and reports awaiting approval appear here.
+        </p>
       </section>
     );
   }
@@ -262,7 +264,7 @@ function Alert({
       aria-live="polite"
     >
       <span class="cn-tag">
-        <b>▲</b> Aspetta te{waiting.length > 1 ? ` · ${String(waiting.length)}` : ''}
+        <b>▲</b> Action required{waiting.length > 1 ? ` · ${String(waiting.length)}` : ''}
       </span>
       <h3 class="t-title">{waitingTitle(first)}</h3>
       <p class="t-data mut">{waitingDetail(first)}</p>
@@ -274,7 +276,7 @@ function Alert({
             go(first.id);
           }}
         >
-          <span class="cn-btn__label">Rispondi</span>
+          <span class="cn-btn__label">Reply</span>
           <span class="cn-btn__icon">→</span>
         </button>
       </div>
@@ -295,14 +297,14 @@ function TeamNameField({ roles }: { roles: RolesState }) {
   };
   return (
     <label class="nd-name">
-      <span class="t-label">Gruppo</span>
+      <span class="t-label">Team</span>
       <input
         class="t-data"
         type="text"
         value={name}
         maxLength={NODE_NAME_LENGTH}
         placeholder={roles.team.name}
-        title="Un alias per il gruppo di leader e implementatore; vuoto: il provider del leader"
+        title="Name for the leader and implementer’s team. Leave blank to use the leader’s provider."
         onInput={(event) => {
           setName((event.target as HTMLInputElement).value);
         }}
@@ -326,7 +328,7 @@ function NodeEditor({ node, roles }: { node: NodeInfo; roles: RolesState }) {
   return (
     <>
       <label class="nd-name">
-        <span class="t-label">Nome</span>
+        <span class="t-label">Name</span>
         <input
           class="t-data"
           type="text"
@@ -352,9 +354,7 @@ function NodeEditor({ node, roles }: { node: NodeInfo; roles: RolesState }) {
           },
         }}
       />
-      <p class="hint">
-        {PROVIDER[node.cli].toUpperCase()} · UNA CONVERSAZIONE SUA · NESSUNA DELEGA
-      </p>
+      <p class="hint">{PROVIDER[node.cli].toUpperCase()} · SEPARATE CONVERSATION · NO DELEGATION</p>
     </>
   );
 }
@@ -371,7 +371,7 @@ function ReviewerEditor({ roles }: { roles: RolesState }) {
         role="implementer"
         info={reviewer}
         catalog={roles.catalog}
-        only={['Provider', 'Modello', 'Reasoning']}
+        only={['Provider', 'Model', 'Reasoning']}
         node={{
           name: ROLE.reviewer,
           write: (change) => {
@@ -384,9 +384,7 @@ function ReviewerEditor({ roles }: { roles: RolesState }) {
           },
         }}
       />
-      <p class="hint">
-        RIVEDE OGNI LAVORO · SCRIVE TEST, MAI IL CODICE · IL LEADER LEGGE LA SUA REVISIONE
-      </p>
+      <p class="hint">REVIEWS ALL WORK · WRITES TESTS ONLY · THE LEADER READS THE REVIEW</p>
     </>
   );
 }
@@ -517,34 +515,34 @@ export function Squad({
     else if (fallback) post({ type: 'addNode', cli: fallback.cli, model: fallback.model });
   };
   const tabs = [
-    ['events', 'Eventi', monitor.events.length],
-    ['waiting', 'In attesa', waiting.length],
-    ['changes', 'Modifiche', open.length],
+    ['events', 'Events', monitor.events.length],
+    ['waiting', 'Waiting', waiting.length],
+    ['changes', 'Changes', open.length],
   ] as const;
 
   return (
     <div class="stage stage--layer" data-theme={theme}>
       <div class="veil veil--mezzatinta" onClick={close} />
       <Lattice class="sqw" edges={{ top: true, bottom: true, left: true, right: true }} dense={40}>
-        <header class="cn-cell cn-cell--row sq-bar" role="dialog" aria-label="Pannello Squad">
+        <header class="cn-cell cn-cell--row sq-bar" role="dialog" aria-label="Squad panel">
           <span class="lt-mark">Squad</span>
           <span class="crumb">
-            Chat / <b>{session?.title || 'Nuova chat'}</b>
+            Chat / <b>{session?.title || 'New chat'}</b>
           </span>
           <div class="sq-bar__end">
-            {roles?.fake && <span class="cn-tag cn-tag--ink">▲ CLI finti</span>}
+            {roles?.fake && <span class="cn-tag cn-tag--ink">▲ Mock CLIs</span>}
             <span class="cn-tag">
-              Deleghe · <b>{session?.mode === 'auto' ? 'automatiche' : 'approvo io'}</b>
+              Delegations · <b>{session?.mode === 'auto' ? 'automatic' : 'manual'}</b>
             </span>
             <button class="cn-btn cn-btn--outline cn-btn--sm" type="button" onClick={close}>
-              <span class="cn-btn__label">Chiudi · Esc</span>
+              <span class="cn-btn__label">Close · Esc</span>
               <span class="cn-btn__icon">×</span>
             </button>
           </div>
         </header>
 
         <Board
-          label="Lavagna degli agenti"
+          label="Agent board"
           blocks={[
             agentBlock('leader', 0),
             agentBlock('implementer', 500),
@@ -557,7 +555,7 @@ export function Squad({
               id: 'delegation',
               from: 'leader',
               to: 'implementer',
-              label: waitingFor('delegation') ? '▲ Delega' : 'Delega',
+              label: waitingFor('delegation') ? '▲ Delegation' : 'Delegation',
               lane: -16,
               live: agentStatus('implementer') === 'working',
               waiting: waitingFor('delegation'),
@@ -569,7 +567,7 @@ export function Squad({
                     from: 'implementer',
                     to: 'reviewer',
                     // The work goes to it and its findings come back: one line, both ways.
-                    label: 'Lavoro ⇄ Rilievi',
+                    label: 'Work ⇄ Findings',
                     lane: 0,
                     live: agentStatus('reviewer') === 'working',
                   },
@@ -577,7 +575,7 @@ export function Squad({
                     id: 'review',
                     from: 'reviewer',
                     to: 'leader',
-                    label: waitingFor('report') ? '▲ Revisione' : 'Revisione',
+                    label: waitingFor('report') ? '▲ Review' : 'Review',
                     lane: 0,
                     waiting: waitingFor('report'),
                   },
@@ -587,7 +585,7 @@ export function Squad({
                     id: 'report',
                     from: 'implementer',
                     to: 'leader',
-                    label: waitingFor('report') ? '▲ Rapporto' : 'Rapporto',
+                    label: waitingFor('report') ? '▲ Report' : 'Report',
                     lane: 16,
                     waiting: waitingFor('report'),
                   },
@@ -596,16 +594,16 @@ export function Squad({
           legend={
             <>
               <span class="cn-tag">
-                <b>01/</b> Lavagna
+                <b>01/</b> Board
               </span>
               <button
                 class="cn-btn cn-btn--outline cn-btn--sm"
                 type="button"
                 disabled={!roles}
-                title="Un agente in più, con una conversazione sua: lo selezioni e gli scrivi"
+                title="Add an agent with its own conversation"
                 onClick={addNode}
               >
-                <span class="cn-btn__label">+ Nodo</span>
+                <span class="cn-btn__label">+ Node</span>
               </button>
             </>
           }
@@ -640,8 +638,8 @@ export function Squad({
                 <span>{clock(Date.now())}</span>
                 <span class="cn-cursor">
                   {working.length > 0
-                    ? `${working.map((a) => ROLE[a.role]).join(' e ')} al lavoro`
-                    : 'In ascolto'}
+                    ? `${working.map((a) => ROLE[a.role]).join(', ')} working`
+                    : 'Listening'}
                 </span>
                 <span class="mut">{working.length > 0 ? '▶' : '○'}</span>
               </li>
@@ -656,7 +654,7 @@ export function Squad({
           )}
           {tab === 'waiting' &&
             (waiting.length === 0 ? (
-              <p class="hint">Nessuna richiesta aperta.</p>
+              <p class="hint">No open requests.</p>
             ) : (
               <div class="ilist">
                 {waiting.map((i) => (
@@ -666,7 +664,7 @@ export function Squad({
             ))}
           {tab === 'changes' &&
             (changes.length === 0 ? (
-              <p class="hint">Nessuna modifica in questa chat.</p>
+              <p class="hint">No changes in this chat.</p>
             ) : (
               <div class="ilist">
                 {changes.flatMap((card) =>
@@ -675,11 +673,11 @@ export function Squad({
                       <span>{file.path}</span>
                       <span>
                         {card.decisions[file.path] === 'accepted'
-                          ? '■ ACCETTATO'
+                          ? '■ ACCEPTED'
                           : card.decisions[file.path] === 'rejected'
-                            ? '× RIFIUTATO'
+                            ? '× REJECTED'
                             : file.binary
-                              ? 'BINARIO'
+                              ? 'BINARY'
                               : `+${String(file.added)} −${String(file.removed)}`}
                       </span>
                     </div>
@@ -687,7 +685,7 @@ export function Squad({
                 )}
                 {open[0] && (
                   <div>
-                    <span class="mut">{open.length} da rivedere</span>
+                    <span class="mut">{open.length} to review</span>
                     <button
                       class="cn-btn cn-btn--text"
                       type="button"
@@ -695,7 +693,7 @@ export function Squad({
                         if (open[0]) go(open[0].card.id);
                       }}
                     >
-                      <span class="cn-btn__label">RIVEDI ↗</span>
+                      <span class="cn-btn__label">REVIEW ↗</span>
                     </button>
                   </div>
                 )}
@@ -703,11 +701,11 @@ export function Squad({
             ))}
         </div>
 
-        <header class="cn-cell cn-cell--row sq-roleh" aria-label="Agente selezionato">
+        <header class="cn-cell cn-cell--row sq-roleh" aria-label="Selected agent">
           {selectedNode ? (
             <>
               <span class="cn-tag">
-                <b>{nodeIndex(selectedIndex)}/</b> Nodo
+                <b>{nodeIndex(selectedIndex)}/</b> Node
               </span>
               <button
                 class="cn-btn cn-btn--text"
@@ -718,7 +716,7 @@ export function Squad({
                   select('leader');
                 }}
               >
-                <span class="cn-btn__label">× Rimuovi</span>
+                <span class="cn-btn__label">× Remove</span>
               </button>
             </>
           ) : selected === 'reviewer' ? (
@@ -733,15 +731,15 @@ export function Squad({
                 aria-pressed={reviewerOn}
                 title={
                   reviewerOn
-                    ? 'Nessuna revisione: il leader legge il rapporto dell’implementatore'
-                    : 'Rivede ogni lavoro dell’implementatore, anche quello che gli scrivi tu'
+                    ? 'Turn off reviews so the leader reads the implementer’s report directly'
+                    : 'Review all implementer work, including direct requests'
                 }
                 onClick={() => {
                   post({ type: 'setReviewerOn', enabled: !reviewerOn });
                 }}
               >
                 <span class="cn-btn__label">
-                  {reviewerOn ? '■ Acceso · spegni' : '○ Spento · accendi'}
+                  {reviewerOn ? '■ On · turn off' : '○ Off · turn on'}
                 </span>
               </button>
             </>
@@ -751,13 +749,13 @@ export function Squad({
                 <b>{INDEX[isRole(selected) ? selected : 'leader']}/</b>{' '}
                 {ROLE[isRole(selected) ? selected : 'leader']}
               </span>
-              <span class="cn-tag">{started ? 'Di questa chat' : 'Prossima chat'}</span>
+              <span class="cn-tag">{started ? 'This chat' : 'Next chat'}</span>
             </>
           )}
         </header>
         <div class="cn-cell sq-roleb">
           {!roles ? (
-            <p class="hint">Lettura dei ruoli…</p>
+            <p class="hint">Loading roles…</p>
           ) : selectedNode ? (
             <NodeEditor key={selectedNode.id} node={selectedNode} roles={roles} />
           ) : selected === 'reviewer' ? (
@@ -773,7 +771,7 @@ export function Squad({
         <Alert waiting={waiting} theme={theme} go={go} />
 
         <footer class="cn-cell cn-cell--row sq-foot">
-          <span class="cn-tag">Trascina la lavagna · rotella per lo zoom</span>
+          <span class="cn-tag">Drag to pan · scroll to zoom</span>
         </footer>
       </Lattice>
     </div>

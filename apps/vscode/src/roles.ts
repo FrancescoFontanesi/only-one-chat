@@ -84,12 +84,12 @@ export class RoleSettings implements vscode.Disposable {
   /** Why a choice cannot be taken, or undefined. */
   problem(choice: ProviderChoice): string | undefined {
     if (this.catalog.rejects(choice.cli, choice.model)) {
-      return `${PROVIDERS[choice.cli].name} non offre il modello ${choice.model}.`;
+      return `${PROVIDERS[choice.cli].name}  does not offer the model ${choice.model}.`;
     }
     const model = this.catalog.find(choice.cli, choice.model);
     const efforts: readonly string[] = model ? model.efforts : EFFORTS;
     if (choice.effort === '' ? efforts.length > 0 : !efforts.includes(choice.effort)) {
-      return `Il modello ${choice.model} non ha il reasoning ${choice.effort || 'vuoto'}.`;
+      return `The model ${choice.model} does not support the ${choice.effort || 'empty'} reasoning effort.`;
     }
     return undefined;
   }

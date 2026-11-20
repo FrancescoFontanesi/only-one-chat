@@ -1,5 +1,5 @@
 // The README's screenshots (docs/images): the real webview bundle in headless
-// Chrome, fed by a fake host with a recorded chat (dev/screenshots/thread.json,
+// Chrome, fed by a fake host with an adapted sample chat (dev/screenshots/thread.json,
 // from a bench run). No model turn, no quota.
 //
 //   pnpm --filter only-one-chat build && node dev/screenshots.mjs
@@ -58,11 +58,11 @@ const host = {
     fake: false,
     busy: false,
     busyNodes: [],
-    title: 'Include fra script',
+    title: 'Script includes',
     chats: [
       {
         id: 'c1',
-        title: 'Include fra script',
+        title: 'Script includes',
         updatedAt: now,
         leader: 'GPT-6.1-Sol',
         implementer: 'Sonnet',
@@ -146,12 +146,16 @@ const host = {
       },
     ],
     events: [
-      { at: minutes(1), level: 'info', text: 'Leader ha finito · risposta' },
-      { at: minutes(2), level: 'info', text: 'Revisione di Claude (haiku): CON RISERVE · 1 giro' },
-      { at: minutes(3), level: 'info', text: 'Implementatore ha corretto R1 e R2 · 43 s' },
-      { at: minutes(5), level: 'warn', text: 'Rilievi del revisore: 2 bloccanti' },
-      { at: minutes(8), level: 'info', text: 'Implementatore ha finito · 166 s' },
-      { at: minutes(9), level: 'info', text: 'Delega inviata all’implementatore' },
+      { at: minutes(1), level: 'info', text: 'Leader finished' },
+      {
+        at: minutes(2),
+        level: 'info',
+        text: 'Review by Claude (haiku): WITH RESERVATIONS · 1 correction round',
+      },
+      { at: minutes(3), level: 'info', text: 'Implementer fixed R1 and R2 · 43 s' },
+      { at: minutes(5), level: 'warn', text: 'Reviewer findings: 2 blocking issues' },
+      { at: minutes(8), level: 'info', text: 'Implementer finished · 166 s' },
+      { at: minutes(9), level: 'info', text: 'Delegation sent to the implementer' },
     ],
   },
   usage: [
@@ -184,7 +188,7 @@ const host = {
     {
       type: 'user',
       id: 'nu1',
-      text: 'Leggi main.py: la gestione degli include ha casi che sfuggono ai test?',
+      text: 'Read main.py. Does the include handling have any untested cases?',
       to: 'implementer',
     },
     {
@@ -193,8 +197,8 @@ const host = {
       role: 'implementer',
       agent: 'Antigravity (gemini-3.8-flash)',
       status: 'done',
-      label: 'Antigravity · gemini-3.8-flash-medium · predefinito',
-      text: 'Due: un nome con soli spazi arriva a `open` e dà un errore generico, e `include "a.calc"` seguito da un commento sulla stessa riga non viene riconosciuto. Il resto (`..`, percorsi assoluti, cicli) è coperto da `test_hostile_paths` e `test_cycle_and_repeat`.',
+      label: 'Antigravity · gemini-3.8-flash-medium · default',
+      text: 'Two cases stand out. A whitespace-only filename reaches `open` with a generic error, and the parser does not recognize a trailing comment after `include "a.calc"`. Tests already cover parent traversal, absolute paths, and include cycles.',
       usage: { context: 24_900, output: 194, costUsd: null, durationMs: 6_000 },
     },
   ],
@@ -203,7 +207,7 @@ const host = {
 const scenes = [
   { name: 'chat', height: 900, clicks: [] },
   // Squad, with the reviewer selected: its fields and its switch.
-  { name: 'squad', height: 1100, clicks: ['.sq-open', 'section[aria-label="Revisore"] button'] },
+  { name: 'squad', height: 1100, clicks: ['.sq-open', 'section[aria-label="Reviewer"] button'] },
   // The group of the dial, once: the first node, Gemini, and its own thread.
   { name: 'node', height: 900, clicks: ['.hud__grp'] },
 ];
@@ -216,7 +220,7 @@ try {
     writeFileSync(
       page,
       `<!DOCTYPE html>
-<html lang="it"><head><meta charset="UTF-8">
+<html lang="en"><head><meta charset="UTF-8">
 ${['fonts.css', 'oo.css', 'bundle.css', 'app.css'].map((css) => `<link rel="stylesheet" href="${media}/${css}">`).join('\n')}
 </head><body><div id="root" data-view="chat"></div>
 <script>
@@ -247,6 +251,7 @@ window.acquireVsCodeApi = () => ({
     execFileSync(chrome, [
       '--headless=new',
       '--disable-gpu',
+      '--force-prefers-reduced-motion',
       '--hide-scrollbars',
       '--allow-file-access-from-files',
       `--user-data-dir=${join(dir, 'profile')}`,

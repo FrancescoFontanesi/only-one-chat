@@ -612,7 +612,7 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
         }
         const asked = claudeQuestions(input);
         if (asked.length === 0) {
-          deny('Domande non valide.');
+          deny('Invalid questions.');
           return;
         }
         questions
@@ -623,10 +623,10 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
                 behavior: 'allow',
                 updatedInput: { ...input, answers: claudeAnswers(asked, answers) },
               });
-            } else deny('L’utente non ha risposto alle domande.');
+            } else deny('The user did not answer the questions.');
           })
           .catch(() => {
-            deny('Nessuna risposta dall’utente.');
+            deny('The user did not respond.');
           });
       };
 

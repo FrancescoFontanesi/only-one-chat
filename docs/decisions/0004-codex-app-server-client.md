@@ -1,49 +1,32 @@
-# 0004. Client Codex App Server: stdio, niente shell, terminazione garantita
+# 0004. Codex App Server client over stdio
 
-- Stato: Accettata (2026-10-20)
+- Status: Accepted (2026-10-20)
 
-## Contesto
+## Context
 
-Il primo adapter parla con `codex app-server`. Dettagli del protocollo e fonti sono in
-[../codex-app-server.md](../codex-app-server.md).
+The first adapter talks to `codex app-server`. See the protocol details and sources in [../codex-app-server.md](../codex-app-server.md).
 
-## Decisione
+## Decision
 
-1. **Trasporto stdio con framing JSONL**, l'unico non sperimentale secondo la
-   documentazione. WebSocket e socket Unix sono esclusi.
-2. **Nessuna shell.** `spawn` diretto dell'eseguibile nativo. Gli shim `.cmd`, `.bat` e
-   `.ps1` vengono rifiutati invece di essere eseguiti tramite `cmd.exe`, per evitare
-   problemi di quoting e iniezione (CVE-2024-27980).
-3. **Un solo modulo per trasporto e protocollo.** I test li esercitano insieme attraverso
-   pipe reali, quindi una separazione non serve.
-4. **Terminazione garantita di ogni richiesta**, con le richieste pendenti rifiutate
-   all'evento `close` del processo (dopo la fine di stdout) e non all'evento `exit`.
-5. **Errori non fatali per righe invalide o ID sconosciuti**, che vengono riportati a
-   `onProtocolError`. Fatali sono solo l'uscita del processo e `close()`.
-6. **Nessuna nuova dipendenza.** Si usano solo `node:child_process`, `node:readline` e
-   `node:fs`.
+1. **Use stdio with JSONL framing.** The documentation identifies it as the only nonexperimental transport. WebSocket and Unix sockets are out of scope.
+2. **Use `spawn` to launch the native executable directly.** Reject `.cmd`, `.bat`, and `.ps1` shims to avoid quoting and injection issues from invoking them through `cmd.exe` (CVE-2024-27980).
+3. **Keep transport and protocol in one module.** Tests exercise both together over real pipes.
+4. **Settle every request.** Reject pending requests on the process's `close` event, after stdout ends. The `exit` event can occur while stdout still has data.
+5. **Report invalid lines and unknown IDs to `onProtocolError`.** These errors are recoverable. Process termination and `close()` end the session.
+6. **Use built-in modules only.** The client uses `node:child_process`, `node:readline`, and `node:fs`.
 
-## Conseguenze
+## Consequences
 
-- Su Windows bisogna indicare il `codex.exe` nativo se il CLI è stato installato via npm.
-- Lo strato adapter dovrà aggiungere il filtraggio dell'ambiente e il kill dell'albero di
-  processi prima di eseguire turni reali.
+- On Windows, users who installed the CLI through npm must point the client at the native `codex.exe`.
+- Before running real turns, the adapter needs environment filtering and process tree termination.
 
-## Nota (2026-10-25): terminazione dell'albero
+## Note on process tree termination (2026-10-25)
 
-Contro Codex 0.164.0 reale, `codex app-server` esce pulito subito dopo l'EOF ma lascia
-vivi i processi che ha avviato (allora `git`, per la sincronizzazione dei plugin), che
-tengono aperti i suoi pipe. Il contratto di `close()` cambia così:
+Testing with Codex 0.164.0 showed that `codex app-server` exits cleanly immediately after EOF but can leave child processes alive with its pipes open. The observed child was `git` during plugin synchronization. The `close()` contract changes as follows.
 
-- `close()` risolve solo quando il processo è uscito **e** il suo stdio è chiuso, oppure
-  dopo la pulizia; prima risolveva all'uscita del processo diretto.
-- Se Codex non esce entro `shutdownTimeoutMs`, si termina l'albero mentre è vivo
-  (Windows `taskkill /T /F`, POSIX process group); se esce ma i pipe restano aperti, si
-  terminano i discendenti (Windows: figli per `ParentProcessId` creati tra avvio e
-  uscita; POSIX: process group).
-- Su POSIX Codex viene avviato `detached`, cioè in un proprio process group; su Windows
-  no, per restare nel job object di libuv.
-- Ogni terminazione è segnalata con `onForcedShutdown`; restano invariati l'idempotenza
-  e l'ordine EOF, uscita pulita, terminazione forzata.
+- `close()` resolves when the process has exited and its stdio has closed, or once cleanup finishes. Previously, it resolved when the direct child exited.
+- If Codex is still running after `shutdownTimeoutMs`, terminate the live process tree (Windows `taskkill /T /F`, POSIX process group). If it has exited and the pipes are still open, terminate its descendants (on Windows, find children by `ParentProcessId` created between launch and exit, and on POSIX, use the process group).
+- On POSIX, launch Codex as `detached` to give it its own process group. On Windows, keep it in the libuv job object.
+- Report every forced termination through `onForcedShutdown`. Shutdown remains idempotent and follows the sequence EOF, clean exit, then forced termination.
 
-Dettagli e limiti residui in [../codex-app-server.md](../codex-app-server.md).
+See details and remaining limitations in [../codex-app-server.md](../codex-app-server.md).

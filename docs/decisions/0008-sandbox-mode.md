@@ -1,56 +1,30 @@
-# 0008. Modalità sandbox: scrittura confinata per le prove locali
+# 0008. Sandbox mode for local tests with confined writes
 
-Stato: Accettata (iterazione 2)
+Status: Accepted (iteration 2)
 
-## Contesto
+## Context
 
-Finora gli agenti lavorano in sola lettura e le approvazioni sono tutte rifiutate (R9 non è
-ancora implementato). La prima prova di scrittura di codice richiede che un agente scriva file ed esegua i
-test del codice che ha scritto, senza nessuno che approvi a mano ogni passo.
+Agents have worked read-only so far, with all approval requests denied until R9 is implemented. The first code-writing test requires an agent to write files and test its code without manual approval at each step.
 
-## Decisione
+## Decision
 
-Una **modalità sandbox** esplicita, mai attiva per default, per una cartella di lavoro nuova
-e usa e getta (`%LOCALAPPDATA%\only-one-chat\sandbox\<run>`, fuori dal repository e dal
-profilo dell'utente):
+Provide an explicit, opt-in **sandbox mode** for a new disposable working directory (`%LOCALAPPDATA%\only-one-chat\sandbox\<run>`) outside the repository and the user's profile.
 
-- **Claude**: `Write`, `Edit` e `Bash` si aggiungono a `Read`, `Grep` e `Glob`, in
-  `--permission-mode default`.
-  - `--allowedTools` ammette senza chiedere solo `Edit(./**)`, cioè le modifiche dei file
-    sotto la cartella di lavoro (anche `Write` è controllato con le regole `Edit`), e Bash
-    per i comandi in whitelist (`Bash(python *)`).
-  - Tutto il resto che chiederebbe un permesso, come `rm`, `mv`, una modifica fuori dalla
-    cartella o un altro programma, viene negato da `--permission-prompts none`. I comandi in
-    sola lettura (`ls`, `cat`, un `cd` dentro la cartella) passano in ogni modalità.
-  - Restano negati `PowerShell`, notebook, `WebFetch`, `WebSearch` e i server MCP.
-  - `init` deve riportare `default`, altrimenti il turno viene fermato.
-  - Correzione dopo il primo benchmark: la prima versione usava `acceptEdits`, che approva
-    da solo anche `mkdir`, `touch`, `rm`, `rmdir`, `mv`, `cp` e `sed` nella cartella di
-    lavoro. Opus ha eseguito così `rm` sul proprio `parser.py`.
-- **Codex** resta in sola lettura (`sandbox: "read-only"`) quando pianifica, giudica o fa da
-  gateway.
-  - Correzione per lo scenario `calc-functions` (ADR 0009), approvata dall'utente come
-    alleggerimento: quando implementa, o lavora da solo, il thread è `workspace-write`
-    nella cartella del run, senza rete.
-  - Su Windows il thread chiede anche la sandbox Windows non elevata (`windows.sandbox =
-"unelevated"`), che non richiede configurazione.
-  - Verifica senza turni di modello, con `command/exec`: Python gira e scrive nella
-    cartella di lavoro, mentre una scrittura fuori viene bloccata con un `PermissionError`.
-  - Le richieste di approvazione restano rifiutate, e nessuna modalità che salti i
-    controlli è attiva.
-- **Approvazione automatica** dei messaggi fra agenti, solo nella modalità benchmark del
-  runtime: è dichiarata nelle opzioni, registrata nel log come decisione `auto_approve` e
-  visibile nel thread.
+- **Claude** adds `Write`, `Edit`, and `Bash` to `Read`, `Grep`, and `Glob` under `--permission-mode default`.
+  - `--allowedTools` permits only `Edit(./**)` and allowlisted Bash commands such as `Bash(python *)` without prompting. The `Edit` rules also govern `Write`, limiting file edits to the working directory.
+  - `--permission-prompts none` denies other requests that would need permission, including `rm`, `mv`, edits outside the working directory, and other programs. Read-only commands such as `ls`, `cat`, and `cd` within the working directory are allowed in every mode.
+  - `PowerShell`, notebook tools, `WebFetch`, `WebSearch`, and MCP servers remain denied.
+  - Stop the turn unless `init` reports `default`.
+  - The first benchmark used `acceptEdits`, which also automatically approves `mkdir`, `touch`, `rm`, `rmdir`, `mv`, `cp`, and `sed` within the working directory. Opus used that permission to run `rm` on its own `parser.py`. The benchmark prompted this correction.
+- **Codex** stays read-only (`sandbox: "read-only"`) when it plans, evaluates, or acts as a gateway.
+  - For `calc-functions` (ADR 0009), the user approved relaxing the restriction. When Codex implements or works alone, the thread uses `workspace-write` in the run directory with network access disabled.
+  - On Windows, the thread also requests the unelevated sandbox (`windows.sandbox = "unelevated"`), which requires no setup.
+  - Verification with `command/exec` used no model turns. Python ran and wrote inside the working directory, while a write outside it failed with `PermissionError`.
+  - Approval requests remain denied, and permission bypass modes stay disabled.
+- **Automatic approval** of messages between agents is available only in the runtime's benchmark mode. It is explicit in the options, logged as an `auto_approve` decision, and visible in the thread.
 
-## Conseguenze
+## Consequences
 
-- **Rischio accettato dall'utente**: Claude esegue codice scritto da un modello sulla
-  macchina dell'utente. Su Windows non c'è una sandbox del sistema operativo per i suoi
-  processi, e un comando ammesso (`python …`) può fare qualsiasi cosa che può fare Python:
-  le regole `Edit` non valgono per i file che uno script apre da sé. La whitelist limita
-  _quali_ programmi si avviano, non _cosa_ fanno.
-- La modalità vale per prove locali con compiti innocui, come la calcolatrice della demo.
-  Non è il modello di permessi del prodotto: le approvazioni mediate di R9 restano da
-  progettare.
-- Gli hook dell'utente (per esempio rtk) possono riscrivere i comandi Bash: se un comando
-  riscritto non corrisponde più alla whitelist viene negato, e la prova lo mostra.
+- **Risk accepted by the user.** Claude runs model-written code on the user's machine. On Windows its processes have no operating-system sandbox, so an allowed command such as `python …` can exercise all of Python's capabilities. The `Edit` rules do not cover files that a script opens directly. The allowlist controls which programs can launch.
+- This mode is for local tests with harmless tasks such as the demo calculator. The product's mediated approvals under R9 remain to be designed.
+- User hooks such as rtk can rewrite Bash commands. A rewritten command that falls outside the allowlist is denied, and the test shows that denial.

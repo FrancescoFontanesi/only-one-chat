@@ -1,30 +1,20 @@
-# 0003. Layout del monorepo e package interni
+# 0003. Monorepo layout and internal packages
 
-- Stato: Accettata (2026-10-18)
+- Status: Accepted (2026-10-18)
 
-## Contesto
+## Context
 
-Runtime e adapter devono essere testabili senza Extension Host e indipendenti da
-`vscode`. Al momento c'è un solo consumatore (l'estensione), e la toolchain deve
-restare minima.
+The runtime and adapters must be testable outside the Extension Host and independent of `vscode`. The extension is the only consumer at this point, so the toolchain should stay small.
 
-## Decisione
+## Decision
 
-- Workspace pnpm con `apps/vscode` (l'estensione) e `packages/runtime` e
-  `packages/adapters`.
-- I package interni sono **sorgenti TypeScript** (`exports: "./src/index.ts"`) senza build
-  separata: esbuild li include nel bundle dell'estensione, mentre Vitest e `tsc` li
-  leggono direttamente.
-- Il codice della Webview vive in `apps/vscode/webview/` e non in `src/webview/`: usa le
-  lib DOM e JSX di Preact, incompatibili con il tsconfig Node dell'host. In
-  `src/webview/` resta il lato host del pannello (`panel.ts`, `html.ts`, `protocol.ts`).
-  `protocol.ts` è condiviso e non deve importare né `vscode` né API DOM.
-- Il vincolo "niente `vscode` in `packages/*`" è imposto due volte: con
-  `no-restricted-imports` in ESLint e con `tests/boundaries.test.ts`.
-- L'extension host è bundle CommonJS (target node22), la Webview è bundle IIFE (es2022).
+- Use a pnpm workspace with `apps/vscode` (the extension), `packages/runtime`, and `packages/adapters`.
+- Internal packages expose **TypeScript sources** (`exports: "./src/index.ts"`) directly. esbuild includes them in the extension bundle. Vitest and `tsc` read them directly.
+- Browser-side webview code lives in `apps/vscode/webview/` because it uses the DOM libraries and Preact JSX, which are incompatible with the host's Node tsconfig. The host side of the panel stays in `src/webview/` (`panel.ts`, `html.ts`, and `protocol.ts`). The shared `protocol.ts` is independent of both `vscode` and DOM APIs.
+- ESLint's `no-restricted-imports` rule and `tests/boundaries.test.ts` both enforce the ban on `vscode` imports from `packages/*`.
+- The Extension Host uses a CommonJS bundle targeting node22. The webview uses an IIFE bundle targeting es2022.
 
-## Conseguenze
+## Consequences
 
-- Nessun passaggio di build o pubblicazione per i package. Se un giorno andranno
-  pubblicati su npm, bisognerà aggiungere una build `tsc` o tsup.
-- Tre tsconfig nell'app (host, webview, test): `pnpm typecheck` li verifica tutti.
+- Internal packages need no separate build or publication step. Publishing them to npm would require adding a build with `tsc` or tsup.
+- `pnpm typecheck` checks all three app tsconfigs for the host, webview, and tests.

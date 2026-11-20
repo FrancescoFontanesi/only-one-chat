@@ -30,7 +30,7 @@ const env = process.env;
 const [cli, tracePath] = process.argv.slice(2);
 const workspace = process.cwd();
 const TASK =
-  'leggi packages/adapters/src/environment.ts e rispondi in una riga: quali variabili toglie withoutApiKeys?';
+  'read packages/adapters/src/environment.ts and answer in one line: which variables does withoutApiKeys remove?';
 
 const policies: Record<string, SubagentPolicy> = {
   codex: {
@@ -79,13 +79,13 @@ async function main(): Promise<void> {
           onWire,
         });
   const session = await factory({
-    instructions: 'Sei un agente di Only One Chat. Lavori in sola lettura nel workspace.',
+    instructions: 'You are an Only One Chat agent working in a read-only workspace.',
     subagents: { ...policy, rules: subagentRules(policy) },
   });
   const prompt =
     cli === 'codex'
-      ? `L'utente chiede esplicitamente UN sotto-agente: crea un sotto-agente interno che ${TASK} Poi riporta la sua risposta in una riga.`
-      : `Usa lo strumento Agent per creare UN sotto-agente che ${TASK} Poi riporta la sua risposta in una riga.`;
+      ? `The user explicitly requests one subagent. Create one internal subagent and ask it to ${TASK} Then report its answer in one line.`
+      : `Use the Agent tool to create one subagent and ask it to ${TASK} Then report its answer in one line.`;
   process.stdout.write(`${session.name}: ${prompt}\n\n`);
 
   const subagents = new Map<string, SubagentState>();
@@ -98,13 +98,13 @@ async function main(): Promise<void> {
     const reason = checkSubagent(policy, state, runningNow);
     if (reason === undefined) return;
     violation = reason;
-    process.stdout.write(`✖ sotto-agente non conforme: ${reason}; interrompo il turno\n`);
+    process.stdout.write(`✖ subagent did not comply: ${reason}. Stopping the turn.\n`);
     void turn.stop();
   };
   const turn = session.runTurn(prompt, {
     onText: (text) => process.stdout.write(text),
     onApprovalRequest: (request) => {
-      process.stdout.write(`\n⛔ approvazione rifiutata: ${request.summary}\n`);
+      process.stdout.write(`\n⛔ approval denied: ${request.summary}\n`);
       return Promise.resolve('decline');
     },
     onActivity: ({ kind, detail }) =>
@@ -140,7 +140,7 @@ async function main(): Promise<void> {
     await session.close();
   }
   process.stdout.write(
-    `\nSotto-agenti: ${String(subagents.size)}; violazione: ${violation ?? 'nessuna'}\n`,
+    `\nSubagents: ${String(subagents.size)}. Violation: ${violation ?? 'none'}\n`,
   );
   const meta =
     cli === 'codex'

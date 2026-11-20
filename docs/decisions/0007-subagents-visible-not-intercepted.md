@@ -1,35 +1,20 @@
-# 0007. D13: sotto-agenti visibili e vincolati, non intercettati
+# 0007. D13: Visibility and constraints for native subagents
 
-Stato: Accettata (iterazione 1)
+Status: Accepted (iteration 1)
 
-## Contesto
+## Context
 
-Nel secondo run della demo Codex ha creato un proprio sotto-agente, `/root/claude_review`,
-con effort `medium` invece di `low`, e ne ha presentato la risposta come "la verifica di
-Claude", senza che Claude venisse eseguito. Spegnere i sotto-agenti nativi evita il caso,
-ma toglie ai due CLI uno strumento utile. Inoltre Codex non permette di approvarli prima
-che partano: il protocollo app-server non ha una richiesta per lo spawn
-([subagents.md](../subagents.md)).
+In the second demo run, Codex spawned its own subagent, `/root/claude_review`, at `medium` effort instead of `low`. It presented the response as a Claude review even though Claude had never run. Disabling native subagents would prevent this and would also remove a useful capability from both CLIs. Codex App Server has no protocol request for approving a subagent before it starts. [subagents.md](../subagents.md)
 
-## Decisione
+## Decision
 
-- I messaggi **tra agenti** (Codex e Claude) passano solo dal blocco di delega e restano
-  **intercettati e modificabili** dall'utente.
-- I messaggi **interni** fra un agente e i suoi sotto-agenti non sono intercettati, ma sono
-  **sempre visibili** nel thread, sotto il turno che li ha creati, e **vincolati** per
-  modello, effort, numero e nome da una policy per ruolo, che è configurazione.
-- I vincoli si applicano senza toccare la configurazione dell'utente: override per thread
-  per Codex, ambiente del processo figlio per Claude. Il runtime li controlla a posteriori e
-  interrompe il turno a ogni violazione.
-- L'identità di chi ha risposto la scrive il runtime (etichette), non il modello; un testo
-  che attribuisce lavoro a un agente esterno non eseguito produce un avviso visibile.
+- **Messages between agents** (Codex and Claude) go through the delegation block. The user can intercept and edit them.
+- **Messages within an agent and its native subagents** are always visible in the thread under the turn that spawned them. A configurable policy per role constrains the model, effort, count, and name. These messages bypass interception.
+- Apply constraints without modifying the user's configuration. Use thread overrides for Codex and the child process environment for Claude. The runtime checks after launch and stops the turn on any violation.
+- The runtime labels who responded. If text attributes work to an external agent that never ran, show a warning.
 
-## Conseguenze
+## Consequences
 
-- Un sotto-agente non conforme può partire e consumare un po' di quota prima di essere
-  fermato: il controllo è a posteriori.
-- Gli adapter devono riportare i sotto-agenti come eventi (`onSubagent`) e lo stop deve
-  raggiungerli; il runtime resta indipendente dai provider.
-- I limiti noti e la verifica reale sono in [subagents.md](../subagents.md). Sui thread
-  `ephemeral` un sotto-agente di Codex può partire solo senza ereditare la cronologia
-  (`fork_turns: "none"`), verificato su un turno reale.
+- A noncompliant subagent can start and use some quota before being stopped because checks occur after launch.
+- Adapters must report subagents as events (`onSubagent`) and propagate cancellation to them. The runtime stays provider-independent.
+- On an `ephemeral` thread, a Codex subagent can start only without inheriting history (`fork_turns: "none"`). This was verified on a real turn. See the remaining limitations and verification details in [subagents.md](../subagents.md).

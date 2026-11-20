@@ -37,24 +37,24 @@ export class UsageReader {
       const launch = await cliLaunch(this.context, 'codex');
       const quota = await readCodexQuota(launch.executable, launch.launcherArgs);
       if (quota) this.usage.setQuota('codex', quota);
-      else this.usage.setNote('codex', 'Codex non ha riportato limiti di utilizzo.');
+      else this.usage.setNote('codex', 'Codex did not report usage limits.');
     } catch (error) {
-      this.usage.setNote('codex', `Lettura non riuscita: ${message(error)}`);
+      this.usage.setNote('codex', `Could not read usage: ${message(error)}`);
     }
   }
 
   private async antigravity(): Promise<void> {
     if (!this.usesAntigravity()) {
-      this.usage.setNote('antigravity', 'Letto quando un nodo usa Antigravity.');
+      this.usage.setNote('antigravity', 'Usage is read when a node uses Antigravity.');
       return;
     }
     try {
       const launch = await cliLaunch(this.context, 'antigravity');
       const read = await readAntigravityUsage(launch);
       if (read) this.usage.setQuota('antigravity', read.quota, Date.now(), read.note);
-      else this.usage.setNote('antigravity', 'Antigravity non ha riportato limiti di utilizzo.');
+      else this.usage.setNote('antigravity', 'Antigravity did not report usage limits.');
     } catch (error) {
-      this.usage.setNote('antigravity', `Lettura non riuscita: ${message(error)}`);
+      this.usage.setNote('antigravity', `Could not read usage: ${message(error)}`);
     }
   }
 }

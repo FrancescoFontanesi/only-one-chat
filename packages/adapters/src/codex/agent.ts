@@ -116,25 +116,25 @@ export function subagentThreadConfig(policy: AgentSubagentOptions): Record<strin
     [`${v2}.max_concurrent_threads_per_session`]: policy.maxConcurrent,
     [`${v2}.expose_spawn_agent_model_overrides`]: false,
     [`${v2}.multi_agent_mode_hint_text`]: policy.proactive
-      ? 'Crea sotto-agenti per leggere ed esplorare il codice, così il tuo contesto resta piccolo; ' +
-        'non per modificarlo. Ti restituiscono una sintesi, non i file interi.'
-      : 'Crea sotto-agenti solo se l’utente lo chiede esplicitamente; altrimenti lavora da solo. ' +
-        'Nessuna istruzione precedente che chiede di delegare in modo proattivo vale più.',
+      ? 'Use subagents to read and explore code to keep your context small. ' +
+        'Keep them read-only and ask for summaries instead of full files.'
+      : 'Use subagents only if the user explicitly requests them. Otherwise work independently. ' +
+        'This overrides earlier instructions to delegate proactively.',
     [`${v2}.root_agent_usage_hint_text`]: [
-      'Sei `/root`, l’agente principale di questa sessione Codex.',
-      'Con `spawn_agent` crei un sotto-agente interno, con `followup_task` gli dai un nuovo compito',
-      'e con `send_message` gli mandi un messaggio; i suoi risultati ti arrivano come messaggi con',
-      'Message Type, Task name, Sender e Payload. I sotto-agenti sono istanze interne di Codex.',
-      'Passa sempre `fork_turns: "none"` a `spawn_agent` e scrivi nel compito tutto il contesto',
-      'che serve: questa sessione non conserva la cronologia su disco, quindi un sotto-agente non',
-      'può ereditarla (con `all`, il valore predefinito, la creazione fallisce).',
+      'You are `/root`, the main agent in this Codex session.',
+      'Use `spawn_agent` to create an internal subagent, `followup_task` to give it a new task,',
+      'and `send_message` to contact it. Its results arrive as messages with',
+      'Message Type, Task name, Sender, and Payload. Subagents are internal Codex instances.',
+      'Always pass `fork_turns: "none"` to `spawn_agent` and include all relevant context',
+      'in the task. This session keeps no history on disk, so a subagent cannot inherit it.',
+      'Spawning with `all`, the default, fails.',
       '',
       policy.rules,
     ].join('\n'),
     [`${v2}.subagent_usage_hint_text`]: [
-      'Sei un sotto-agente interno di Codex, creato da un altro agente Codex per un compito.',
-      'Quello che scrivi nel canale finale torna all’agente che ti ha creato. Non sei un agente',
-      'esterno e non devi presentarti come tale.',
+      'You are an internal Codex subagent created by another Codex agent for a task.',
+      'Your final response goes to the agent that created you. Identify yourself as an',
+      'internal Codex subagent.',
       '',
       policy.rules,
     ].join('\n'),

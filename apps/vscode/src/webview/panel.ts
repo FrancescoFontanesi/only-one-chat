@@ -145,9 +145,7 @@ export class OnlyOneChatPanel {
     if (!editor || editor.document.uri.scheme !== 'file' || !cwd) return;
     const file = path.relative(cwd, editor.document.uri.fsPath);
     if (file === '' || file.startsWith('..') || path.isAbsolute(file)) {
-      void vscode.window.showWarningMessage(
-        'Il file non è nella cartella in cui lavorano gli agenti.',
-      );
+      void vscode.window.showWarningMessage('The file is outside the agents’ workspace.');
       return;
     }
     const selection = editor.selection;
@@ -468,7 +466,7 @@ export class OnlyOneChatPanel {
     } catch (error) {
       this.notice(
         'warn',
-        `La chat non è stata salvata: ${error instanceof Error ? error.message : String(error)}`,
+        `Could not save the chat: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -570,7 +568,7 @@ export class OnlyOneChatPanel {
         if (message.skill !== undefined && !skill) {
           this.notice(
             'warn',
-            `La skill ${message.skill} non è tra quelle del destinatario: messaggio non inviato.`,
+            `Message not sent. The recipient does not offer the ${message.skill} skill.`,
           );
           break;
         }
@@ -686,7 +684,10 @@ export class OnlyOneChatPanel {
       case 'handoff':
         if (this.chat) await this.chat.handoff();
         else
-          this.notice('info', 'La chat non è ancora partita: l’implementatore parte già da zero.');
+          this.notice(
+            'info',
+            'The chat has not started. The implementer will start a fresh session.',
+          );
         break;
       case 'restoreCheckpoint':
         await restoreCheckpoint(this.fileHost(), message.checkpoint);
@@ -711,24 +712,21 @@ export class OnlyOneChatPanel {
   private async agentsFolder(): Promise<string | undefined> {
     const cwd = workspaceFolder();
     if (!cwd) {
-      this.notice('error', 'Apri la cartella in cui gli agenti devono lavorare.');
+      this.notice('error', 'Open the folder where the agents should work.');
       return undefined;
     }
     if (!vscode.workspace.isTrusted) {
-      this.notice(
-        'error',
-        'La cartella non è attendibile (Workspace Trust): gli agenti non partono.',
-      );
+      this.notice('error', 'Trust this workspace before starting the agents.');
       return undefined;
     }
     const fake = isFake(this.context);
     if (!fake && this.confirmedFolder !== cwd) {
       const answer = await vscode.window.showWarningMessage(
-        `Gli agenti lavoreranno in ${cwd} e potranno modificarne i file ed eseguire i comandi consentiti. Continuare?`,
+        `Agents will work in ${cwd}. They can modify its files and run allowed commands. Continue?`,
         { modal: true },
-        'Continua',
+        'Continue',
       );
-      if (answer !== 'Continua') return undefined;
+      if (answer !== 'Continue') return undefined;
       this.confirmedFolder = cwd;
     }
     return cwd;
@@ -762,12 +760,15 @@ export class OnlyOneChatPanel {
     const { choice } = reviewer;
     const problem =
       choice.cli !== 'antigravity' && choice.model === ''
-        ? 'manca il modello'
+        ? 'no model selected'
         : !this.launched.has(choice.cli)
-          ? `${cliLabel(choice.cli)} non trovato`
+          ? `${cliLabel(choice.cli)} was not found`
           : this.services.roles.problem(choice);
     if (problem) {
-      this.notice('warn', `Revisore non valido (${problem}): la chat continua senza revisore.`);
+      this.notice(
+        'warn',
+        `Reviewer unavailable (${problem}). The chat will continue without a reviewer.`,
+      );
       return undefined;
     }
     return { choice, rounds: reviewer.rounds };
@@ -867,14 +868,14 @@ export class OnlyOneChatPanel {
           this.remember(update);
           this.services.monitor.apply(update);
           if (update.type === 'question') {
-            this.notifyIfAway('waiting', 'Il leader ti fa una domanda.');
+            this.notifyIfAway('waiting', 'The leader has a question for you.');
           }
           if (update.type === 'permission' || update.type === 'approval') {
             this.notifyIfAway(
               'waiting',
               update.type === 'permission'
-                ? `${update.role === 'leader' ? 'Il leader' : update.role === 'reviewer' ? 'Il revisore' : 'L’implementatore'} chiede il permesso: ${update.summary}`
-                : 'Un messaggio fra gli agenti aspetta la tua approvazione.',
+                ? `${update.role === 'leader' ? 'The leader' : update.role === 'reviewer' ? 'The reviewer' : 'The implementer'} requests permission: ${update.summary}`
+                : 'An agent handoff is waiting for your approval.',
             );
           }
           void this.post({ type: 'thread', update });
@@ -905,7 +906,7 @@ export class OnlyOneChatPanel {
         busy: (busy) => {
           void this.postSession();
           if (!busy && record === this.record)
-            this.notifyIfAway('turnEnd', 'Il messaggio è concluso.');
+            this.notifyIfAway('turnEnd', 'The message has finished.');
         },
         turnUsage: (identityProvider, _turnUsage, quota) => {
           const provider = providerOf(identityProvider);
@@ -927,19 +928,19 @@ export class OnlyOneChatPanel {
     const title = shown ? this.record.title : this.history.list().find((c) => c.id === id)?.title;
     if (title === undefined) return;
     if (shown && (this.chat?.busy || [...this.nodes.values()].some((node) => node.busy))) {
-      this.notice('warn', 'Un messaggio è in corso: fermalo prima di eliminare la chat.');
+      this.notice('warn', 'Stop the current message before deleting the chat.');
       return;
     }
     const answer = await vscode.window.showWarningMessage(
-      `Eliminare la chat «${title || 'Senza titolo'}»?`,
+      `Delete chat “${title || 'Untitled'}”?`,
       {
         modal: true,
         detail:
-          'Il thread, quelli dei nodi e i checkpoint di questa chat vengono cancellati. Le sessioni restano nella cronologia dei CLI.',
+          'This deletes the chat, its node threads, and its checkpoints. Sessions remain in the CLI history.',
       },
-      'Elimina',
+      'Delete',
     );
-    if (answer !== 'Elimina') return;
+    if (answer !== 'Delete') return;
     if (shown) await this.switchTo(this.emptyRecord());
     this.history.remove(id);
     await this.postSession();
@@ -993,7 +994,7 @@ export class OnlyOneChatPanel {
     attachments: readonly string[] | undefined,
   ): Promise<void> {
     if (skill !== undefined) {
-      this.notice('warn', 'Le skill non si inviano ai nodi: messaggio non inviato.');
+      this.notice('warn', 'Message not sent. Nodes do not accept skills.');
       return;
     }
     if (!(await saveBeforeSend(workspaceFolder()))) return;
@@ -1014,12 +1015,12 @@ export class OnlyOneChatPanel {
       canSelectFolders: false,
       canSelectMany: true,
       defaultUri: vscode.Uri.file(cwd),
-      openLabel: 'Allega',
+      openLabel: 'Attach',
     });
     for (const uri of picked ?? []) {
       const relative = path.relative(cwd, uri.fsPath).split(path.sep).join('/');
       if (!insideFolder(cwd, relative)) {
-        this.notice('warn', `${uri.fsPath} non è nella cartella in cui lavorano gli agenti.`);
+        this.notice('warn', `${uri.fsPath} is outside the agents’ workspace.`);
         continue;
       }
       this.insert(`@${relative} `);
@@ -1031,7 +1032,7 @@ export class OnlyOneChatPanel {
     if (open) return open;
     const choice = this.services.roles.nodes().find((n) => n.id === id);
     if (!choice) {
-      this.notice('warn', 'Il nodo non è più sulla lavagna.');
+      this.notice('warn', 'This node is no longer on the Squad board.');
       return undefined;
     }
     const cwd = await this.agentsFolder();
@@ -1068,14 +1069,14 @@ export class OnlyOneChatPanel {
           const update = withRefs(raw, cwd);
           this.remember(update, { id, name: choice.name, cli: choice.cli });
           if (update.type === 'permission') {
-            this.notifyIfAway('waiting', `${choice.name} chiede il permesso: ${update.summary}`);
+            this.notifyIfAway('waiting', `${choice.name} requests permission: ${update.summary}`);
           }
           void this.post({ type: 'thread', update, node: id });
         },
         busy: (busy) => {
           void this.postSession();
           if (!busy && record === this.record) {
-            this.notifyIfAway('turnEnd', `${choice.name} ha finito.`);
+            this.notifyIfAway('turnEnd', `${choice.name} finished.`);
           }
           // A node's turn used its provider's quota: read anew, still with no turn (ADR 0023).
           if (!busy && choice.cli === 'antigravity') void this.services.refreshUsage();
@@ -1114,7 +1115,7 @@ export class OnlyOneChatPanel {
         cli,
         status: 'unavailable',
         skills: [],
-        note: 'Nessuna cartella aperta',
+        note: 'No folder open',
       });
       return;
     }

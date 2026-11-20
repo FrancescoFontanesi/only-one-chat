@@ -1,74 +1,37 @@
-# 0031. Il contratto fra i ruoli e la struttura del brief
+# 0031. The role contract and brief structure
 
-Stato: Accettata. Precisa l'ADR 0020 (brief e rapporto) e l'ADR 0029 (revisore).
+Status: Accepted. Clarifies ADR 0020 on briefs and reports and ADR 0029 on the reviewer.
 
-## Contesto
+## Context
 
-Dalle tre valutazioni dei ruoli (`docs/role-evaluation.md`):
+The three role evaluations (`docs/role-evaluation.md`) identified several gaps.
 
-- **I guasti peggiori sono silenziosi:**
-  - una revisione vuota è arrivata al leader come se fosse un rapporto;
-  - un verdetto "approvato" poteva convivere con criteri non verificati;
-  - un rapporto poteva tacere un file cambiato.
-- **Il brief è l'artefatto con più leva, e nessuno lo controllava:**
-  - un brief del leader conteneva due criteri contraddittori (C6 contro C7), che l'implementatore
-    ha risolto in silenzio;
-  - lo stesso input ha prodotto in tre esecuzioni tre scelte diverse su un comportamento visibile
-    ("n float intero"), dichiarate come scelte minori.
-- **Un ingresso ostile è sfuggito a test e revisione:** in T3 un byte nullo nel percorso fa
-  cadere il programma con un traceback, e i 46 test nascosti di allora passavano.
-- **Una revisione del brief come turno a parte è stata valutata e scartata:** aggiunge turni e
-  astrazione. Il concetto resta solo per la valutazione dei modelli.
+- **Serious failures could go unnoticed.** An empty review reached the leader as a report, an approved verdict could include unverified criteria, and a report could omit a changed file.
+- **The brief had the greatest impact and went unchecked.** One brief contained conflicting criteria C6 and C7, which the implementer resolved silently. Three runs on the same input made different choices about visible behavior for an integer-valued float `n`. Each called its choice minor.
+- **One hostile input escaped testing and review.** In T3, a null byte in a path crashed the program with a traceback while all 46 hidden tests passed.
+- **A separate brief review turn was considered and dropped.** It added turns and abstraction. The idea remained for model evaluations only.
 
-## Decisione
+## Decision
 
-1. **Il runtime controlla il contratto fra i ruoli, senza modelli**
-   (`packages/runtime/src/contract.ts`), e non chiede di nuovo: dice al leader ciò che non torna,
-   come fatti del runtime, e lo mostra nel thread.
-   - **Rapporto:**
-     - ogni criterio `C1…Cn` del brief ha uno stato nella Verifica, intervalli come `C1–C10`
-       compresi;
-     - l'esito "completato" non convive con un criterio non verificato né con "Bloccato su" pieno;
-     - Modifiche nomina tutti i file che il runtime ha visto cambiare;
-     - un testo senza rapporto è detto come tale.
-   - **Revisione:**
-     - copre ogni criterio;
-     - un "approvato" con un criterio non verificato, un asse del Giudizio non pulito o un rilievo
-       aperto viene tenuto dal runtime come "con riserve", o "respinto" con un asse negativo o un
-       bloccante aperto, e il leader legge perché.
-   - **Fuori formato:** un testo fuori formato non blocca: ciò che non si legge non si contesta.
-2. **Il brief non passa da una revisione a parte.** Lo controllano le due estremità, senza turni
-   in più:
-   - **il leader**, prima di consegnare, rilegge i criteri insieme e non lascia due criteri
-     incompatibili, anche sull'ordine dei controlli; dice quale richiesta prevale quando due
-     possono scontrarsi; mette almeno un ingresso ostile fra i casi quando il lavoro riceve
-     ingressi dall'esterno; e chiede all'utente, invece di dichiararla minore, ogni scelta che
-     cambia il risultato per un ingresso valido o un messaggio che l'utente vedrà;
-   - **l'implementatore**, prima di scrivere, confronta i criteri fra loro e con il codice, con
-     un ordine fisso quando si scontrano:
-     1. Vincoli e istruzioni del repository;
-     2. sicurezza;
-     3. casi concreti;
-     4. prosa;
-     5. le sue preferenze.
+1. **The runtime checks the role contract without a model** (`packages/runtime/src/contract.ts`). It records problems as runtime facts for the leader and displays them in the thread without prompting again.
+   - **Report.** Each brief criterion `C1…Cn` has a status in `Verifica` (Verification), including ranges such as `C1–C10`. `completato` (done) requires all criteria to be verified and `Bloccato su` (Blocked on) to be empty. `Modifiche` (Changes) names every file the runtime saw change. The runtime flags text without a report.
+   - **Review.** Cover every criterion. The runtime lowers an `approvato` (approved) verdict with an unverified criterion, an inconclusive assessment dimension, or an open finding to `con riserve` (with reservations). A negative assessment dimension or open blocking finding yields `respinto` (rejected). The leader sees why.
+   - **Unrecognized format.** The runtime continues past unparseable content and limits checks to readable fields.
+2. **The leader and implementer check the brief in existing turns.**
+   - Before delivery, the leader checks criteria together for conflicts, including the order of checks. When requirements can collide, the brief names the one that takes precedence. If the work accepts external input, include at least one hostile example. Ask the user about any decision that changes the result for valid input or a user-visible message.
+   - Before implementation, the implementer checks the criteria against one another and the code. Resolve conflicts according to the following order.
+     1. Constraints and repository instructions.
+     2. Security.
+     3. Concrete cases.
+     4. Prose.
+     5. Implementer preferences.
 
-     Un conflitto che cambia ciò che l'utente vede lo ferma ("bloccato"); gli altri li scioglie
-     con quell'ordine e li scrive in Decisioni come "Conflitto nel brief". Prova gli ingressi
-     ostili (vuoto, enorme, `..`, percorsi assoluti, separatori dell'altro sistema, byte nullo,
-     codifica, collegamenti simbolici), che danno un errore chiaro e mai un'eccezione non gestita,
-     e controlla le versioni che il progetto usa prima di usare un'API.
-3. **Il rapporto dice due cose in più nella Verifica:** gli ingressi ostili provati e le
-   versioni controllate.
+     A user-visible conflict blocks the work with `bloccato` (blocked). Resolve other conflicts in the specified order and record them under Decisions as `Conflitto nel brief` (Brief conflict). Test hostile inputs such as empty or huge values, `..`, absolute paths, separators from another OS, null bytes, encodings, and symlinks. They should return a clear error without an unhandled exception. Check the project's versions before using an API.
+3. **The report's Verification section also lists** the hostile inputs tested and the versions checked.
 
-## Conseguenze
+## Consequences
 
-- **Il leader non deve più fidarsi della forma:** un rapporto o una revisione incompleti arrivano
-  con l'elenco di ciò che manca.
-- **I conflitti del brief diventano visibili** senza un turno di revisione: o fermano il lavoro,
-  o compaiono nelle Decisioni.
-- **Il parser legge i formati dei prompt:** un modello che li cambia molto produce segnalazioni
-  in più, non blocchi.
-- **I test nascosti di `calc-include` hanno gli ingressi ostili:** byte nullo, `..\` con
-  backslash, `C:file`, UNC, nomi vuoti; nessuno può finire in un traceback. Sulle cinque
-  implementazioni salvate, le due di Sonnet cadono sul byte nullo: sono i casi reali per provare
-  il revisore.
+- The leader receives a list of omissions alongside an incomplete report or review.
+- Brief conflicts become visible without an extra turn. The work either stops or the report records them under Decisions.
+- The parser follows the prompt formats. Large deviations produce additional flags and do not block processing.
+- The `calc-include` hidden tests cover hostile inputs including null bytes, `..\` with a backslash, `C:file`, UNC paths, and empty names. None may cause a traceback. Two of the five saved implementations, both from Sonnet, crash on the null byte. They provide real cases for evaluating a reviewer.

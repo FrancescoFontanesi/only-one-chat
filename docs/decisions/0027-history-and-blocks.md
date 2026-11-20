@@ -1,42 +1,25 @@
-# 0027. Lo storico per chat e la ghiera per blocchi
+# 0027. Unified chat history and grouped recipient dial
 
-Stato: Accettata (iterazione 3). Precisa R5 (riprendere una chat), l'ADR 0011 (sessioni dei
-ruoli) e l'ADR 0023 (nodi).
+Status: Accepted (iteration 3). Clarifies R5 (resuming a chat), ADR 0011 (role sessions), and ADR 0023 (nodes).
 
-## Contesto
+## Context
 
-- **STORICO non apriva le chat:** il clic arrivava all'host, ma chiudere la chat corrente
-  aspettava l'uscita dei suoi CLI, e un errore nella gestione di un messaggio della webview non
-  si vedeva.
-- **Diviso o unificato?** Con i nodi, la chat ha più conversazioni: quella del leader con
-  l'implementatore, e quella di ogni nodo. Bisognava decidere se lo storico va diviso per agente.
-- **La ghiera di chi parla elencava ruoli e nodi alla pari**, anche se l'implementatore lavora
-  sotto il leader.
+- **History failed to open chats.** The click reached the host, but closing the current chat waited for its CLIs to exit. Errors during webview message handling were invisible.
+- **Nodes introduced multiple conversations.** The leader and implementer share one thread, and each node has another. This raised the question of whether history should be per agent.
+- **The recipient dial presented roles and nodes as peers,** even though the implementer works under the leader.
 
-## Decisione
+## Decision
 
-1. **Storico unificato:** una voce è una chat intera, con il thread del leader e
-   dell'implementatore, i thread dei nodi, gli id delle sessioni dei CLI, i provider, il brief in
-   attesa, i rapporti non letti e i checkpoint. Non è diviso per agente: i nodi lavorano accanto
-   a un lavoro, non da soli.
-2. **Ogni voce dice chi ha lavorato:** il modello del leader (LDR) e quello dell'implementatore
-   (IMP), attenuato se non ha mai lavorato, e i nodi a cui si è scritto, con il nome che avevano.
-3. **Aprire una chat** la mostra subito, e i CLI della chat lasciata si chiudono in background
-   (la chat è già salvata).
-   - Le sessioni riprendono solo quando servono: il leader al primo messaggio, l'implementatore
-     al primo lavoro, un nodo quando gli si scrive.
-   - Una sessione che non si riapre più (cancellata o scaduta nel suo CLI) lascia il posto a una
-     nuova, e l'utente viene avvisato che non ricorda la conversazione.
-   - Un errore nella gestione di un messaggio della webview diventa un avviso nella chat.
-4. **Nodi rimossi dalla lavagna:** il loro thread, in una chat che li aveva, resta leggibile in
-   sola lettura; il nodo compare sulla ghiera dopo gli altri e il composer è disattivato.
-5. **La ghiera di chi parla è per blocchi.** Sostituita dall'ADR 0028: il gruppo si sceglie con
-   un'etichetta, i ruoli sull'anello.
+1. **Unified history.** An entry covers the whole chat, including the leader and implementer thread, node threads, CLI session IDs, providers, a pending brief, unread reports, and checkpoints. Nodes belong to the work represented by that chat.
+2. **Entries show who worked.** Each shows the leader (LDR) and implementer (IMP) models, dimming roles that have never run, plus the names of the nodes that received messages.
+3. **A selected chat opens immediately.** Its predecessor is already saved, and that chat's CLIs shut down in the background.
+   - Sessions resume on demand, at the leader's first message, the implementer's first job, or a node's first message.
+   - If the CLI session has been deleted or expired, a new session replaces it and the chat warns the user that prior conversation context is unavailable to the agent.
+   - A webview message handling error appears as a notice in the chat.
+4. **A removed node's thread stays readable.** For any chat that included it, the node appears after other nodes on the dial with its composer disabled.
+5. **The recipient dial groups choices.** ADR 0028 supersedes this decision. A label selects the group and the ring selects its roles.
 
-## Conseguenze
+## Consequences
 
-- **Rimandato:** raggruppare lo storico per giorno, la ricerca nel titolo, e portare il thread
-  di un nodo da una chat vecchia nella chat corrente.
-- **Claude:** la sessione si riapre solo al momento del turno (`--resume`), quindi il ripiego su
-  una sessione nuova, che scatta alla creazione della sessione, vale per Codex e per i nodi ACP
-  ma non ancora per Claude.
+- Grouping history by day, searching by title, and moving node threads between chats are deferred.
+- Claude resumes a session only at turn time (`--resume`). The fallback to a new session runs at session creation, so it covers Codex and ACP nodes. Claude is outside its current coverage.

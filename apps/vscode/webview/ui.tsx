@@ -44,9 +44,9 @@ export function useTheme(): 'dark' | 'light' {
   return theme;
 }
 
-/** 18,4K, as the canvas writes token counts. */
+/** 18.4K, as the canvas writes token counts. */
 export function kilo(value: number): string {
-  return value >= 1000 ? `${(value / 1000).toFixed(1).replace('.', ',')}K` : String(value);
+  return value >= 1000 ? `${(value / 1000).toFixed(1)}K` : String(value);
 }
 
 /** 02:13 */
@@ -66,8 +66,8 @@ export const PROVIDER: Record<Cli, string> = {
 };
 export const ROLE: Record<TurnRole, string> = {
   leader: 'Leader',
-  implementer: 'Implementatore',
-  reviewer: 'Revisore',
+  implementer: 'Implementer',
+  reviewer: 'Reviewer',
 };
 
 /** The node whose thread is shown (ADR 0023); null: the chat's own thread. */
@@ -80,9 +80,9 @@ export function useWho(role: TurnRole): string {
 }
 
 export const PERMISSIONS: readonly { value: PermissionLevel; label: string; short: string }[] = [
-  { value: 'read-only', label: 'Sola lettura', short: 'Lettura' },
-  { value: 'ask', label: 'Chiede prima di agire', short: 'Chiede' },
-  { value: 'auto', label: 'Automatico nella cartella', short: 'Auto' },
+  { value: 'read-only', label: 'Read only', short: 'Read' },
+  { value: 'ask', label: 'Ask before acting', short: 'Ask' },
+  { value: 'auto', label: 'Auto in workspace', short: 'Auto' },
 ];
 
 export function Meter({ value }: { value: number }) {
@@ -258,7 +258,7 @@ export function RoleFields({
   providerNote?: string;
   /** Without motion, for the settings page. */
   still?: boolean;
-  /** Only these fields, by name (Provider, Modello, Reasoning, Permessi). */
+  /** Only these fields, by name (Provider, Model, Reasoning, Permissions). */
   only?: readonly string[];
   /** The fields of a node instead of a role's. */
   node?: { readonly name: string; readonly write: (change: RoleChange) => void };
@@ -282,18 +282,18 @@ export function RoleFields({
     ...(provider?.models.map((m) => ({ value: m.id, label: m.name.toUpperCase() })) ?? []),
   ];
   const modelNote = locked
-    ? 'UN CAMBIO VALE DALLA PROSSIMA CHAT'
+    ? 'CHANGES APPLY TO NEW CHATS'
     : provider?.status === 'loading'
-      ? 'LETTURA DEI MODELLI…'
+      ? 'LOADING MODELS…'
       : provider?.status === 'unavailable'
-        ? `× ${provider.note ?? 'MODELLI NON DISPONIBILI'}`
+        ? `× ${provider.note ?? 'MODELS UNAVAILABLE'}`
         : undefined;
   const fields: { name: string; note: string | undefined; control: JSX.Element }[] = [
     {
       name: 'Provider',
       note: providerNote,
       control: providerFixed ? (
-        <Fixed value={PROVIDER[info.cli].toUpperCase()} tag="■ BLOCCATO" />
+        <Fixed value={PROVIDER[info.cli].toUpperCase()} tag="■ LOCKED" />
       ) : (
         <Opts
           label={`Provider: ${name}`}
@@ -307,13 +307,13 @@ export function RoleFields({
       ),
     },
     {
-      name: 'Modello',
+      name: 'Model',
       note: modelNote,
       control: locked ? (
-        <Fixed value={info.modelName.toUpperCase()} tag="■ BLOCCATO" />
+        <Fixed value={info.modelName.toUpperCase()} tag="■ LOCKED" />
       ) : (
         <Opts
-          label={`Modello: ${name}`}
+          label={`Model: ${name}`}
           value={info.model}
           options={models}
           onChange={(id) => {
@@ -328,7 +328,7 @@ export function RoleFields({
       note: undefined,
       control:
         efforts.length === 0 ? (
-          <Fixed value="NESSUNO" tag="IL MODELLO NON HA LIVELLI" />
+          <Fixed value="NONE" tag="NO REASONING LEVELS" />
         ) : (
           <Scale
             still={still === true}
@@ -342,19 +342,19 @@ export function RoleFields({
         ),
     },
     {
-      name: 'Permessi',
+      name: 'Permissions',
       // The leader reasons and delegates; it never writes (ADR 0018).
       note: leader
-        ? 'IL LEADER NON SCRIVE CODICE'
+        ? 'THE LEADER HAS READ-ONLY ACCESS'
         : node
-          ? 'VALE DAL MESSAGGIO SUCCESSIVO'
-          : 'VALE DAL TURNO SUCCESSIVO',
+          ? 'APPLIES TO THE NEXT MESSAGE'
+          : 'APPLIES TO THE NEXT TURN',
       control: leader ? (
-        <Fixed value="SOLA LETTURA" tag="■ BLOCCATO" />
+        <Fixed value="READ ONLY" tag="■ LOCKED" />
       ) : (
         <Scale
           still={still === true}
-          label={`Permessi: ${name}`}
+          label={`Permissions: ${name}`}
           value={info.permission}
           options={PERMISSIONS.map((p) => ({
             value: p.value,
@@ -456,10 +456,10 @@ export function RoleEditor({
       {...(only ? { only } : {})}
       {...(started && next.cli !== info.cli
         ? {
-            providerNote: `QUESTA CHAT RESTA SU ${PROVIDER[info.cli].toUpperCase()}: IL PROVIDER VALE DALLA PROSSIMA CHAT`,
+            providerNote: `THIS CHAT USES ${PROVIDER[info.cli].toUpperCase()} · PROVIDER CHANGES APPLY TO NEW CHATS`,
           }
         : role === 'implementer' && started
-          ? { providerNote: 'UN CAMBIO DI PROVIDER VALE DALLA PROSSIMA CHAT' }
+          ? { providerNote: 'PROVIDER CHANGES APPLY TO NEW CHATS' }
           : {})}
     />
   );

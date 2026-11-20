@@ -1,151 +1,160 @@
-# Adapter Claude Code CLI
+# Claude Code CLI adapter
 
-Stato: iterazione 1. Un turno headless alla volta, in sola lettura, nel profilo personale
-dell'utente ([ADR 0006](decisions/0006-personal-cli-profiles.md)).
+Iteration 1 runs one read-only headless turn at a time in the user's personal profile.
+See [ADR 0006](decisions/0006-personal-cli-profiles.md).
 
-Codice: `packages/adapters/src/claude/` (`turn.ts`, `executable.ts`), con
-`src/environment.ts` e `src/process-tree.ts` condivisi con Codex. Test:
-`test/claude-turn.test.ts`, con il fake `test/fixtures/fake-claude.mjs` che riproduce
-l'output registrato da Claude Code 2.1.308 (`test/fixtures/claude/2.1.308/turn-ok.jsonl`,
-redatto e controllato da `test/fixtures-leaks.test.ts`).
+The adapter lives in `packages/adapters/src/claude/` (`turn.ts`, `executable.ts`). It
+shares `src/environment.ts` and `src/process-tree.ts` with Codex.
+`test/claude-turn.test.ts` uses `test/fixtures/fake-claude.mjs` to replay output
+recorded from Claude Code 2.1.308 in `test/fixtures/claude/2.1.308/turn-ok.jsonl`.
+The fixture is redacted and checked by `test/fixtures-leaks.test.ts`.
 
-## Eseguibile
+## Executable
 
-`resolveClaudeExecutable({ configuredPath?, env? })` applica le regole di Codex
-(`src/executable.ts`): percorso assoluto configurato oppure `claude.exe` (Windows) o
-`claude` (POSIX) nel `PATH`; rifiuta `.cmd`, `.bat` e `.ps1`; non cerca i binari inclusi
-nell'estensione VS Code o nell'app desktop. Il lancio avviene senza shell.
+`resolveClaudeExecutable({ configuredPath?, env? })` follows the Codex rules in
+`src/executable.ts`. It uses a configured absolute path or looks for `claude.exe`
+on Windows and `claude` on POSIX in `PATH`. It rejects `.cmd`, `.bat`, and `.ps1`
+files and excludes binaries bundled with the VS Code extension or desktop app.
+The adapter launches the executable without a shell.
 
-Binario usato per le verifiche: Claude Code 2.1.308 (canale `stable`), da
-`https://downloads.claude.ai/claude-code-releases/2.1.308/win32-x64/claude.exe`, sha256
-`c9796ba22a9221586b36371b36f5b66198d66eb4badf6a4cf4a5f7b07becea53` conforme al
-`manifest.json` della release, firma Authenticode valida di "Anthropic, PBC". Non è stato
-eseguito `claude install`.
+The verification used Claude Code 2.1.308 (the `stable` channel) from
+`https://downloads.claude.ai/claude-code-releases/2.1.308/win32-x64/claude.exe`.
+Its SHA-256 digest
+`c9796ba22a9221586b36371b36f5b66198d66eb4badf6a4cf4a5f7b07becea53` matched the
+release `manifest.json`, and its Authenticode signature from "Anthropic, PBC" was
+valid. The verification ran without `claude install`.
 
-## Flag (verificati con `claude --help` 2.1.308)
+## Flags verified with `claude --help` 2.1.308
 
-| Flag                                        | Scopo                                                         |
-| ------------------------------------------- | ------------------------------------------------------------- |
-| `-p`                                        | headless (non interattivo)                                    |
-| `--input-format stream-json`                | prompt come messaggio JSON su stdin, niente quoting sull'argv |
-| `--output-format stream-json` + `--verbose` | eventi JSONL in streaming (`--verbose` è richiesto)           |
-| `--tools Read,Grep,Glob`                    | solo strumenti di lettura e ricerca                           |
-| `--disallowedTools Bash,PowerShell,Edit,…`  | rinforzo: shell, scrittura, modifica e rete negate            |
-| `--strict-mcp-config`                       | nessun server MCP (vedi sotto)                                |
-| `--permission-prompts none`                 | ciò che chiederebbe un permesso viene negato                  |
-| `--permission-mode default`                 | esplicito: il `defaultMode` dei settings non si applica       |
-| `--model <alias>`, `--effort <level>`       | da configurazione (iterazione 1: `haiku`, `low`)              |
-| `--append-system-prompt <testo>`            | istruzioni di ruolo passate dal runtime                       |
-| `--resume <session id>`                     | continua una sessione precedente                              |
+| Flag                                        | Purpose                                                           |
+| ------------------------------------------- | ----------------------------------------------------------------- |
+| `-p`                                        | Headless, non-interactive mode                                    |
+| `--input-format stream-json`                | Send the prompt as a JSON message on stdin, avoiding argv quoting |
+| `--output-format stream-json` + `--verbose` | Stream JSONL events, which requires `--verbose`                   |
+| `--tools Read,Grep,Glob`                    | Enable only read and search tools                                 |
+| `--disallowedTools Bash,PowerShell,Edit,…`  | Explicitly deny shell, write, edit, and network access            |
+| `--strict-mcp-config`                       | Run without MCP servers, as described below                       |
+| `--permission-prompts none`                 | Deny any action that would trigger a permission prompt            |
+| `--permission-mode default`                 | Override `defaultMode` from the settings                          |
+| `--model <alias>`, `--effort <level>`       | Load from configuration (`haiku` and `low` in iteration 1)        |
+| `--append-system-prompt <text>`             | Pass role instructions from the runtime                           |
+| `--resume <session id>`                     | Continue an earlier session                                       |
 
-Testo di `--help` per `--permission-prompts`: _"Who answers permission prompts with
+`--help` describes `--permission-prompts` as _"Who answers permission prompts with
 --print: "host" (the SDK host or --permission-prompt-tool) or "none" (nobody: anything
 that would prompt is denied automatically; the permission mode still decides everything
-else)"_. Quindi `none` significa **rifiuta senza chiedere**; per questo la modalità è
-passata esplicita. `default` non compare fra le scelte elencate da `--help` (`acceptEdits`,
-`auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`) ma è accettato (un valore
-inventato viene rifiutato) e `init` lo riporta come `permissionMode: "default"`: se
-riporta altro, il turno viene fermato con `permission_mode`.
+else)"_. The adapter passes the mode explicitly because the current mode still governs
+operations that need no prompt. `--help` lists `acceptEdits`, `auto`,
+`bypassPermissions`, `manual`, `dontAsk`, and `plan`. The CLI also accepts `default`
+and rejects invented values. The `init` event reports `permissionMode: "default"`.
+Reporting any other value stops the turn with `permission_mode`.
 
-Mai `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`,
-`--permission-mode bypassPermissions` o `acceptEdits`. Non si usa `--restricted` né
-`--bare`, che ignorerebbero i settings e gli hook dell'utente (per esempio rtk).
+The adapter excludes `--dangerously-skip-permissions`,
+`--allow-dangerously-skip-permissions`, `--permission-mode bypassPermissions`, and
+`acceptEdits`. It preserves user settings and hooks such as rtk by omitting `--restricted`
+and `--bare`.
 
-`--tools ""` da solo non basta: nel turno di diagnosi restavano attivi gli strumenti MCP
-dei connettori claude.ai, fra cui "Claude Docs" con `create`, `update` e `delete`, che
-scrivono su un servizio esterno.
+The diagnostic turn showed that `--tools ""` still leaves the claude.ai MCP connectors
+active, including the "Claude Docs" `create`, `update`, and `delete` tools that write
+to an external service.
 
-## Eventi
+## Events
 
-| Evento (`type`/`subtype`) | Campi usati                                                                  | Diventa            |
-| ------------------------- | ---------------------------------------------------------------------------- | ------------------ |
-| `system` / `init`         | `session_id`, `model`, `apiKeySource`, `permissionMode`, `tools`             | `init` + controlli |
-| `rate_limit_event`        | `rate_limit_info` (`five_hour`, `seven_day`, `overageStatus`)                | `rate_limit`       |
-| `assistant`               | blocchi `text` e `tool_use` di `message.content`                             | `text`, `tool_use` |
-| `result`                  | `result`, `is_error`, `api_error_status`, `session_id`, `permission_denials` | esito del turno    |
-| altri                     | —                                                                            | `other`            |
+| Event (`type`/`subtype`) | Fields read                                                                  | Adapter output        |
+| ------------------------ | ---------------------------------------------------------------------------- | --------------------- |
+| `system` / `init`        | `session_id`, `model`, `apiKeySource`, `permissionMode`, `tools`             | `init` and validation |
+| `rate_limit_event`       | `rate_limit_info` (`five_hour`, `seven_day`, `overageStatus`)                | `rate_limit`          |
+| `assistant`              | `text` and `tool_use` blocks in `message.content`                            | `text`, `tool_use`    |
+| `result`                 | `result`, `is_error`, `api_error_status`, `session_id`, `permission_denials` | Turn outcome          |
+| Other                    | —                                                                            | `other`               |
 
-Lo streaming è per messaggio: ogni messaggio dell'assistente arriva quando è completo.
-`--include-partial-messages` darebbe i delta di testo, ma non è stato registrato dal CLI
-reale e quindi non è usato.
+The stream emits assistant messages when complete. Text deltas would require
+`--include-partial-messages`, which the real CLI fixture did not record and the
+adapter leaves disabled.
 
-L'evento `init` arriva **solo dopo** il primo messaggio su stdin (verificato: senza
-prompt nessun evento in 12 s). Per questo il controllo della fatturazione avviene anche
-prima del turno.
+The `init` event arrives only after the first message on stdin. The verification
+observed no events in 12 s without a prompt. This is why billing checks also run
+before the turn.
 
-## Controllo della fatturazione
+## Billing checks
 
-1. Prima del turno, `claude auth status --json` (nessuna quota). Si prosegue solo con
-   `loggedIn: true`, `apiProvider: "firstParty"` e `authMethod: "claude.ai"`; altrimenti
-   `ClaudeError` `not_logged_in`, `unsupported_provider` (Bedrock, Vertex, …, fatturati a
-   parte) o `api_key`, e il prompt non viene mai inviato. Il login si fa nel terminale
-   (`claude auth login`).
-2. Un `ANTHROPIC_BASE_URL` nell'ambiente (proxy o base URL personalizzato) rende la
-   subscription non verificabile: rifiuto `provider_not_verified`, salvo
-   `allowUnverifiedProvider`; l'esito riporta allora `billing: "unverified_provider"`.
-   L'endpoint ufficiale impostato esplicitamente (`https://api.anthropic.com`, con o senza
-   la barra finale) non è un base URL personalizzato (`isOfficialAnthropicUrl`); un'altra
-   porta, un percorso, delle credenziali o una query sì.
-3. All'evento `init`, `apiKeySource` deve essere `"none"`: altrimenti l'albero di
-   processi viene terminato subito e il turno rifiutato con `api_key`.
+1. The adapter runs `claude auth status --json` before the turn without consuming quota.
+   The turn requires `loggedIn: true`, `apiProvider: "firstParty"`, and
+   `authMethod: "claude.ai"`. Otherwise it returns `ClaudeError` `not_logged_in`,
+   `unsupported_provider` (separately billed providers such as Bedrock and Vertex), or
+   `api_key` without sending the prompt. Users log in from a terminal with
+   `claude auth login`.
+2. A custom `ANTHROPIC_BASE_URL`, including a proxy, makes the subscription unverifiable.
+   The adapter returns `provider_not_verified` unless `allowUnverifiedProvider` is
+   enabled, in which case it reports `billing: "unverified_provider"`.
+   `isOfficialAnthropicUrl` accepts the official `https://api.anthropic.com` endpoint
+   with or without a trailing slash. A different port, a path, credentials, or a query
+   makes it custom.
+3. The `init` event must report `apiKeySource: "none"`. Otherwise, the adapter immediately
+   terminates the process tree and rejects the turn with `api_key`.
 
-## Limite di utilizzo (429)
+## Usage limit (429)
 
-Con il limite della subscription esaurito, Claude risponde senza inferenza (modello
-`<synthetic>`, costo 0): `rate_limit_event` con `status: "rejected"` e un `result` con
-`is_error: true`, `api_error_status: 429`, `api_error: "usage_limit_reached"` e il testo
-del CLI (per esempio "You've hit your session limit · resets 1:50pm"). L'agente lo
-trasforma in `ClaudeError` `usage_limit`, con un messaggio chiaro e **nessun nuovo
-tentativo**; il ciclo si ferma con `failed`. Fixture reale e redatta:
+When the subscription quota is exhausted, Claude responds without inference
+(`<synthetic>` model, zero cost). It sends `rate_limit_event` with
+`status: "rejected"` and a `result` with `is_error: true`, `api_error_status: 429`,
+`api_error: "usage_limit_reached"`, and the CLI message, such as "You've hit your session
+limit · resets 1:50pm". The agent returns `ClaudeError` `usage_limit` with a clear
+message and makes no retry. The loop stops with `failed`. The redacted recording is
 `turn-usage-limit.jsonl`.
 
-## Modalità sandbox
+## Sandbox mode
 
-Con `sandbox: { commands: ['python'] }` ([ADR 0008](decisions/0008-sandbox-mode.md)) il turno
-aggiunge `Write`, `Edit` e `Bash` e resta in `--permission-mode default`. Ammette senza
-chiedere solo `Edit(./**)` (le modifiche sotto la cartella di lavoro, `Write` compreso) e
-`Bash(python *)`; nega `PowerShell`, notebook e rete. Tutto il resto che chiederebbe un
-permesso (`rm`, `mv`, modifiche altrove) viene negato da `--permission-prompts none`; i comandi
-in sola lettura (`ls`, `cat`, `cd` nella cartella) passano sempre. Non si usa `acceptEdits`,
-che approverebbe da solo anche `rm`, `mv`, `cp` e `sed` nella cartella. Mai per default.
+With `sandbox: { commands: ['python'] }` ([ADR 0008](decisions/0008-sandbox-mode.md)),
+the turn adds `Write`, `Edit`, and `Bash` and keeps `--permission-mode default`.
+It preapproves only `Edit(./**)` (edits under the working folder, including `Write`)
+and `Bash(python *)`. It denies PowerShell, notebooks, and network access.
+`--permission-prompts none` denies all other operations that would prompt, including
+`rm`, `mv`, and edits elsewhere. Read-only commands in the working folder, such as
+`ls`, `cat`, and `cd`, are allowed. `acceptEdits` is excluded because it would also
+preapprove `rm`, `mv`, `cp`, and `sed` in the folder. Sandbox mode requires an
+explicit configuration.
 
-## Sotto-agenti
+## Subagents
 
-Con una policy del runtime l'adapter aggiunge lo strumento `Agent` (in `init` compare come
-`Task`) e `--forward-subagent-text`, e impone modello, effort e profondità con l'ambiente del
-processo figlio. Lo stream reale (`turn-subagent.jsonl`) ha il `tool_use` `Agent`, i
-messaggi del sotto-agente con `parent_tool_use_id`, `agent_id` e `subagent_type`, gli eventi
-`system` `task_started`, `task_progress`, `task_updated` e `task_notification`, e il
-`tool_result` finale. Dettagli e verifica: [subagents.md](subagents.md).
+When the runtime supplies a policy, the adapter adds `Agent` (reported as `Task` in
+`init`) and `--forward-subagent-text`. It enforces the model, effort, and depth through
+the child process environment. The real stream (`turn-subagent.jsonl`) includes the
+`Agent` `tool_use`, subagent messages with `parent_tool_use_id`, `agent_id`, and
+`subagent_type`, the `system` events `task_started`, `task_progress`, `task_updated`,
+and `task_notification`, and the final `tool_result`. See [subagents.md](subagents.md)
+for details and verification.
 
-## Etichetta
+## Identity label
 
-Ogni risposta porta l'identità osservata dall'adapter, non quella che il modello dichiara:
-`Claude Code`, il `model` di `init` (per esempio `claude-haiku-5-5`), l'effort passato e
-l'id di sessione. Il runtime ne scrive l'etichetta.
+Each response carries the identity observed by the adapter. The runtime labels it with
+`Claude Code`, the `model` from `init` (for example `claude-haiku-5-5`), the effort
+passed to the CLI, and the session ID.
 
-## Ambiente, cwd, sessione, terminazione
+## Environment, working directory, session, and termination
 
-- Ambiente dell'utente meno le sole chiavi API (`src/environment.ts`); base URL e proxy
-  passano.
-- `cwd` = workspace. L'id di sessione viene da `init` (e da `result`).
-- `stop()` termina l'intero albero (`taskkill /T /F` su Windows, process group su POSIX:
-  Claude parte `detached` solo su POSIX) e rifiuta il turno con `stopped`; è idempotente.
-- Dopo `result` si chiude stdin; `done` si risolve solo quando il processo è uscito, e
-  dopo `shutdownTimeoutMs` (default 5 s) l'albero viene terminato.
+- The adapter preserves the user's environment including base URLs and proxies, except
+  for API keys filtered by `src/environment.ts`.
+- `cwd` is the workspace. `init` and `result` provide the session ID.
+- `stop()` is idempotent. It terminates the whole tree with `taskkill /T /F` on Windows
+  or a process group on POSIX, where Claude starts `detached`. The turn rejects with
+  `stopped`.
+- The adapter closes stdin after `result`. `done` resolves only after the process
+  exits. The adapter kills the tree after `shutdownTimeoutMs` (default 5 s).
 
-## Limiti noti
+## Known limitations
 
-- Un base URL impostato nell'`env` dei settings di Claude, e non nell'ambiente, non è
-  visibile: `init` non lo riporta e i file di configurazione non vengono aperti.
-  `apiKeySource` e `auth status` restano i controlli effettivi.
-- `total_cost_usd` del `result` è una stima nominale anche con la subscription.
-- Con `--resume`, `total_cost_usd` e `modelUsage` sono cumulativi sulla sessione (dalla
-  2.1.277: documentazione, "Accumulate costs across multiple calls"; osservato sulla
-  2.1.308). L'adapter riporta ogni turno come differenza dal precedente.
-- Il controllo `init` arriva dopo l'invio del primo prompt: protegge i turni successivi
-  e interrompe quello in corso, mentre il controllo preventivo è `auth status`.
-- Le sessioni vengono salvate nel profilo dell'utente (nessun
-  `--no-session-persistence`), così `--resume` funziona.
-- `claude doctor` segnala l'auto-update attivo: un binario configurato a mano potrebbe
-  aggiornarsi da solo.
+- A base URL set only in the `env` section of Claude settings is invisible to the
+  adapter. `init` omits it, and the adapter leaves configuration files unopened.
+  `apiKeySource` and `auth status` remain the effective checks.
+- `total_cost_usd` in `result` is a nominal estimate even for subscriptions.
+- With `--resume`, `total_cost_usd` and `modelUsage` accumulate over the session. The
+  2.1.277 documentation describes "Accumulate costs across multiple calls", and
+  verification observed it in 2.1.308. The adapter reports each turn as the difference
+  from the previous one.
+- The `init` check runs after the first prompt. It can interrupt the active turn and
+  protect later ones. `auth status` is the preventive check.
+- Sessions persist in the user's profile to support `--resume`. The adapter omits
+  `--no-session-persistence`.
+- `claude doctor` reports that auto-update is enabled. A manually selected binary
+  may update itself.

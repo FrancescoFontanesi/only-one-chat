@@ -70,7 +70,7 @@ export interface Provider {
 
 /** Said to a read-only role whose action would need a permission: the role's rule, not the user's answer. */
 const READ_ONLY_DENIAL =
-  'Negato dal ruolo: in Only One Chat questo ruolo è in sola lettura e non modifica nulla; l’utente non è stato interpellato.';
+  'Denied because this Only One Chat role is read-only. The user was not asked.';
 
 export const PROVIDERS: Readonly<Record<Cli, Provider>> = {
   /**

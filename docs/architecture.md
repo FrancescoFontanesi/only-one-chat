@@ -1,143 +1,143 @@
-# Architettura prevista
+# Planned architecture
 
-Stato: confini e responsabilità previsti. Le API interne **non sono ancora definite**. Le
-fisseremo soltanto dopo aver verificato i protocolli reali dei CLI (vedi
-[requirements.md](requirements.md), "Questioni aperte").
+This document describes intended boundaries and responsibilities. Internal APIs were
+still open at this stage. Their design depends on verifying the actual CLI protocols.
+See [Open questions before implementation](requirements.md#open-questions-before-implementation).
 
-## Componenti e confini
+## Components and boundaries
 
 ```text
-┌──────────────────────── VS Code ────────────────────────┐
-│                                                         │
-│  Webview (browser sandbox, Preact)                      │
-│    rendering del thread, input, approvazioni            │
-│        ▲  postMessage (protocollo tipizzato e validato) │
-│        ▼                                                │
-│  Extension host (apps/vscode)                           │
-│    comandi, pannello, diff, workspace trust,            │
-│    storage, UI delle approvazioni                       │
-│        │  API TypeScript in-process                     │
-│        ▼                                                │
-│  Orchestration runtime (packages/runtime)   [no vscode] │
-│    thread, leader, task, deleghe, scheduling,           │
-│    quote, failover, stato persistente                   │
-│        │                                                │
-│        ▼                                                │
-│  Provider adapters (packages/adapters)      [no vscode] │
-│    processi figli dei CLI ufficiali, stdio              │
-└────────┬────────────────────────────────────────────────┘
+┌───────────────────────── VS Code ─────────────────────────┐
+│                                                           │
+│  Webview (browser sandbox, Preact)                        │
+│    thread rendering, input, approvals                     │
+│        ▲  postMessage (typed and validated protocol)      │
+│        ▼                                                  │
+│  Extension host (apps/vscode)                             │
+│    commands, panel, diffs, Workspace Trust,               │
+│    storage, approvals UI                                  │
+│        │  in-process TypeScript API                       │
+│        ▼                                                  │
+│  Orchestration runtime (packages/runtime)    [no vscode]  │
+│    thread, leader, tasks, delegation, scheduling,         │
+│    quotas, failover, persistent state                     │
+│        │                                                  │
+│        ▼                                                  │
+│  Provider adapters (packages/adapters)       [no vscode]  │
+│    official CLI child processes, stdio                    │
+└────────┬──────────────────────────────────────────────────┘
          ▼
-   codex / claude / agy  (CLI ufficiali, auth dell'utente)
+   codex / claude / agy  (official CLIs, user authentication)
          │
          ▼
-   strumenti esterni opzionali (MCP, Graft, Basic Memory, ...)
+   optional external tools (MCP, Graft, Basic Memory, ...)
 ```
 
-### Ponte con ChatGPT web
+### ChatGPT web bridge
 
-Il flusso principale ([ADR 0009](decisions/0009-chatgpt-web-and-three-turn-layer.md)) usa una
-chat di ChatGPT web, fuori da VS Code. Il ponte passa solo dagli appunti.
+The original proposal in [ADR 0009](decisions/0009-chatgpt-web-and-three-turn-layer.md)
+used a ChatGPT web conversation outside VS Code and a clipboard bridge on window focus.
+[ADR 0034](decisions/0034-remove-experimental-modes.md) removed the gateway. Users can
+still paste briefs and copy results between the two chats, as described in
+[ADR 0035](decisions/0035-handoff-tools-and-english.md).
 
 ```text
-ChatGPT web ──(l'utente clicca Copia)──► appunti ──(focus, marcatore + id)────► extension host
-ChatGPT web ◄──(l'utente incolla e invia)── appunti ◄──(risposta T3)──────────── extension host
+ChatGPT web ──(user clicks Copy)──► clipboard ──(focus, marker + ID)──► extension host
+ChatGPT web ◄──(user pastes and sends)── clipboard ◄──(T3 response)──── extension host
 ```
 
-- **Dove sta il ponte.** Nell'extension host, perché usa `vscode.env.clipboard`. Il runtime
-  riceve il brief già validato come dato.
-- **Cosa non fa.** Nessun componente legge o scrive la pagina di ChatGPT.
+- The proposed bridge used `vscode.env.clipboard` in the extension host. The runtime
+  would receive the validated brief as data.
+- The ChatGPT page was outside the bridge's read and write scope.
 
 ### Webview
 
-- Codice in `apps/vscode/webview/`, bundle in `dist/webview/main.js`.
-- Non ha accesso a Node, al filesystem, alla rete né ai CLI. Comunica soltanto via
-  `postMessage`.
-- CSP restrittiva con nonce. Nessuna risorsa remota. `localResourceRoots` limitati a
-  `dist/webview` e `media`.
-- È considerata **non fidata** dall'host: ogni messaggio in arrivo viene validato
-  (`parseWebviewMessage`) e i campi sconosciuti vengono scartati.
+- Source lives in `apps/vscode/webview/` and builds to `dist/webview/main.js`.
+- It communicates only through `postMessage`, with no access to Node, the filesystem,
+  the network, or CLIs.
+- A restrictive CSP requires a nonce and disallows remote resources.
+  `localResourceRoots` is limited to `dist/webview` and `media`.
+- The host treats the Webview as **untrusted**. It validates each incoming message with
+  `parseWebviewMessage` and discards unknown fields.
 
 ### Extension host
 
-- Codice in `apps/vscode/src/`. È l'unico componente che importa `vscode`.
-- Fa da adattatore fra VS Code e il runtime: registra i comandi, gestisce il pannello,
-  apre i diff, legge il Workspace Trust, persiste lo stato dove previsto e presenta le
-  richieste di approvazione.
-- Non contiene logica di orchestrazione.
-- **La chat con il leader** (ADR 0010) sta in `apps/vscode/src/session/`. `chat.ts` collega il
-  modo `leader` del runtime agli adapter, e trasforma gli eventi del runtime in aggiornamenti
-  del thread; `facts.ts` ricava i fatti verificati. Nessuno dei due file importa `vscode`, e
-  sono testati contro i CLI fake.
-- **Il pannello** (`webview/panel.ts`) legge le impostazioni `onlyOneChat.*` e controlla
-  cartella, Workspace Trust e consenso.
-- **La Webview** (`apps/vscode/webview/`) mostra intestazione, thread, approvazioni e campo di
-  input.
+- Source lives in `apps/vscode/src/`. This is the only component that imports `vscode`.
+- It adapts VS Code to the runtime by registering commands, managing the panel, opening
+  diffs, checking Workspace Trust, persisting state where specified, and presenting
+  approval requests.
+- Orchestration logic lives in the runtime.
+- **The leader chat** (ADR 0010) lives in `apps/vscode/src/session/`. `chat.ts` connects
+  runtime `leader` mode to the adapters and turns runtime events into thread updates.
+  `facts.ts` derives verified facts. Both files run without `vscode` and are tested
+  against fake CLIs.
+- **The panel** (`webview/panel.ts`) reads `onlyOneChat.*` settings and checks the folder,
+  Workspace Trust, and consent.
+- **The Webview** (`apps/vscode/webview/`) displays the header, thread, approvals, and
+  input field.
 
 ### Orchestration runtime
 
-- `packages/runtime`, Node puro e senza `vscode` (vincolo verificato da
-  `tests/boundaries.test.ts` e da ESLint).
-- Responsabilità previste: modello del thread, ruoli (leader, backup, worker), task
-  contract, ciclo di vita dei task, domande dei worker, scheduling parallelo, stato delle
-  quote, failover transazionale, checkpoint e ripresa.
-- Stato attuale: espone solo `getRuntimeInfo()`.
+- `packages/runtime` runs in Node without `vscode`. `tests/boundaries.test.ts` and ESLint
+  enforce this boundary.
+- Intended responsibilities include the thread model, roles (leader, backup, worker),
+  task contracts, the task lifecycle, worker questions, parallel scheduling, quota status,
+  transactional failover, checkpoints, and recovery.
+- The bootstrap exposed only `getRuntimeInfo()`.
 
 ### Provider adapters
 
-- `packages/adapters`, Node puro e senza `vscode`.
-- Ogni adapter avvia il **CLI ufficiale** come processo figlio e ne traduce il protocollo
-  (stdio, JSON-RPC o NDJSON) in eventi del runtime.
-- Non legge e non scrive le credenziali dei provider: l'autenticazione resta interamente
-  nel CLI.
-- Stato attuale: c'è il client di connessione a Codex App Server
-  ([codex-app-server.md](codex-app-server.md)) e la sessione con verifica dell'abbonamento
-  ChatGPT ([codex-auth.md](codex-auth.md)). Il contratto generale dell'adapter non è ancora
-  definito.
+- `packages/adapters` runs in Node without `vscode`.
+- Each adapter launches an **official CLI** as a child process and converts its protocol
+  (stdio, JSON-RPC, or NDJSON) to runtime events.
+- The CLI handles authentication and owns all credential access.
+- At this stage, the adapters included the
+  [Codex App Server client](codex-app-server.md) and a
+  [session that verifies the ChatGPT subscription](codex-auth.md). The general adapter
+  contract was still open.
 
-### Stato operativo persistente
+### Persistent operational state
 
-- Task, eventi, domande, checkpoint e mappatura delle sessioni CLI.
-- Requisiti: scritture atomiche (file temporaneo seguito da rename), schema versionato e
-  ripresa idempotente.
-- Posizione da decidere: `ExtensionContext.storageUri` (per workspace) oppure una
-  directory locale dedicata. Non nel repository dell'utente, salvo opt-in.
+- Persist tasks, events, questions, checkpoints, and CLI session mappings.
+- Persistence requires atomic writes (temporary file followed by rename), a versioned
+  schema, and idempotent recovery.
+- Storage candidates include `ExtensionContext.storageUri` (per workspace) and a
+  dedicated local directory. Storing state in the user's repository requires opt-in.
 
-### Permessi
+### Permissions
 
-- Un unico punto di decisione nel runtime, la cui UI vive nell'host.
-- Le richieste dei CLI (approval request) passano dall'adapter al runtime, poi all'host e
-  alla Webview, e tornano indietro per lo stesso percorso.
-- Le policy sono descritte in [security.md](security.md).
+- The runtime has one decision point for permissions. The host provides its UI.
+- CLI approval requests flow through the adapter, runtime, host, and Webview. Responses
+  follow the reverse path.
+- See [security.md](security.md) for the policies.
 
-### Strumenti esterni
+### External tools
 
-- MCP server, Graft, Basic Memory e skill sono configurati dall'utente e consumati dai
-  CLI dei provider o dal runtime **solo se presenti**.
-- Il core non dipende da nessuno di essi.
+- The user configures MCP servers, Graft, Basic Memory, and skills. Provider CLIs or the
+  runtime use them only when available.
+- These tools are optional for the core.
 
-## Struttura del repository
+## Repository layout
 
-| Percorso                  | Contenuto                                                          |
+| Path                      | Content                                                            |
 | ------------------------- | ------------------------------------------------------------------ |
-| `apps/vscode/src/`        | extension host (`extension.ts`, `commands/`, `webview/` lato host) |
-| `apps/vscode/webview/`    | codice browser della Webview (tsconfig DOM e JSX separato)         |
-| `apps/vscode/media/`      | CSS e asset statici serviti alla Webview                           |
-| `apps/vscode/test/unit/`  | unit test Vitest (senza Extension Host)                            |
-| `apps/vscode/test/suite/` | integration test nell'Extension Host                               |
-| `packages/runtime/`       | runtime di orchestrazione                                          |
-| `packages/adapters/`      | adapter dei CLI                                                    |
-| `tests/`                  | test architetturali trasversali                                    |
-| `references/`             | sorgenti di riferimento in sola lettura (fuori dal versionamento)  |
+| `apps/vscode/src/`        | Extension host (`extension.ts`, `commands/`, host-side `webview/`) |
+| `apps/vscode/webview/`    | Webview browser code with a separate DOM and JSX tsconfig          |
+| `apps/vscode/media/`      | CSS and static assets served to the Webview                        |
+| `apps/vscode/test/unit/`  | Vitest unit tests outside the Extension Host                       |
+| `apps/vscode/test/suite/` | Integration tests in the Extension Host                            |
+| `packages/runtime/`       | Orchestration runtime                                              |
+| `packages/adapters/`      | CLI adapters                                                       |
+| `tests/`                  | Cross-package architecture tests                                   |
+| `references/`             | Read-only reference sources outside version control                |
 
-I package interni espongono direttamente i sorgenti TypeScript e vengono inclusi
-nel bundle dell'estensione da esbuild. Vedi
-[decisions/0003](decisions/0003-monorepo-layout.md).
+Internal packages expose their TypeScript sources directly and esbuild includes them in
+the extension bundle. See [ADR 0003](decisions/0003-monorepo-layout.md).
 
-## Decisioni rinviate
+## Deferred decisions
 
-- Formato del protocollo host ↔ Webview oltre a quello del bootstrap (`ready`, `status`,
-  `ping`, `pong`).
-- Interfaccia degli adapter e modello degli eventi.
-- Motore di persistenza: file JSON e JSONL oppure SQLite. Oggi niente database (vincolo
-  della sessione di bootstrap).
-- Supporto ai worktree Git per i worker.
+- Host–Webview protocol beyond the bootstrap messages (`ready`, `status`, `ping`, `pong`).
+- Adapter interface and event model.
+- Persistence engine, with JSON and JSONL files or SQLite as candidates. The bootstrap
+  required running without a database.
+- Git worktree support for workers.

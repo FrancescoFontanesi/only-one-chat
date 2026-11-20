@@ -1,42 +1,41 @@
 # Architecture Decision Records
 
-Un file per ogni decisione: `NNNN-titolo.md`, con Stato, Contesto, Decisione e Conseguenze.
-Una decisione superata non si cancella: si marca "Sostituita da NNNN".
+Each decision has its own `NNNN-title.md` file with Status, Context, Decision, and Consequences. Keep superseded decisions and mark them "Superseded by NNNN."
 
-| ADR                                               | Titolo                                                               | Stato                                         |
-| ------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------- |
-| [0001](0001-toolchain.md)                         | Toolchain e versioni del bootstrap                                   | Accettata                                     |
-| [0002](0002-reuse-policy.md)                      | Riuso dei sorgenti di riferimento: solo reimplementazione            | Accettata                                     |
-| [0003](0003-monorepo-layout.md)                   | Layout del monorepo e package interni                                | Accettata                                     |
-| [0004](0004-codex-app-server-client.md)           | Client Codex App Server: stdio, niente shell, terminazione garantita | Accettata                                     |
-| [0005](0005-subscription-only-auth.md)            | Solo abbonamenti: gate di autenticazione e profilo Codex dedicato    | Sostituita da 0006                            |
-| [0006](0006-personal-cli-profiles.md)             | Profili personali dei CLI                                            | Accettata                                     |
-| [0007](0007-subagents-visible-not-intercepted.md) | D13: sotto-agenti visibili e vincolati, non intercettati             | Accettata                                     |
-| [0008](0008-sandbox-mode.md)                      | Modalità sandbox: scrittura confinata per le prove locali            | Accettata                                     |
-| [0009](0009-chatgpt-web-and-three-turn-layer.md)  | Flusso principale: ChatGPT web e strato agentico a tre turni         | Sostituita in parte da 0010                   |
-| [0010](0010-leader-chat-adaptive-delegation.md)   | La chat del leader come nucleo: delega adattiva fra subscription     | Accettata, in parte sostituita da 0018        |
-| [0011](0011-panels-roles-approvals-continuity.md) | Pannelli, ruoli, approvazioni e continuità dell'implementatore       | Accettata in parte, sostituita da 0012 e 0018 |
-| [0012](0012-layout-roles-catalog.md)              | Disposizione della chat, viste laterali, catalogo dei modelli        | Accettata                                     |
-| [0013](0013-settings-page.md)                     | Pagina impostazioni e valutazione delle funzioni proposte            | Accettata                                     |
-| [0014](0014-checkpoints-and-review.md)            | Checkpoint della cartella e revisione delle modifiche                | Accettata                                     |
-| [0015](0015-context-and-mentions.md)              | Indicatore di contesto e file indicati con `@`                       | Accettata                                     |
-| [0016](0016-chat-squad-layout.md)                 | La chat, il pannello Squad e le impostazioni dal canvas di design    | Accettata                                     |
-| [0017](0017-implementer-handoff.md)               | Handoff dell'implementatore                                          | Accettata                                     |
-| [0018](0018-delegation-cycle.md)                  | Ciclo della delega                                                   | Accettata                                     |
-| [0019](0019-skills-questions-visible-turn.md)     | Skill, domande del leader e turno visibile                           | Accettata                                     |
-| [0020](0020-role-prompts-brief-report.md)         | Prompt di ruolo, brief e rapporto                                    | Accettata                                     |
-| [0021](0021-auto-mode-ignored-paths-waiting.md)   | Modalità auto di Claude Code, percorsi ignorati, richieste in attesa | Accettata                                     |
-| [0022](0022-providers-per-role.md)                | Qualsiasi provider in qualsiasi ruolo, e le domande di Claude        | Accettata                                     |
-| [0023](0023-board-nodes-and-acp.md)               | Nodi sulla lavagna di Squad e Antigravity tramite ACP                | Accettata                                     |
-| [0024](0024-markdown-and-latex.md)                | Markdown e LaTeX nei messaggi degli agenti                           | Accettata                                     |
-| [0025](0025-cli-paths-detect-pick.md)             | Trovare gli eseguibili dei CLI dalle impostazioni                    | Accettata                                     |
-| [0026](0026-mention-and-attach.md)                | `@` nomina un file, + lo allega                                      | Accettata                                     |
-| [0027](0027-history-and-blocks.md)                | Lo storico per chat e la ghiera per blocchi                          | Accettata                                     |
-| [0028](0028-groups-on-the-dial.md)                | Gruppi e nodi singoli sulla ghiera, SQUAD nel composer               | Accettata                                     |
-| [0029](0029-reviewer-findings-and-review.md)      | Il revisore: rilievi e rapporto di revisione                         | Accettata                                     |
-| [0030](0030-diff-checks.md)                       | Controlli sul diff fra i fatti verificati                            | Accettata                                     |
-| [0031](0031-role-contract-and-brief.md)           | Il contratto fra i ruoli e la struttura del brief                    | Accettata                                     |
-| [0032](0032-change-risk.md)                       | La stima del rischio di una modifica                                 | Accettata in parte, sostituita da 0033        |
-| [0033](0033-reviewer-always-and-direct.md)        | Il revisore sempre, anche sul lavoro diretto, e dall'interfaccia     | Accettata                                     |
-| [0034](0034-remove-experimental-modes.md)         | Via le modalità sperimentali del runtime e la demo                   | Accettata                                     |
-| [0035](0035-handoff-tools-and-english.md)         | Le consegne fra i ruoli come strumenti, e il sistema in inglese      | Accettata                                     |
+| ADR                                               | Title                                                                | Status                                          |
+| ------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------- |
+| [0001](0001-toolchain.md)                         | Bootstrap toolchain and versions                                     | Accepted                                        |
+| [0002](0002-reuse-policy.md)                      | Reuse policy for reference sources                                   | Accepted                                        |
+| [0003](0003-monorepo-layout.md)                   | Monorepo layout and internal packages                                | Accepted                                        |
+| [0004](0004-codex-app-server-client.md)           | Codex App Server client over stdio                                   | Accepted                                        |
+| [0005](0005-subscription-only-auth.md)            | Subscription-only authentication and a dedicated Codex profile       | Superseded by 0006                              |
+| [0006](0006-personal-cli-profiles.md)             | Personal CLI profiles                                                | Accepted                                        |
+| [0007](0007-subagents-visible-not-intercepted.md) | D13: Visibility and constraints for native subagents                 | Accepted                                        |
+| [0008](0008-sandbox-mode.md)                      | Sandbox mode for local tests with confined writes                    | Accepted                                        |
+| [0009](0009-chatgpt-web-and-three-turn-layer.md)  | ChatGPT on the web with a three-turn agent workflow                  | Partially superseded by 0010                    |
+| [0010](0010-leader-chat-adaptive-delegation.md)   | Leader chat and adaptive delegation across subscriptions             | Accepted, partially superseded by 0018          |
+| [0011](0011-panels-roles-approvals-continuity.md) | Panels, roles, approvals, and implementer continuity                 | Partially accepted, superseded by 0012 and 0018 |
+| [0012](0012-layout-roles-catalog.md)              | Chat layout, sidebar views, and model catalog                        | Accepted                                        |
+| [0013](0013-settings-page.md)                     | Settings page and assessment of proposed features                    | Accepted                                        |
+| [0014](0014-checkpoints-and-review.md)            | Folder checkpoints and change review                                 | Accepted                                        |
+| [0015](0015-context-and-mentions.md)              | Context indicator and file mentions with `@`                         | Accepted                                        |
+| [0016](0016-chat-squad-layout.md)                 | Chat, Squad, and Settings from the design canvas                     | Accepted                                        |
+| [0017](0017-implementer-handoff.md)               | Implementer handoff                                                  | Accepted                                        |
+| [0018](0018-delegation-cycle.md)                  | Delegation cycle                                                     | Accepted                                        |
+| [0019](0019-skills-questions-visible-turn.md)     | Skills, leader questions, and visible turn activity                  | Accepted                                        |
+| [0020](0020-role-prompts-brief-report.md)         | Role prompts, briefs, and reports                                    | Accepted                                        |
+| [0021](0021-auto-mode-ignored-paths-waiting.md)   | Claude Code auto mode, ignored paths, and pending requests           | Accepted                                        |
+| [0022](0022-providers-per-role.md)                | Provider-independent roles and Claude questions                      | Accepted                                        |
+| [0023](0023-board-nodes-and-acp.md)               | Nodes on the Squad board and Antigravity over ACP                    | Accepted                                        |
+| [0024](0024-markdown-and-latex.md)                | Markdown and LaTeX in agent messages                                 | Accepted                                        |
+| [0025](0025-cli-paths-detect-pick.md)             | Finding CLI executables in settings                                  | Accepted                                        |
+| [0026](0026-mention-and-attach.md)                | Mention a file with @ and attach it with +                           | Accepted                                        |
+| [0027](0027-history-and-blocks.md)                | Unified chat history and grouped recipient dial                      | Accepted                                        |
+| [0028](0028-groups-on-the-dial.md)                | Groups and standalone nodes on the dial, Squad in the composer       | Accepted                                        |
+| [0029](0029-reviewer-findings-and-review.md)      | The reviewer, findings, and review report                            | Accepted                                        |
+| [0030](0030-diff-checks.md)                       | Diff checks in verified facts                                        | Accepted                                        |
+| [0031](0031-role-contract-and-brief.md)           | The role contract and brief structure                                | Accepted                                        |
+| [0032](0032-change-risk.md)                       | Estimating change risk                                               | Partially accepted, superseded by 0033          |
+| [0033](0033-reviewer-always-and-direct.md)        | Review every job, including direct work, and expose review in the UI | Accepted                                        |
+| [0034](0034-remove-experimental-modes.md)         | Remove experimental runtime modes and the demo                       | Accepted                                        |
+| [0035](0035-handoff-tools-and-english.md)         | Structured handoff tools and English across the project              | Accepted                                        |

@@ -1,4 +1,4 @@
-// Where each CLI is installed, for the settings page's RILEVA and SELEZIONA
+// Where each CLI is installed, for the settings page's DETECT and SELECT
 // (ADR 0025): the same search the extension makes before a turn
 // (resolveNativeExecutable), over the PATH and the places the provider's own
 // VS Code extension keeps its CLI; or over a folder the user picks, and its
@@ -67,13 +67,13 @@ async function findIn(cli: Cli, folders: readonly string[]): Promise<string | un
   }
 }
 
-/** RILEVA: the PATH first, then where the provider's extension or installer keeps it. */
+/** DETECT: the PATH first, then where the provider's extension or installer keeps it. */
 export function detectCli(cli: Cli): Promise<string | undefined> {
   const onPath = (getEnv(process.env, 'PATH') ?? '').split(path.delimiter).filter(Boolean);
   return findIn(cli, [...onPath, ...CLIS[cli].bundled()]);
 }
 
-/** SELEZIONA: the executable in a folder the user picked, or in its `bin`. */
+/** SELECT: the executable in a folder the user picked, or in its `bin`. */
 export function findInFolder(cli: Cli, folder: string): Promise<string | undefined> {
   return findIn(cli, [folder, path.join(folder, 'bin')]);
 }

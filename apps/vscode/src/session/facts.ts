@@ -109,10 +109,10 @@ export async function verifiedFacts(
   ignored: Ignored = NOTHING_IGNORED,
 ): Promise<string> {
   const changed = changes(baseline, snapshot(dir, ignored));
-  const lines = ['File cambiati dall’inizio della richiesta:'];
+  const lines = ['Files changed since the request began:'];
   if (changed === 'unknown') {
-    lines.push('- non calcolati: la cartella ha troppi file o non si può leggere');
-  } else lines.push(...(changed.length > 0 ? changed.map((c) => `- ${c}`) : ['- nessuno']));
+    lines.push('- unavailable: the workspace has too many files or could not be read');
+  } else lines.push(...(changed.length > 0 ? changed.map((c) => `- ${c}`) : ['- none']));
   if (verify.length > 0) {
     const run = await runCommand(verify, dir);
     const output = run.output.replace(/\r\n/g, '\n').trim();
@@ -120,10 +120,10 @@ export async function verifiedFacts(
     const failed = output.split('\n').filter((line) => /^(FAIL|ERROR)[: ]/.test(line));
     lines.push(
       '',
-      `Verifica eseguita dal runtime: ${verify.join(' ')} → exit ${String(run.code)}${run.timedOut ? ' (timeout)' : ''}`,
-      ...(failed.length > 0 ? ['Test falliti:', ...failed.map((line) => `- ${line}`)] : []),
-      'Ultime righe dell’output:',
-      output.split('\n').slice(-15).join('\n') || '(nessun output)',
+      `Verification run by the runtime: ${verify.join(' ')} → exit ${String(run.code)}${run.timedOut ? ' (timeout)' : ''}`,
+      ...(failed.length > 0 ? ['Failed tests:', ...failed.map((line) => `- ${line}`)] : []),
+      'Last lines of output:',
+      output.split('\n').slice(-15).join('\n') || '(no output)',
     );
   }
   return lines.join('\n');

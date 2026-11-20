@@ -142,16 +142,16 @@ const DIRECT = /^@impl\b\s*/i;
  * and a new one of the same model continues without seeing this conversation.
  */
 const HANDOFF_REQUEST = [
-  'Passaggio di consegne. Questa sessione sta per chiudersi: il lavoro continua in una sessione nuova',
-  'dello stesso modello, che non vedrà questa conversazione. Scrivi per quella sessione un passaggio',
-  'di consegne completo ma conciso: obiettivo, stato attuale, file toccati e perché, decisioni prese,',
-  'problemi aperti, prossimi passi, comandi utili per verificare. Non modificare file e non eseguire',
-  'comandi: scrivi solo il testo.',
+  'Handoff. This session is about to close. Work will continue in a new session',
+  'with the same model and no access to this conversation. Write a concise but complete',
+  'handoff covering the goal, current state, files changed and why, decisions made,',
+  'open issues, next steps, and relevant verification commands. Write the handoff as text only.',
+  'Leave files unchanged and run no commands.',
 ].join('\n');
 
 /** How the new session receives the handoff, after its instructions. */
 const HANDOFF_PREFACE =
-  'Continui il lavoro di una sessione precedente di questo ruolo. Il suo passaggio di consegne:';
+  'Continue the work from the previous session for this role. Here is its handoff:';
 
 /** A delegation held for the user, kept with the chat until decided (ADR 0018). */
 export interface DraftDelegation {
@@ -410,9 +410,7 @@ export class ChatSession {
   /** The role's instructions, followed by the user's own for it, if any (ADR 0013). */
   private withUserInstructions(role: TurnRole, instructions: string): string {
     const own = this.config.instructions?.[role]?.trim();
-    return own
-      ? `${instructions}\n\nIstruzioni dell’utente per questo ruolo:\n${own}`
-      : instructions;
+    return own ? `${instructions}\n\nUser instructions for this role:\n${own}` : instructions;
   }
 
   /** The session to resume for a role, once: a later reset starts new ones. */
@@ -435,7 +433,7 @@ export class ChatSession {
       this.events.update({
         type: 'notice',
         level: 'warn',
-        text: `La sessione salvata ${role === 'leader' ? 'del leader' : 'dell’implementatore'} non si riapre (${error instanceof Error ? error.message : String(error)}): ne parte una nuova, che non ricorda la conversazione.`,
+        text: `Could not resume the saved ${role} session (${error instanceof Error ? error.message : String(error)}). A new session will start without the conversation history.`,
       });
       return factory(options);
     }
@@ -489,7 +487,7 @@ export class ChatSession {
       this.events.update({
         type: 'notice',
         level: 'warn',
-        text: 'Un messaggio è in corso: l’handoff si fa quando finisce.',
+        text: 'Wait for the current message to finish before handing off.',
       });
       return;
     }
@@ -497,7 +495,7 @@ export class ChatSession {
       this.events.update({
         type: 'notice',
         level: 'info',
-        text: 'L’implementatore non ha ancora una sessione da passare: parte già da zero.',
+        text: 'The implementer will start a fresh session. There is no session to hand off yet.',
       });
       return;
     }
@@ -509,7 +507,7 @@ export class ChatSession {
       const result = await this.implementerTurn(session, HANDOFF_REQUEST, false);
       if (result.text.trim() === '') {
         throw new Error(
-          'L’implementatore non ha scritto il passaggio di consegne: la sessione resta quella di prima.',
+          'The implementer produced no handoff. The current session is still active.',
         );
       }
       this.implementerSession = undefined;
@@ -525,7 +523,7 @@ export class ChatSession {
       this.events.update({
         type: 'notice',
         level: 'info',
-        text: `Handoff: la prossima sessione dell’implementatore (${this.roles.implementer.model}) parte da questo passaggio di consegne.`,
+        text: `The next implementer session (${this.roles.implementer.model}) will continue from this handoff.`,
       });
     } catch (error) {
       this.events.update({
@@ -625,8 +623,8 @@ export class ChatSession {
     if (notes.length === 0) return undefined;
     this.events.fileNotes?.(this.pendingNotes());
     return [
-      'Nota del runtime: dopo il lavoro precedente l’utente ha rimesso dei file com’erano. Conta il',
-      'contenuto attuale su disco: rileggilo prima di basarti su quello che ricordi.',
+      'Runtime note: the user restored some files after the previous work. Read the',
+      'current files on disk before relying on your previous context.',
       ...notes.map((note) => `- ${note}`),
     ].join('\n');
   }
@@ -641,7 +639,7 @@ export class ChatSession {
         this.events.update({
           type: 'notice',
           level: 'warn',
-          text: 'Nessun checkpoint: la cartella ha troppi file o non si può leggere. Le modifiche di questo messaggio non si potranno annullare da qui.',
+          text: 'Checkpoint unavailable. The workspace has too many files or could not be read. Changes from this message cannot be reverted here.',
         });
       }
       return checkpoint;
@@ -649,7 +647,7 @@ export class ChatSession {
       this.events.update({
         type: 'notice',
         level: 'warn',
-        text: `Checkpoint non riuscito: ${error instanceof Error ? error.message : String(error)}`,
+        text: `Could not create a checkpoint: ${error instanceof Error ? error.message : String(error)}`,
       });
       return null;
     }
@@ -693,7 +691,7 @@ export class ChatSession {
       this.events.update({
         type: 'notice',
         level: 'warn',
-        text: 'Un messaggio è già in corso: aspetta o fermalo.',
+        text: 'Wait for the current message to finish or stop it.',
       });
       return;
     }
@@ -701,7 +699,7 @@ export class ChatSession {
       this.events.update({
         type: 'notice',
         level: 'warn',
-        text: 'Una delega aspetta la tua decisione: inviala o annullala.',
+        text: 'Send or cancel the pending delegation before continuing.',
       });
       return;
     }
@@ -709,7 +707,7 @@ export class ChatSession {
       this.events.update({
         type: 'notice',
         level: 'warn',
-        text: 'Il revisore è spento: accendilo per chiedergli una revisione.',
+        text: 'Enable the reviewer before requesting a review.',
       });
       return;
     }
@@ -788,7 +786,7 @@ export class ChatSession {
           this.events.update({
             type: 'notice',
             level: 'info',
-            text: ['File cambiati:', ...changed.map((c) => `- ${c}`)].join('\n'),
+            text: ['Files changed:', ...changed.map((c) => `- ${c}`)].join('\n'),
           });
         }
       }
@@ -812,7 +810,7 @@ ${this.diffChecks()}`;
   private diffChecks(): string {
     const now = this.changesNow();
     if (!now) {
-      return 'Controlli sul diff, fatti dal runtime: non eseguiti, senza checkpoint della cartella.';
+      return 'The runtime skipped diff checks because there was no workspace checkpoint.';
     }
     return [
       shortcutFacts(now.changed, now.uncovered),
@@ -862,8 +860,8 @@ ${this.diffChecks()}`;
       undefined,
     );
     const reviewerNote = !guardable
-      ? `la tua sessione è in sola lettura: non puoi scrivere file, nemmeno test.${
-          reviewer.cli === 'antigravity' ? ` Inoltre ${NO_COMMANDS_NOTE}` : ''
+      ? `your session is read-only. File edits, including tests, are unavailable.${
+          reviewer.cli === 'antigravity' ? ` ${NO_COMMANDS_NOTE}` : ''
         }`
       : undefined;
     return {
@@ -949,7 +947,7 @@ ${this.diffChecks()}`;
     this.events.update({
       type: 'notice',
       level: 'info',
-      text: `Il leader leggerà ${what} con il tuo prossimo messaggio.`,
+      text: `The leader will read ${what} with your next message.`,
     });
   }
 
@@ -989,14 +987,14 @@ ${this.diffChecks()}`;
           facts: judged.facts,
           review: judged.review,
         },
-        'questo lavoro e la sua revisione',
+        'this work and its review',
       );
       return;
     }
     const facts = await this.facts(baseline);
     shown.facts = true;
     this.events.update({ type: 'notice', level: 'info', text: facts });
-    this.keepForLeader({ source: 'direct', request: text, report, facts }, 'questo rapporto');
+    this.keepForLeader({ source: 'direct', request: text, report, facts }, 'this report');
   }
 
   /**
@@ -1041,7 +1039,7 @@ ${this.diffChecks()}`;
         facts: judged.facts,
         review: judged.review,
       },
-      'la revisione',
+      'the review',
     );
   }
 
@@ -1163,7 +1161,7 @@ ${this.diffChecks()}`;
       this.events.update({
         type: 'notice',
         level: 'info',
-        text: 'Il leader leggerà il rapporto con il tuo prossimo messaggio.',
+        text: 'The leader will read the report with your next message.',
       });
     } else if (outcome.status !== 'completed' && outcome.status !== 'result') {
       // Something else ended the loop: what was unseen is still unseen.
@@ -1383,7 +1381,7 @@ ${this.diffChecks()}`;
         update({
           type: 'notice',
           level: 'warn',
-          text: `Richiesta di ${event.agent} rifiutata: ${event.request.summary}`,
+          text: `Request from ${event.agent} denied: ${event.request.summary}`,
         });
         break;
       case 'intercepted':
@@ -1415,12 +1413,13 @@ ${this.diffChecks()}`;
       case 'reviewed': {
         const verdict = event.verdict
           ? event.verdict.replace('_', ' ').toUpperCase()
-          : 'SENZA VERDETTO';
-        const rounds = event.rounds === 1 ? '1 giro' : `${String(event.rounds)} giri`;
+          : 'NO VERDICT';
+        const rounds =
+          event.rounds === 1 ? '1 correction round' : `${String(event.rounds)} correction rounds`;
         update({
           type: 'notice',
           level: event.verdict === 'rejected' || event.verdict === null ? 'warn' : 'info',
-          text: `Revisione di ${event.reviewer}: ${verdict} · ${rounds} di correzione`,
+          text: `Review by ${event.reviewer}: ${verdict} · ${rounds}`,
         });
         break;
       }
@@ -1431,7 +1430,7 @@ ${this.diffChecks()}`;
         update({
           type: 'notice',
           level: 'warn',
-          text: `Chiamata di delega non valida: ${event.errors.join('; ')}`,
+          text: `Invalid delegation call: ${event.errors.join('; ')}`,
         });
         break;
       case 'subagent_violation':

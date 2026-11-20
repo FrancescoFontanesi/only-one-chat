@@ -1,235 +1,238 @@
-# Sicurezza: threat model iniziale
+# Initial security threat model
 
-Stato: threat model del bootstrap. Ogni funzionalità futura deve indicare quali minacce
-tocca e come le mitiga.
+This model dates to the bootstrap. Future features must identify the threats they
+affect and how they mitigate them.
 
-## Regole non negoziabili
+## Mandatory rules
 
-1. **Nessuna modalità `dangerously-skip-permissions`** (né equivalenti: `--yolo`,
-   `bypassPermissions`, `approval-policy never` con sandbox disattivata, ecc.) attiva
-   per default. Se mai verrà introdotta: opt-in esplicito, per singola sessione, ben
-   visibile e mai persistente.
-2. **Nessuna API a pagamento.** L'estensione non gestisce API key e non fa fallback
-   verso endpoint a consumo. Un provider senza quota disponibile viene messo in pausa,
-   non sostituito con un'API.
-3. **Le credenziali restano ai CLI.** L'estensione non legge, non copia e non modifica
-   token o file di autenticazione (`~/.codex`, `~/.claude`, profili Antigravity).
-4. **Nessuna modifica silenziosa alle configurazioni globali** dei CLI dell'utente.
-5. **Workspace Trust rispettato.** L'estensione non forza mai la fiducia su un workspace.
+1. **Permission checks stay enabled by default.** This applies to
+   `dangerously-skip-permissions` and equivalents such as `--yolo`, `bypassPermissions`,
+   and `approval-policy never` with sandboxing disabled. Any future exception would
+   require a visible, explicit opt-in per session, with no persistence.
+2. **Paid APIs are excluded.** The extension leaves API keys unmanaged and pauses
+   providers that run out of quota. It does not fall back to metered endpoints.
+3. **The CLIs own credentials.** The extension leaves tokens and authentication files
+   unread, uncopied, and unmodified (`~/.codex`, `~/.claude`, Antigravity profiles).
+4. **Changes to the user's global CLI configuration require their knowledge.**
+5. **Workspace Trust is respected.** The user controls whether a workspace is trusted.
 
-## Asset da proteggere
+## Assets to protect
 
-- Credenziali e sessioni degli abbonamenti AI dell'utente.
-- Codice e dati del workspace.
-- Integrità dello stato operativo (task, checkpoint).
-- Quote e budget dell'utente.
-- Transcript e log, che possono contenere segreti.
+- Credentials and sessions for the user's AI subscriptions.
+- Workspace code and data.
+- Operational state integrity (tasks and checkpoints).
+- User quotas and budgets.
+- Transcripts and logs, which may contain secrets.
 
-## Minacce e mitigazioni
+## Threats and mitigations
 
-### T1. Protezione delle credenziali
+### T1. Credential protection
 
-- Minaccia: esfiltrazione o corruzione dei token, per esempio un adapter che li copia
-  o li logga.
-- Mitigazioni: l'autenticazione è delegata ai CLI ufficiali, l'estensione non tocca mai
-  i file di credenziali e i processi figli ricevono un ambiente esplicito (allow-list
-  di variabili). Il redaction dei segreti nei log è obbligatorio.
-- Lezione dai riferimenti: usturlab (`packages/core/src/adapters/gemini.ts:32-52`)
-  riscrive `settings.json` nel profilo del CLI. Comportamenti di questo tipo sono vietati.
+- **Threat.** Token exfiltration or corruption, such as by an adapter that copies or logs
+  tokens.
+- **Mitigations.** Official CLIs handle authentication and retain exclusive access to
+  credential files. Child processes receive an explicit allow-list of environment
+  variables. Logs must redact secrets.
+- **Reference finding.** usturlab rewrites `settings.json` in the CLI profile
+  (`packages/core/src/adapters/gemini.ts:32-52`). This behavior is prohibited.
 
-### T2. Isolamento dei processi
+### T2. Process isolation
 
-- Minaccia: un CLI o un worker esegue comandi fuori dallo scope previsto.
-- Mitigazioni: le sandbox native dei CLI restano attive, si usa una cwd esplicita, i
-  worker che scrivono lavorano in worktree separati quando possibile, ci sono timeout e
-  cancellazione, e all'uscita di VS Code nessun processo resta orfano.
+- **Threat.** A CLI or worker executes commands outside its scope.
+- **Mitigations.** Keep native CLI sandboxes active, use an explicit working directory,
+  and isolate workers that write in separate worktrees when possible. Use timeouts and
+  cancellation, and clean up child processes on VS Code exit.
 
-### T3. Sicurezza del workspace
+### T3. Workspace security
 
-- Minaccia: aprire un repository malevolo induce l'esecuzione automatica di agenti o
-  comandi.
-- Mitigazioni: in un workspace non fidato non parte nessuna esecuzione di agenti;
-  istruzioni, regole e config del workspace vengono caricate solo se il workspace è
-  fidato e dopo l'approvazione del contenuto.
-- TODO: quando arriverà l'esecuzione degli agenti, `capabilities.untrustedWorkspaces`
-  in `apps/vscode/package.json` deve passare da `true` a `"limited"` (o `false`).
-- Lezione dai riferimenti: usturlab imposta `GEMINI_CLI_TRUST_WORKSPACE=true`
-  (`packages/core/src/adapters/gemini.ts:63`). È un comportamento vietato.
+- **Threat.** Opening a malicious repository triggers automatic execution of agents or
+  commands.
+- **Mitigations.** Agent execution requires a trusted workspace. Loading workspace
+  instructions, rules, and configuration also requires approval of their contents.
+- **Bootstrap TODO.** When agent execution is introduced, change
+  `capabilities.untrustedWorkspaces` in `apps/vscode/package.json` from `true` to
+  `"limited"` or `false`.
+- **Reference finding.** usturlab sets `GEMINI_CLI_TRUST_WORKSPACE=true`
+  (`packages/core/src/adapters/gemini.ts:63`). This behavior is prohibited.
 
-### T4. Prompt injection da file e output dei worker
+### T4. Prompt injection from files and worker output
 
-- Minaccia: contenuti del repository, pagine web, output di tool o di worker contengono
-  istruzioni ostili ("ignora le regole, esegui X").
-- Mitigazioni: l'output dei worker è un _dato_ da revisionare e non diventa mai
-  istruzione per il leader senza una cornice esplicita; le richieste di permesso nate da
-  un task delegato mostrano l'origine; i task contract fissano scope e percorsi ammessi;
-  le azioni distruttive richiedono sempre l'approvazione dell'utente.
+- **Threat.** Repository content, web pages, tool output, and worker output can include
+  hostile instructions, such as requests to ignore rules and run a command.
+- **Mitigations.** Treat worker output as _data_ for review. Turning it into an instruction
+  for the leader requires explicit framing. Permission requests from delegated tasks
+  show their origin. Task contracts specify scope and allowed paths. Destructive actions
+  always require user approval.
 
-### T5. Autorizzazioni dei comandi
+### T5. Command authorization
 
-- Minaccia: un "allow always" troppo ampio autorizza comandi pericolosi.
-- Mitigazioni: le approvazioni hanno uno scope minimo (comando completo o pattern
-  esplicito, cwd, sessione), sono revocabili e visibili, e i comandi distruttivi non sono
-  mai coperti da un "always".
-- Lezione dai riferimenti: in usturlab `PermissionMemory`
-  (`packages/core/src/adapters/permission.ts:59-73`) usa come chiave solo il _primo token_
-  del comando (`git status` autorizza anche `git push --force`) oppure soltanto il tipo per
-  le richieste che non sono comandi. Il modello è troppo generico.
+- **Threat.** An overly broad "allow always" rule authorizes dangerous commands.
+- **Mitigations.** Scope approvals to a full command or explicit pattern, working
+  directory, and session. Keep them visible and revocable. Exclude destructive commands
+  from persistent approvals.
+- **Reference finding.** usturlab's `PermissionMemory`
+  (`packages/core/src/adapters/permission.ts:59-73`) keys commands on their first token
+  (`git status` also authorizes `git push --force`) and keys other requests only on the
+  type. Both scopes are too broad.
 
-### T6. Protezione della Webview
+### T6. Webview protection
 
-- Minaccia: XSS nella Webview, che potrebbe inviare messaggi arbitrari all'host.
-- Mitigazioni (già attive): CSP `default-src 'none'`, script solo con nonce, nessun
-  `unsafe-inline` o `unsafe-eval`, nessun `connect-src`, `localResourceRoots` limitati,
-  `enableForms: false`, `enableCommandUris: false`, validazione di ogni messaggio
-  nell'host. Il markdown generato dai modelli è disegnato come elementi Preact, mai come
-  HTML (`webview/markdown.tsx`): l'HTML che un modello scrive resta testo visibile, e i link
-  non a file della cartella mostrano solo il testo. L'unico markup inserito è il MathML che
-  KaTeX genera dalle formule, con `trust: false` e limiti di dimensione (ADR 0024).
-- Verifica: `apps/vscode/test/unit/html.test.ts`, `protocol.test.ts`.
+- **Threat.** XSS in the Webview could send arbitrary messages to the host.
+- **Active mitigations.** The CSP uses `default-src 'none'`, requires a nonce for scripts,
+  and omits `unsafe-inline`, `unsafe-eval`, and `connect-src`. The host restricts
+  `localResourceRoots`, sets `enableForms: false` and `enableCommandUris: false`, and
+  validates every message. Model-generated Markdown renders as Preact elements
+  (`webview/markdown.tsx`). Literal HTML remains visible as text, and links outside the
+  working folder display only their text. The only inserted markup is MathML generated
+  from formulas by KaTeX with `trust: false` and size limits (ADR 0024).
+- **Verification.** `apps/vscode/test/unit/html.test.ts` and `protocol.test.ts`.
 
-### T7. Persistenza di transcript e log
+### T7. Transcript and log persistence
 
-- Minaccia: transcript e log conservano segreti o codice sensibile, in chiaro e senza
-  limiti di tempo.
-- Mitigazioni: lo storage avviene in aree dell'estensione (non nel repo, salvo opt-in),
-  con retention configurabile, redaction dei pattern di segreti e comandi per cancellare.
+- **Threat.** Transcripts and logs retain secrets or sensitive code in plaintext
+  indefinitely.
+- **Mitigations.** Use extension storage. Storing transcripts in the repository requires
+  opt-in. Provide configurable retention, redaction of secret patterns, and deletion
+  commands.
 
-### T8. Integrità dello stato durante crash e failover
+### T8. State integrity during crashes and failover
 
-- Minaccia: un crash a metà scrittura o un failover a metà task corrompe lo stato, fa
-  perdere il lavoro o lo fa eseguire due volte.
-- Mitigazioni: scritture atomiche (temp seguito da rename), schema versionato,
-  checkpoint prima di ogni handoff, ripresa idempotente e task in stato incerto
-  segnalati all'utente invece di essere rieseguiti automaticamente.
-- Lezione dai riferimenti: il failover di usturlab
-  (`packages/core/src/orchestrator/orchestrator.ts:300-320`) passa al target successivo
-  con l'output parziale tenuto in memoria. Non c'è checkpoint persistito né riconciliazione
-  degli effetti collaterali dell'attempt interrotto. Augani invece scrive JSON in modo
-  atomico (`cli_agent_job.py:540-551`): un pattern da riprendere come idea.
+- **Threat.** A crash during a write or a failover during a task corrupts state, loses
+  work, or executes it twice.
+- **Mitigations.** Use atomic writes (temporary file followed by rename), a versioned
+  schema, checkpoints before every handoff, and idempotent recovery. Flag uncertain task
+  state for the user before any rerun.
+- **Reference finding.** usturlab advances to the next failover target with the partial
+  output in memory (`packages/core/src/orchestrator/orchestrator.ts:300-320`). It lacks a
+  persisted checkpoint and a way to reconcile side effects of the interrupted attempt.
+  Augani's atomic JSON writes (`cli_agent_job.py:540-551`) provide a pattern to study.
 
-### T9. Costi API non autorizzati
+### T9. Unauthorized API costs
 
-- Minaccia: una variabile d'ambiente (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-  `GEMINI_API_KEY`, ...) fa passare un CLI alla fatturazione a consumo.
-- Mitigazioni: i processi figli ricevono un ambiente filtrato senza chiavi API, si
-  verifica la modalità di autenticazione del CLI prima dell'uso e, se non è un
-  abbonamento, la sessione viene rifiutata.
-- Stato: **attiva per Codex** (milestone 1.2). Ambiente in allow-list, profilo dedicato e
-  gate fail-closed su `account/read`. Vedi [codex-auth.md](codex-auth.md).
+- **Threat.** An environment variable such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or
+  `GEMINI_API_KEY` switches a CLI to metered billing.
+- **Mitigations.** Filter API keys from child process environments. Verify the CLI
+  authentication mode before use and reject sessions without a subscription.
+- **Active for Codex** as of milestone 1.2, with an environment allow-list, a dedicated
+  profile, and a fail-closed gate on `account/read`. See [codex-auth.md](codex-auth.md).
 
-### T10. Lettura degli appunti (ADR 0009)
+### T10. Clipboard reads (ADR 0009)
 
-- **Minacce.**
-  - Gli appunti contengono di tutto: password, token, dati personali. Un ascolto
-    permanente li esporrebbe al runtime o ai log.
-  - Un testo copiato da una pagina o da un documento potrebbe contenere il marcatore del
-    brief e far partire un ciclo che l'utente non voleva.
-- **Mitigazioni sull'ascolto.**
-  - Gli appunti si leggono una sola volta, quando la finestra riceve il focus, e solo se il
-    pannello è aperto, il workspace è fidato e l'ascolto è acceso.
-  - Gli appunti non vengono mai interrogati a intervalli.
-  - È sempre visibile nel pannello.
-  - Il testo senza marcatore viene scartato subito: mai registrato né persistito.
-- **Mitigazioni sul brief catturato.**
-  - Un brief con l'id di un altro progetto non parte senza conferma.
-  - Il brief ha un limite di dimensione e viene validato come ogni messaggio non fidato.
-  - Per chi riceve il brief resta una richiesta da verificare, non un'istruzione di sistema.
-  - Nella modalità automatica la cattura viene notificata.
+- **Threats.**
+  - The clipboard can contain passwords, tokens, and personal data. Continuous monitoring
+    would expose them to the runtime or logs.
+  - Copied text from a web page or document could contain the brief marker and trigger
+    an unintended loop.
+- **Monitoring mitigations.**
+  - Read the clipboard once when the window receives focus, and only when the panel is
+    open, the workspace is trusted, and monitoring is enabled.
+  - Use focus events exclusively to avoid polling.
+  - Keep the monitoring status visible in the panel.
+  - Immediately discard text without the marker before logging or persistence.
+- **Captured brief mitigations.**
+  - Require confirmation if the project ID belongs to another project.
+  - Limit brief size and validate it like any other untrusted message.
+  - Treat the brief as a request for verification by the recipient, with user-level
+    authority.
+  - Notify the user when automatic mode captures a brief.
 
-### T11. Agenti avviati dal pannello (ADR 0010)
+### T11. Agents launched from the panel (ADR 0010)
 
-- **Minaccia:** dal pannello, leader e implementatore scrivono ed eseguono comandi sulla
-  macchina dell'utente.
-- **Mitigazioni sul perimetro:**
-  - Gli agenti lavorano solo nella prima cartella aperta in VS Code, che è il loro confine.
-  - Partono solo se la cartella è attendibile per il Workspace Trust. Altrimenti il pannello
-    si apre, ma nessun agente parte (`untrustedWorkspaces: limited`).
-  - Alla prima richiesta un avviso modale chiede il consenso per quella cartella.
-- **Mitigazioni sui permessi:**
-  - Valgono quelli della modalità sandbox (ADR 0008): Claude scrive con `Edit(./**)` ed esegue
-    senza chiedere i programmi di `onlyOneChat.allowedCommands`; Codex scrive con
-    `workspace-write`, senza rete.
-  - Al livello `auto` Claude lavora nella modalità auto di Claude Code (ADR 0021): ciò che
-    chiederebbe lo decide il classificatore di Claude Code. Se la sessione riporta una modalità
-    diversa da `auto` o `default`, il turno si ferma. `bypassPermissions` non si usa mai.
-  - `onlyOneChat.ignoredPaths` toglie percorsi dai fatti verificati e dai checkpoint. È limitata
-    nelle cartelle non attendibili, perché nasconderebbe modifiche alla revisione.
-  - Il revisore (ADR 0029) esegue comandi e scrive test nella cartella con i permessi nativi del
-    suo CLI, come l'implementatore, quindi con lo stesso raggio d'azione. Non cambia il codice:
-    il runtime registra la cartella prima di ogni suo turno e rimette com'era ogni file non di
-    test che cambia. Se la cartella non si può registrare il revisore resta in sola lettura. Le
-    sue istruzioni hanno scope `machine`, come quelle degli altri ruoli.
-  - Le altre richieste di approvazione dei CLI vengono rifiutate e mostrate: R9 è ancora da
-    fare.
-  - I percorsi degli eseguibili, i comandi ammessi e il comando di verifica hanno scope
-    `machine`: un repository non li può impostare con le sue impostazioni di workspace.
-- **Mitigazioni nella Webview:**
-  - Ogni messaggio della Webview è validato, con un limite di 50 000 caratteri.
-  - I testi dei modelli sono resi come testo, mai come HTML.
-- **Limite noto:** come nella sandbox, un comando ammesso (per esempio `python`) può fare
-  quello che può fare quel programma. Al livello `auto` di Claude decide un classificatore,
-  non l'utente: chi vuole decidere tutto sceglie `ask`. Per provare l'estensione si usa una cartella separata
-  (`pnpm playground`).
+- **Threat.** The leader and implementer may write files and run commands on the user's
+  machine from the panel.
+- **Workspace mitigations.**
+  - The first folder open in VS Code is the agent workspace boundary.
+  - Agents start only if Workspace Trust marks that folder as trusted. The panel can
+    still open in an untrusted workspace (`untrustedWorkspaces: limited`).
+  - On the first request, a modal asks for consent for that folder.
+- **Permission mitigations.**
+  - Sandbox permissions apply (ADR 0008). Claude writes with `Edit(./**)` and runs the
+    programs in `onlyOneChat.allowedCommands` without prompting. Codex writes with
+    `workspace-write` and has no network access.
+  - At level `auto`, Claude uses Claude Code's auto mode (ADR 0021). Claude Code's
+    classifier handles operations that would otherwise prompt. The turn stops if the
+    session reports a mode other than `auto` or `default`. `bypassPermissions` is
+    prohibited.
+  - `onlyOneChat.ignoredPaths` excludes paths from verified facts and checkpoints. It
+    is restricted in untrusted folders because excluded files could hide changes from
+    review.
+  - The reviewer (ADR 0029) runs commands and writes tests in the folder with the same
+    native CLI permissions as the implementer. To keep implementation code intact, the
+    runtime snapshots the folder before each reviewer turn and restores every changed
+    non-test file. If a snapshot is unavailable, the reviewer runs in read-only mode.
+    Reviewer instructions have `machine` scope, as do instructions for other roles.
+  - Other CLI approval requests are denied and shown to the user. R9 was pending at this
+    stage.
+  - Executable paths, allowed commands, and the verification command have `machine`
+    scope, preventing repositories from setting them through workspace settings.
+- **Webview mitigations.**
+  - Validate each message from the Webview and enforce a 50,000-character limit.
+  - Render model output as text.
+- **Known limit.** An allowed command such as `python` retains all the capabilities of
+  that program within the sandbox. Claude's `auto` level delegates decisions to a
+  classifier. Choose `ask` for direct control. Test the extension in a separate folder
+  with `pnpm playground`.
 
-### T12. Approvazioni interattive (R9, ADR 0011)
+### T12. Interactive approvals (R9, ADR 0011)
 
-- **Minaccia:**
-  - un'approvazione data per sbaglio, o troppo ampia;
-  - un processo locale che si finge l'hook di Claude per approvarsi da solo.
-- **Mitigazioni per Codex:** le richieste arrivano dal protocollo dell'app-server e la risposta
-  è `accept`, `acceptForSession` o `decline`. "Per la sessione" lo applica Codex alla stessa
-  richiesta.
-- **Mitigazioni per Claude:** un hook `PermissionRequest`, passato per il solo turno con
-  `--settings`, interroga un ponte su 127.0.0.1.
-  - **Il ponte:**
-    - ascolta solo su localhost, su una porta casuale;
-    - richiede un token casuale di 32 byte per ogni ruolo, confrontato in tempo costante;
-    - accetta una riga di al massimo 1 MB.
-  - **Tutto ciò che va storto nega:** token, ponte o risposta mancanti, una risposta
-    malformata, un timeout.
-  - **"Per la sessione"** vale solo per lo stesso strumento con lo stesso input completo, mai
-    per un programma o un prefisso (T5).
-- **Mitigazioni comuni:** fermare la richiesta nega ciò che è in attesa. Le richieste che non
-  sono comandi o modifiche di file (permessi di sandbox, elicitazioni MCP) restano negate.
-- **Limite noto.** Il token è nell'ambiente del processo Claude e dei comandi che esegue. Un
-  comando già consentito può leggerlo e inviare una richiesta al ponte, ma il ponte la mostra
-  comunque all'utente: non si può auto-approvare, salvo una richiesta identica a una già
-  consentita per la sessione.
+- **Threats.**
+  - A user grants approval accidentally or with too broad a scope.
+  - A local process impersonates the Claude hook to approve itself.
+- **Codex mitigations.** Requests arrive through the app-server protocol. Responses
+  are `accept`, `acceptForSession`, or `decline`. Codex applies the session approval to
+  the same request.
+- **Claude mitigations.** A `PermissionRequest` hook supplied with `--settings` for the
+  current turn contacts a bridge at 127.0.0.1.
+  - The bridge listens only on localhost at a random port, requires a random 32-byte
+    token per role and compares it in constant time, and accepts one line up to 1 MB.
+  - Missing tokens, an unavailable bridge, missing or malformed responses, and timeouts
+    all result in denial.
+  - "For this session" applies only to the same tool with the same complete input.
+    Program names and command prefixes are too broad (T5).
+- **Shared mitigations.** Stopping a request denies any pending approval. Approval
+  remains unavailable for requests other than commands or file edits, including sandbox
+  permissions and MCP elicitation.
+- **Known limit.** The token is in the environment of the Claude process and its
+  commands. An already allowed command can read it and send a request to the bridge.
+  The bridge still displays that request to the user, so the command can only use an
+  existing session approval for an identical request.
 
-### T13. Catalogo dei modelli e ruoli dalla vista (ADR 0012)
+### T13. Model catalog and role settings (ADR 0012)
 
-- **Minaccia:**
-  - la lettura dei modelli che consuma quota, o che legge dati dell'account;
-  - una scelta dalla vista Ruoli che passa al CLI un argomento arbitrario.
-- **Mitigazioni per la lettura:**
-  - Codex: solo `model/list`, sulla sessione già filtrata (stessi metodi negati, chiavi API
-    tolte dall'ambiente).
-  - Claude: solo la richiesta di controllo `initialize`, senza messaggio utente, quindi senza
-    turno; chiavi API tolte dall'ambiente; cartella temporanea, non il progetto. Della risposta
-    si tengono solo id, nome e livelli di effort dei modelli: i dati dell'account non si leggono.
-- **Mitigazioni per la scelta:** la vista manda CLI, modello, reasoning e permessi, validati
-  con liste chiuse e un pattern per il modello che non può iniziare con `-`. L'host rifiuta un
-  modello che il catalogo letto non contiene e un reasoning che il modello non supporta.
-- **La pagina impostazioni (ADR 0013)** scrive solo le chiavi elencate in `src/settings.ts`,
-  ciascuna verificata sul suo tipo. Percorsi dei CLI, comandi consentiti, comando di verifica e
-  istruzioni per ruolo sono `machine`: una cartella non può impostarli, nemmeno dalla pagina.
+- **Threats.**
+  - Reading the model catalog could consume quota or access account data.
+  - A choice from Roles could pass an arbitrary argument to the CLI.
+- **Catalog read mitigations.**
+  - Codex uses only `model/list` on the already filtered session, with the same
+    denied methods and API keys removed from the environment.
+  - Claude uses only the `initialize` control request in a temporary folder, without
+    a user message or model turn. API keys are removed from the environment. Only model
+    IDs, names, and effort levels are retained from the response. Account data is ignored.
+- **Selection mitigations.** The view sends the CLI, model, reasoning, and permissions.
+  Closed lists and a model pattern that disallows a leading `-` validate the values.
+  The host rejects models absent from the loaded catalog and reasoning levels that a
+  model does not support.
+- **Settings page (ADR 0013).** Only the keys listed in `src/settings.ts` can be written,
+  and each value is type-checked. CLI paths, allowed commands, the verification command,
+  and role instructions have `machine` scope. This prevents workspace overrides,
+  including through the settings page.
 
-### T14. Revisione, ripristino e file indicati (ADR 0014, 0015)
+### T14. Review, restore, and file references (ADR 0014, 0015)
 
-- **Minaccia:** la webview che fa scrivere, cancellare o leggere un file fuori dalla cartella.
-- **Mitigazioni:**
-  - rifiuto e ripristino toccano solo percorsi registrati nel checkpoint della chat; la webview
-    nomina un file della scheda, e l'host lo cerca lì;
-  - ogni percorso risolto deve restare nella cartella, altrimenti si rifiuta;
-  - le menzioni `@` passano agli agenti solo se il percorso reale (link risolti) è dentro la
-    cartella; un intervallo di righe è copiato solo se breve;
-  - i contenuti del diff si leggono da uno schema in sola lettura, solo per hash validi.
+- **Threat.** The Webview causes a write, deletion, or read outside the workspace folder.
+- **Mitigations.**
+  - Reject and restore operate only on paths recorded in the chat checkpoint. The
+    Webview names a file on the card and the host looks it up in that checkpoint.
+  - The host rejects paths that resolve outside the workspace folder.
+  - Agents receive `@` references only when the real path stays inside the folder
+    after resolving links. Only short line ranges are copied.
+  - Read diff contents from a read-only schema for valid hashes only.
 
-## Sicurezza della supply chain (bootstrap)
+## Supply-chain security at bootstrap
 
-- Versioni esatte e lockfile (`pnpm install --frozen-lockfile`).
-- Script di installazione delle dipendenze bloccati di default da pnpm. Le eccezioni sono
-  motivate in `pnpm-workspace.yaml` (oggi nessuno script è approvato).
-- GitHub Actions fissate per SHA, `permissions: contents: read`, nessun secret in CI.
-- I repository in `references/` non vengono mai installati né eseguiti.
+- Pin exact versions and use the lockfile (`pnpm install --frozen-lockfile`).
+- pnpm blocks dependency installation scripts by default. `pnpm-workspace.yaml` records
+  exceptions. At bootstrap, zero scripts were approved.
+- Pin GitHub Actions by SHA, use `permissions: contents: read`, and keep secrets out
+  of CI.
+- Keep the repositories in `references/` uninstalled and unexecuted.

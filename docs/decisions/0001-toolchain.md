@@ -1,55 +1,41 @@
-# 0001. Toolchain e versioni del bootstrap
+# 0001. Bootstrap toolchain and versions
 
-- Stato: Accettata (2026-10-18)
+- Status: Accepted (2026-10-18)
 
-## Contesto
+## Context
 
-Serve una toolchain riproducibile su Windows, senza privilegi di amministratore e senza
-aggiornare gli strumenti già presenti. Regola adottata: versioni esatte, scegliendo
-l'ultima release stabile pubblicata **almeno due settimane prima** del bootstrap (cutoff
-2026-10-04), salvo incompatibilità.
+The bootstrap needs a reproducible Windows toolchain that requires no administrator privileges or upgrades to existing tools. Pin exact versions and select the latest stable release published **at least two weeks before** the bootstrap (2026-10-04 cutoff), subject to compatibility.
 
-## Decisione
+## Decision
 
-| Strumento                        | Versione                                               | Motivo                                               |
-| -------------------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
-| Node.js                          | 24.11.1 (già installato)                               | 24 LTS, nessuna installazione necessaria             |
-| pnpm                             | 10.34.6                                                | vedi sotto                                           |
-| TypeScript                       | 6.0.3                                                  | vedi sotto                                           |
-| esbuild                          | 0.28.2                                                 | bundling host (CJS, node22) e Webview (IIFE, es2022) |
-| Vitest                           | 5.0.3                                                  | unit test                                            |
-| ESLint                           | 10.12.0 + @eslint/js 10.0.1 + typescript-eslint 8.71.0 | lint type-aware `strictTypeChecked`                  |
-| Prettier                         | 3.9.9                                                  | formattazione                                        |
-| Preact                           | 10.29.8                                                | Webview, vedi sotto                                  |
-| @types/vscode                    | 1.140.0                                                | uguale a `engines.vscode` (`^1.140.0`)               |
-| @types/node                      | 24.19.1                                                | allineato al runtime Node 24                         |
-| @vscode/vsce                     | 4.0.0                                                  | packaging VSIX                                       |
-| @vscode/test-cli / test-electron | 0.0.15 / 3.1.0                                         | integration test (test-cli include mocha 11)         |
-| @types/mocha                     | 10.0.10                                                | tipi per i test nell'Extension Host                  |
+| Tool                             | Version                                                | Rationale                                                 |
+| -------------------------------- | ------------------------------------------------------ | --------------------------------------------------------- |
+| Node.js                          | 24.11.1 (already installed)                            | 24 LTS, no installation required                          |
+| pnpm                             | 10.34.6                                                | See below                                                 |
+| TypeScript                       | 6.0.3                                                  | See below                                                 |
+| esbuild                          | 0.28.2                                                 | Bundles the host (CJS, node22) and webview (IIFE, es2022) |
+| Vitest                           | 5.0.3                                                  | Unit tests                                                |
+| ESLint                           | 10.12.0 + @eslint/js 10.0.1 + typescript-eslint 8.71.0 | Type-aware linting with `strictTypeChecked`               |
+| Prettier                         | 3.9.9                                                  | Formatting                                                |
+| Preact                           | 10.29.8                                                | Webview, see below                                        |
+| @types/vscode                    | 1.140.0                                                | Matches `engines.vscode` (`^1.140.0`)                     |
+| @types/node                      | 24.19.1                                                | Matches the Node 24 runtime                               |
+| @vscode/vsce                     | 4.0.0                                                  | VSIX packaging                                            |
+| @vscode/test-cli / test-electron | 0.0.15 / 3.1.0                                         | Integration tests (test-cli includes Mocha 11)            |
+| @types/mocha                     | 10.0.10                                                | Types for Extension Host tests                            |
 
-**pnpm 10 invece di 12.** pnpm 11 e 12 hanno cambiato la struttura del pacchetto (entry
-`.mjs` e binario nativo). Il corepack 0.34.2 incluso in Node 24.11.1 cerca
-`bin/pnpm.cjs` e fallisce. Per aggiornare corepack servirebbe un'installazione globale
-via npm, che non era autorizzata. La linea 10 è ancora mantenuta (`latest-10`).
-Rivalutare quando Node includerà un corepack compatibile.
+**pnpm 10.** pnpm 11 and 12 changed their package layout to use an `.mjs` entry point and a native executable. Corepack 0.34.2, bundled with Node 24.11.1, looks for `bin/pnpm.cjs` and fails. Upgrading Corepack would require a global npm installation, which was outside the scope of the bootstrap. The 10.x line is still maintained (`latest-10`). Revisit the choice when Node bundles a compatible Corepack version.
 
-**TypeScript 6.0 invece di 7.0.** TypeScript 7 (port nativo) espone solo API `unstable/*`
-e typescript-eslint 8.71 dichiara `typescript >=4.8.4 <6.1.0`. La 6.0 è l'ultima della
-linea JS ed è compatibile con tutto lo stack.
+**TypeScript 6.0.** The native port in TypeScript 7 exposes only `unstable/*` APIs, and typescript-eslint 8.71 declares `typescript >=4.8.4 <6.1.0`. Version 6.0 is the latest release in the JavaScript line and works with the entire stack.
 
-**Preact 10 invece di 11.** La 11.0.0 è uscita il 30/09 come prima `.0` della major. Per
-una Webview ancora vuota il vantaggio è nullo e il rischio non è giustificato. La
-migrazione si valuterà quando inizierà lo sviluppo della UI.
+**Preact 10.** Preact 11.0.0, the first `.0` release of the major version, shipped on September 30. An empty webview offers little reason to take on the migration risk. Revisit the choice when UI development starts.
 
-**Script di installazione bloccati.** Non approviamo nessun build script delle
-dipendenze: `esbuild` funziona grazie al binario fornito come optional dependency,
-mentre `@vscode/vsce-sign` serve solo a firmare o verificare e non al packaging.
+**Installation scripts.** Dependency build scripts are blocked. The optional dependency supplies the binary `esbuild` needs, and `@vscode/vsce-sign` is required only for signing or verification.
 
-**Installazione di pnpm.** `corepack enable pnpm --install-directory %APPDATA%\npm`,
-perché la cartella di Node (`F:\NodeJs`) non è scrivibile senza privilegi.
+**pnpm installation.** Use `corepack enable pnpm --install-directory %APPDATA%\npm`. The Node directory (`F:\NodeJs`) requires elevated privileges to write.
 
-## Conseguenze
+## Consequences
 
-- `pnpm install --frozen-lockfile` è riproducibile e la CI usa le stesse versioni.
-- Gli upgrade sono espliciti (`savePrefix: ''`, cioè versioni esatte).
-- Due scelte (pnpm 10, TS 6) dipendono da limiti dell'ecosistema e vanno riesaminate.
+- `pnpm install --frozen-lockfile` is reproducible, and CI uses the same versions.
+- Upgrades are explicit. `savePrefix: ''` pins exact versions.
+- Revisit pnpm 10 and TypeScript 6 when their ecosystem constraints change.

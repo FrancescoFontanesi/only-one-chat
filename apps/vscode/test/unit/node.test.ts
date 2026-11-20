@@ -143,7 +143,7 @@ describe('a node of the board (ADR 0023)', () => {
       expect.objectContaining({
         type: 'notice',
         level: 'warn',
-        text: expect.stringContaining('ne parte una nuova') as unknown,
+        text: expect.stringContaining('A new session will start') as unknown,
       }),
     );
     // A new session: the instructions open it again.
@@ -164,8 +164,8 @@ describe('a node of the board (ADR 0023)', () => {
   });
 
   it('tells a read-only node to read with its own tools', () => {
-    expect(nodeInstructions(GEMINI)).toContain('sola lettura');
-    expect(nodeInstructions({ ...GEMINI, permission: 'ask' })).not.toContain('sola lettura');
+    expect(nodeInstructions(GEMINI)).toContain('read-only');
+    expect(nodeInstructions({ ...GEMINI, permission: 'ask' })).not.toContain('read-only');
   });
 
   it('reads the nodes of the settings, read-only unless they say otherwise', () => {

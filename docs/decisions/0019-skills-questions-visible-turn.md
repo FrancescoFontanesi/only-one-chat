@@ -1,90 +1,48 @@
-# 0019. Skill, domande del leader e turno visibile
+# 0019. Skills, leader questions, and visible turn activity
 
-Stato: Accettata (iterazione 3).
+Status: Accepted (iteration 3).
 
-## Contesto
+## Context
 
-- **Le skill dei CLI vanno usate dalla chat.** Codex e Claude hanno le loro skill. L'utente
-  vuole invocarle da sé e lasciare che il modello le scelga da solo, come fanno i due CLI.
-- **I comandi dei CLI non devono passare dalla chat.** Provato con Claude Code 2.1.318 in `-p`:
-  - `/plan` è rifiutato dal CLI;
-  - `/clear` resetta davvero la conversazione (`conversation_reset`);
-  - lo stesso testo con uno spazio davanti arriva al modello come testo.
-- **La plan mode di Codex resta esclusa.** Si attiva solo con `collaborationMode`, che richiede
-  `experimentalApi`, vietata dall'ADR 0006.
-- **Le domande con scelte servono mentre il modello lavora,** non come testo in fondo a una
-  risposta. Provato con Codex 0.164.0 (`gpt-6-luna`, effort low):
-  - con `features.default_mode_request_user_input` nella configurazione della sessione,
-    l'app-server inoltra `item/tool/requestUserInput` anche in un turno normale, senza API
-    sperimentale;
-  - la richiesta porta domanda, opzioni e "Altro" (`isOther`);
-  - il turno aspetta la risposta e continua.
-- **Claude** pone domande solo con il canale stdio dei permessi (`--permission-prompt-tool
-stdio`), che cambierebbe come sono collegati i suoi permessi.
-- **Le decisioni le prende il leader con l'utente.** L'implementatore riceve un brief che le
-  contiene già. Se gliene manca una si ferma e lo scrive nel rapporto (ADR 0018).
-- **Il turno oggi è solo domanda e risposta:**
-  - i messaggi intermedi di Codex finiscono uniti alla risposta;
-  - il ragionamento e il piano del turno si perdono;
-  - dei comandi si vede solo l'avvio.
+- **Chat needs access to CLI skills.** Users want to invoke Codex and Claude skills themselves and let the model choose skills automatically, as both CLIs do.
+- **CLI commands need protection from the chat composer.** Tests with Claude Code 2.1.318 in `-p` showed that it rejects `/plan`, executes `/clear` and emits `conversation_reset`, and passes the same text to the model when preceded by a space.
+- **Codex plan mode is out of scope.** It requires `collaborationMode`, which in turn requires `experimentalApi`. ADR 0006 bars experimental APIs.
+- **Questions with choices belong inside an active turn.** Tests with Codex 0.164.0 (`gpt-6-luna`, low effort) showed that enabling `features.default_mode_request_user_input` in the session configuration lets app-server forward `item/tool/requestUserInput` in a normal turn without the experimental API. The request carries the question, choices, and an optional "Other" field (`isOther`). The turn waits for an answer and then continues.
+- **Claude** can ask questions only over its stdio permissions channel (`--permission-prompt-tool stdio`). Adopting that channel would change how its permissions are integrated.
+- **The leader and the user make decisions together.** The implementer receives a brief with those decisions. If a decision is missing, the implementer stops and records it in the report (ADR 0018).
+- **A turn showed only a question and an answer.** Codex intermediate messages were merged into the answer, reasoning and plans were discarded, and commands showed only their start. Codex app-server, which powers its VS Code extension, provides message phases (`commentary` and `final_answer`), a reasoning summary, command output, exit code and duration, file patches, and a turn plan.
 
-  L'app-server di Codex, su cui è costruita la sua estensione per VS Code, riporta invece:
-  - la fase di ogni messaggio (`commentary`, `final_answer`);
-  - il riassunto del ragionamento;
-  - comando, output, exit code e durata;
-  - patch dei file e piano del turno.
+## Decision
 
-## Decisione
+1. **Skills.**
+   - **`$` in the composer** lists the recipient's skills using `skills/list` for Codex and Claude's startup event. The selected skill uses the native format.
+     - Codex receives a `skill` input with the name and path.
+     - Claude receives `/name` at the start of the message.
+   - **The model can select skills automatically.** Codex already does so. Claude gains the `Skill` tool for both roles.
+   - **The leader remains read-only when using a skill** (ADR 0018).
+2. **Slash command guard.**
+   - **`/` in the composer** opens product commands.
+   - **A message that starts with `/` and names no skill available to the recipient** is prefixed with a space. The CLI passes it through as text without executing commands such as `/clear`, `/plan`, or `/compact`.
+3. **Leader questions during a turn.**
+   - **Only the Codex leader** has `features.default_mode_request_user_input` enabled.
+   - **A card replaces the composer** while the turn waits. A question with choices accepts one answer and offers a free-text "Other" field when requested by the model. A question without choices accepts free text. Multiple questions appear in sequence.
+   - **Send** returns the answers to the model in the same turn. **Stop** ends the turn, as it does while waiting for permission.
+   - The thread keeps a question-and-answer summary. Secret answers (`isSecret`) are masked and excluded from storage.
+   - TODO(questions) Track questions for a Claude leader. When needed, use the stdio permissions channel and record the decision in a new ADR.
+4. **Visible turn activity.** The thread shows activity in order.
+   - Intermediate messages appear separately from the final answer.
+   - Reasoning is collapsed. Codex shows the summary requested with `summary: auto`. Claude shows that it reasoned, since its text is unavailable.
+   - Commands show exit code, duration, and expandable output.
+   - File changes show a diff.
+   - The turn plan shows completed steps.
+   - Questions appear in the order they were asked.
+   - The turn ends with its duration.
 
-1. **Skill.**
-   - **`$` nel riquadro** elenca le skill di chi ricevi, lette dal CLI stesso: `skills/list` per
-     Codex, l'evento di avvio di Claude. La skill scelta parte nel formato nativo:
-     - per Codex, un input `skill` con nome e percorso;
-     - per Claude, `/nome` in testa al messaggio.
-   - **Il modello sceglie le skill da solo:** Codex lo fa già; a Claude si aggiunge lo strumento
-     `Skill`, per entrambi i ruoli.
-   - **Il leader resta in sola lettura anche quando usa una skill** (ADR 0018).
-2. **Guardia sul `/`.**
-   - **`/` nel riquadro resta ai comandi del prodotto.**
-   - **Un messaggio che inizia con `/` e non nomina una skill di chi lo riceve** parte con uno
-     spazio davanti: arriva come testo, e nessun comando del CLI (`/clear`, `/plan`, `/compact`…)
-     parte dalla chat.
-3. **Domande del leader a metà turno.**
-   - **Solo il leader, solo con Codex.** Sulla sessione del leader si attiva
-     `features.default_mode_request_user_input`; l'implementatore non ce l'ha.
-   - **La scheda prende il posto del riquadro** mentre il turno aspetta:
-     - una domanda con opzioni è a scelta singola, con "Altro" a testo libero quando il modello
-       lo prevede;
-     - una domanda senza opzioni è a risposta libera;
-     - più domande si scorrono a passi.
-   - **Invia** passa le risposte al modello nello stesso turno.
-   - **Ferma** interrompe il turno, come per i permessi.
-   - **Nel thread** resta il riepilogo domanda → risposta.
-   - Una domanda segreta (`isSecret`) non si mostra in chiaro né si salva.
-   - TODO(questions): domande con Claude come leader, quando servirà, con il canale stdio dei
-     permessi e un nuovo ADR.
-4. **Il turno visibile.** Un turno è una sequenza di passi, nell'ordine in cui avvengono:
-   - messaggi intermedi, distinti dalla risposta finale;
-   - ragionamento, compresso:
-     - con Codex il riassunto, chiesto con `summary: auto`;
-     - con Claude solo la sua presenza, perché il testo non arriva;
-   - comandi, con exit code, durata e output espandibile;
-   - file modificati, con il diff;
-   - piano del turno, con i passi spuntati;
-   - domande;
-   - in fondo, quanto ha lavorato.
+   Adapters send these steps to the runtime with IDs, and the thread updates them in place. History retains each output up to a limit.
 
-   Il runtime li riceve dagli adapter come passi con un id, e il thread li aggiorna in posto. La
-   cronologia tiene ogni output fino a un limite.
+## Consequences
 
-## Conseguenze
-
-- **Un comando del CLI non si può dare dalla chat,** nemmeno di proposito: quelli utili passano
-  dal prodotto (handoff, nuova chat).
-- **Lo strumento `Skill` dà a Claude istruzioni nuove,** ma non strumenti nuovi: quello che una
-  skill gli chiede di fare resta soggetto ai permessi del ruolo.
-- **Se all'implementatore manca una decisione,** ferma il lavoro e la segnala nel rapporto: il
-  leader la chiede all'utente con la scheda e manda un seguito. Lo standard del rapporto lo
-  preciserà.
-- **L'opzione delle domande in un turno normale è di Codex e non è documentata come stabile:**
-  una versione futura potrebbe cambiarla. In quel caso il leader risponde a parole come prima.
+- Users access supported actions such as handoff and starting a new chat through product commands. CLI commands are blocked even when entered deliberately.
+- Claude's `Skill` tool gives it additional instructions. The tools and permissions available to the role govern what it can do.
+- If the implementer lacks a decision, it stops and records the question in its report. The leader asks the user through the card and sends a follow-up. The report standard will define the format.
+- Codex's option for questions in a normal turn lacks a documented stability guarantee. If a future version changes it, the leader can still ask in plain text.

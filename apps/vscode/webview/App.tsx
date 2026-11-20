@@ -45,17 +45,16 @@ function History({ session, close }: { session: SessionInfo; close: () => void }
     };
   }, [close]);
   return (
-    <section
-      class="pop pop--down cn-frame cn-frame--ink"
-      aria-label="Storico delle chat di questa cartella"
-    >
+    <section class="pop pop--down cn-frame cn-frame--ink" aria-label="Chat history for this folder">
       <div class="cn-frame__head pop__h">
         <span class="t-label">
-          STORICO{session.workspace ? ` · ${folderName(session.workspace).toUpperCase()}` : ''}
+          HISTORY{session.workspace ? ` · ${folderName(session.workspace).toUpperCase()}` : ''}
         </span>
-        <span class="t-label mut">{session.chats.length} CHAT</span>
+        <span class="t-label mut">
+          {session.chats.length} {session.chats.length === 1 ? 'CHAT' : 'CHATS'}
+        </span>
       </div>
-      {session.chats.length === 0 && <p class="hint pop__e">Nessuna chat salvata.</p>}
+      {session.chats.length === 0 && <p class="hint pop__e">No saved chats.</p>}
       {session.chats.map((chat) => (
         <div key={chat.id} class="pick-row">
           <button
@@ -68,7 +67,7 @@ function History({ session, close }: { session: SessionInfo; close: () => void }
               close();
             }}
           >
-            <span class="pick__n">{chat.title || 'Senza titolo'}</span>
+            <span class="pick__n">{chat.title || 'Untitled'}</span>
             <span class="pick__m">{chatDate(chat.updatedAt)}</span>
             {/* Who worked in it (ADR 0027): the leader's block, then the nodes. */}
             {(chat.leader || chat.nodes.length > 0) && (
@@ -89,8 +88,8 @@ function History({ session, close }: { session: SessionInfo; close: () => void }
           <button
             class="pick__x"
             type="button"
-            aria-label={`Elimina la chat ${chat.title || 'senza titolo'}`}
-            title="Elimina la chat"
+            aria-label={`Delete ${chat.title || 'untitled chat'}`}
+            title="Delete chat"
             disabled={session.busy && chat.id === session.chatId}
             onClick={() => {
               post({ type: 'deleteChat', id: chat.id });
@@ -120,26 +119,24 @@ function Bar({
   if (!session) {
     return (
       <header class="bar">
-        <span class="crumb">COLLEGAMENTO ALL’ESTENSIONE…</span>
+        <span class="crumb">CONNECTING…</span>
       </header>
     );
   }
   const ready = session.workspace !== null && session.trusted;
   const status = !ready
-    ? '× NON PRONTO'
+    ? '× NOT READY'
     : waiting > 0
-      ? '▲ ASPETTA TE'
+      ? '▲ WAITING'
       : session.busy
-        ? '▶ IN CORSO'
-        : '■ PRONTO';
+        ? '▶ RUNNING'
+        : '■ READY';
   return (
     <header class="bar">
       <span class="crumb" title={session.workspace ?? undefined}>
-        {session.workspace
-          ? `${folderName(session.workspace).toUpperCase()} / `
-          : 'NESSUNA CARTELLA / '}
+        {session.workspace ? `${folderName(session.workspace).toUpperCase()} / ` : 'NO FOLDER / '}
         {/* Settles once when the panel opens (the intro), then on every new title. */}
-        <Decode initial class="crumb__t" text={(session.title || 'Nuova chat').toUpperCase()} />
+        <Decode initial class="crumb__t" text={(session.title || 'New chat').toUpperCase()} />
         {node && (
           <>
             {' / '}
@@ -150,7 +147,7 @@ function Bar({
         <Decode class="crumb__st" text={status} />
       </span>
       <div class="bar__r">
-        {session.fake && <span class="cn-tag cn-tag--bracket hide-m">SIMULAZIONE</span>}
+        {session.fake && <span class="cn-tag cn-tag--bracket hide-m">SIMULATION</span>}
         {node && (
           <button class="cn-btn cn-btn--text" type="button" onClick={leave}>
             <span class="cn-btn__label">← CHAT</span>
@@ -164,7 +161,7 @@ function Bar({
             setHistory(!history);
           }}
         >
-          <span class="cn-btn__label">STORICO</span>
+          <span class="cn-btn__label">HISTORY</span>
         </button>
         <button
           class="cn-btn cn-btn--text hide-m"
@@ -175,7 +172,7 @@ function Bar({
             post({ type: 'newChat' });
           }}
         >
-          <span class="cn-btn__label">NUOVA</span>
+          <span class="cn-btn__label">NEW CHAT</span>
         </button>
         <button
           class="cn-btn cn-btn--text hide-m"
@@ -184,7 +181,7 @@ function Bar({
             post({ type: 'openSettings' });
           }}
         >
-          <span class="cn-btn__label">IMPOSTAZIONI</span>
+          <span class="cn-btn__label">SETTINGS</span>
         </button>
       </div>
       {history && (
@@ -204,10 +201,10 @@ function Empty({ session, node }: { session: SessionInfo | undefined; node: Node
     return (
       <section class="empty">
         <div class="tb">
-          <h2 class="t-title">Scrivi a {node.name}</h2>
+          <h2 class="t-title">Message {node.name}</h2>
           <p class="t-body mut">
-            Una conversazione sua, nella stessa cartella: il leader e l’implementatore non la
-            vedono, e lui non vede la loro.
+            This agent has its own conversation in the same folder, separate from the leader and
+            implementer’s chat.
           </p>
         </div>
       </section>
@@ -216,15 +213,15 @@ function Empty({ session, node }: { session: SessionInfo | undefined; node: Node
   return (
     <section class="empty">
       <div class="tb">
-        <h2 class="t-title">Scrivi al leader</h2>
+        <h2 class="t-title">Message the leader</h2>
         <p class="t-body mut">
-          Ragiona e pianifica con te; quando glielo chiedi scrive il brief per l’implementatore.
+          The leader plans with you and writes a brief for the implementer when you ask.
           {session?.mode === 'manual'
-            ? ' Il brief aspetta che tu lo invii.'
-            : ' Il brief parte subito.'}
+            ? ' You decide when to send the brief.'
+            : ' The brief is sent automatically.'}
         </p>
         <p class="hint">
-          UN BRIEF DA CHATGPT (&lt;&lt;&lt;OOC-BRIEF) PARTE SUBITO, CON LE NOTE DEL LEADER
+          A CHATGPT BRIEF (&lt;&lt;&lt;OOC-BRIEF) IS SENT AUTOMATICALLY WITH THE LEADER’S NOTES
         </p>
       </div>
     </section>
@@ -410,8 +407,8 @@ export function App() {
                 setSquad(true);
               }}
             >
-              <b>▲</b> Azione richiesta{waiting > 1 ? ` · ${String(waiting)}` : ''}
-              <span class="toast__go">Apri Squad ↗</span>
+              <b>▲</b> Action required{waiting > 1 ? ` · ${String(waiting)}` : ''}
+              <span class="toast__go">Open Squad ↗</span>
             </button>
           )}
         </div>

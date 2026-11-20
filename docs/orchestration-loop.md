@@ -1,112 +1,136 @@
-# Ciclo di orchestrazione minimo (D6)
+# Minimal orchestration loop (D6)
 
-Stato: iterazione 1. Il runtime ha due modalità, `leader` e `review` ([ADR 0034](decisions/0034-remove-experimental-modes.md)).
-Codice: `packages/runtime/src/` (`loop.ts`, `delegation.ts`, `brief.ts`, `agent.ts`,
-`event-log.ts`); agenti: `packages/adapters/src/codex/agent.ts` e `src/claude/agent.ts`.
-Test con agenti finti deterministici: `packages/runtime/test/loop.test.ts`.
+The runtime provides `leader` and `review` modes after the removal of experimental
+modes in [ADR 0034](decisions/0034-remove-experimental-modes.md).
+[ADR 0035](decisions/0035-handoff-tools-and-english.md) defines the structured handoffs
+between roles.
 
-## Le due modalità
+The runtime code lives in `packages/runtime/src/` (`loop.ts`, `handoff.ts`,
+`prompts.ts`, `brief.ts`, `agent.ts`, and `event-log.ts`). The Codex and Claude
+agent adapters live in `packages/adapters/src/codex/agent.ts` and
+`packages/adapters/src/claude/agent.ts`. `packages/runtime/test/loop.test.ts` uses
+deterministic fake agents.
 
-`runLoop` richiede l'opzione `mode`, senza default:
+## Modes
 
-- **`leader`**: la richiesta dell'utente va al **leader** (`leaderSession`), che risponde da
-  solo oppure delega all'implementatore con un blocco di delega. È il percorso dell'estensione.
-- **`review`** (ADR 0033): lavoro che il leader non ha delegato (un messaggio che l'utente ha
-  mandato direttamente all'implementatore, o una revisione chiesta al revisore). Richiede
-  `workerSession` e `reviewer` in `reviewOf`. Non c'è un turno del leader: il ciclo finisce
-  `delegated`, e il leader legge il risultato con il messaggio successivo dell'utente.
+`runLoop` requires an explicit `mode`:
 
-Le modalità `loop`, `question`, `pipeline` e `gateway` (con la variante `light`) sono state
-tolte dall'ADR 0034: ora non esistono nel runtime.
+- **`leader`** sends the user request to the **leader** (`leaderSession`). The leader
+  responds directly or invokes the `delegate` tool to send a brief to the implementer.
+  The extension uses this path.
+- **`review`** (ADR 0033) handles work outside the leader's delegations, such as a message
+  sent directly to the implementer or a review requested from the reviewer. It requires
+  `reviewOf`, `workerSession`, and `reviewer`. The loop ends with `delegated` without
+  a leader turn. The leader reads the result with a later user message.
 
-## Flusso in modalità `leader`
+ADR 0034 removed the `loop`, `question`, `pipeline`, and `gateway` modes, including
+the `light` variant.
 
-1. La richiesta dell'utente va al **leader**, in un thread in sola lettura
-   (`sandbox: "read-only"`) nel workspace. La sessione del leader resta fra una richiesta e
-   l'altra e il ciclo non la chiude.
-2. Il leader risponde, oppure scrive un **blocco di delega** con marcatori fissi:
+## Leader mode workflow
 
-   ```text
-   <<<DELEGA
-   testo libero, non vuoto
-   DELEGA>>>
-   ```
+1. The user request goes to the **leader** in a read-only thread
+   (`sandbox: "read-only"`) in the workspace. The session stays open between
+   requests.
+2. The leader replies or calls the `delegate` tool on the `ooc` MCP server. The runtime
+   uses the last valid call in the turn, renders its arguments, and allows one
+   delegation per request. A direct response ends the loop. An empty turn without any
+   handoff call gets one additional turn.
+3. The runtime **intercepts** a delegation for the user to approve, edit, or cancel.
+   When automatic approval applies, the runtime sends it without waiting.
+4. The **implementer** (worker) receives the approved text, streams a reply, and
+   submits its outcome and acceptance checks through `report`. Later turns may
+   resume the same session (`--resume` for Claude).
+5. The runtime prepares the **review request** from the implementer's result and
+   verified facts. If a reviewer is configured and the report's outcome is not
+   `blocked`, the reviewer may call `findings` to request another implementation
+   round, or `review` to finish. It can request corrections while review rounds
+   remain. The runtime displays and logs these handoffs. Missing or invalid reports
+   and reviews get a follow-up requesting the appropriate tool.
+6. If the leader's readback is deferred, the result stays available for a later
+   turn. Otherwise, the leader reads the review, or the implementer's result when
+   there is no review, and responds to the user.
 
-   La riga di apertura può nominare il destinatario, `<<<DELEGA @claude`; un destinatario
-   diverso dal worker rende il blocco malformato. Il corpo non ha più sezioni obbligatorie
-   (`DELEGATION_SECTIONS` è stato tolto): è libero, ma non può essere vuoto. Senza marcatori la
-   risposta è una conclusione e il ciclo termina.
+**Brief from the reasoning chat.** The user pastes an `<<<OOC-BRIEF v1 ...` brief into
+the extension. The leader reads it as written and uses `delegate` to pass it to the
+implementer. Delegation for a valid web brief can proceed without another confirmation
+because it was reviewed in the reasoning chat. For immediate readback, the leader
+writes an `<<<OOC-RESULT` block that the user can copy back. See
+[brief-format.md](brief-format.md).
 
-3. Il blocco viene **intercettato**: l'utente lo approva, lo modifica o lo annulla. Nessun
-   messaggio arriva a un agente senza approvazione.
-4. L'**implementatore** (worker) riceve il testo approvato; la risposta arriva in streaming.
-   I turni successivi riprendono la stessa sessione (`--resume` per Claude).
-5. Il runtime prepara il **messaggio di review** (risultato dell'implementatore e richiesta di
-   valutazione), anch'esso intercettato. Un revisore (ADR 0029) valuta il rapporto, a meno
-   che la revisione sia rinviata. Il rapporto sta fra le righe `<<<RISPOSTA DEL WORKER` e
-   `RISPOSTA DEL WORKER>>>`, con una frase che lo indica come dato da valutare e non come
-   istruzioni (minaccia T4 in [security.md](security.md)); una riga della risposta identica a un
-   delimitatore viene sostituita, così la risposta non può chiudere la cornice in anticipo.
-6. Il leader legge il risultato: può delegare ancora (si riparte dal punto 3) oppure
-   rispondere all'utente, e il ciclo termina.
+**Exchange limit.** ADR 0034 removed the `maxExchanges` option and the `limit_reached`
+outcome.
 
-**Brief dalla chat di ragionamento.** Un messaggio che è un brief `<<<OOC-BRIEF v1 ...`
-(ADR 0018, 0020, [brief-format.md](brief-format.md)) non passa dal ciclo di delega normale:
-va all'implementatore con solo le note del leader, e il ciclo finisce con il risultato per quella
-chat. Il formato del brief è descritto in [brief-format.md](brief-format.md).
+### Historical text markers
 
-**Limite agli scambi.** Non c'è più l'opzione `maxExchanges` né l'esito `limit_reached`
-(tolti dall'ADR 0034).
+Before ADR 0035, the leader supplied a text block. Its body could be any nonempty text,
+and the opening line could name the worker, as in `<<<DELEGA @claude`. An opening line
+that named someone else made the block invalid. The former `DELEGATION_SECTIONS`
+requirement had already been removed.
 
-## Esiti
+```text
+<<<DELEGA
+nonempty free-form text
+DELEGA>>>
+```
 
-`completed` (risposta del leader senza delega), `delegated` (lavoro passato all'implementatore
-o in attesa della review, in modalità `review`), `result` (rapporto dell'implementatore pronto per
-il leader), `cancelled` (con il punto: `delegation`, `review`, `malformed`), `stopped`, `failed`.
+ADR 0035 replaced the delegation, report, findings, and review markers with MCP
+tools. Markdown frames still separate text supplied for evaluation from instructions
+(threat T4 in [security.md](security.md)). The former worker answer frame used
+`<<<RISPOSTA DEL WORKER` and `RISPOSTA DEL WORKER>>>`. The English frame uses
+`<<<WORKER ANSWER` and `WORKER ANSWER>>>`. Matching lines in the framed text are
+neutralized to prevent an early close.
 
-## Etichette
+## Outcomes
 
-Ogni risposta nel thread (`message`) porta un'etichetta scritta dal **runtime** da
-`AgentTurnResult.identity`, cioè da ciò che l'adapter ha osservato sul protocollo:
-provider (con il proxy, per esempio "Codex via Headroom persistent proxy"), modello,
-effort e id di sessione o di thread. Il testo dell'agente non può attribuirsi un'altra
-identità.
+- `completed` for a direct leader response or the leader's conclusion after delegation.
+- `delegated` for work whose result the leader will read later, including in `review` mode.
+- `result` for a web brief result ready to copy back to the reasoning chat.
+- `cancelled` with the point of cancellation (`delegation`, `review`, or `malformed`).
+- `stopped` and `failed`.
 
-## Regole
+## Labels
 
-- **Delega malformata**: non viene inoltrata. L'errore va nel thread
-  (`delegation_invalid`) e l'utente sceglie: chiedere al leader di correggerla,
-  scriverla a mano (poi intercettata come le altre) o annullare.
-- **Approvazioni** chieste da un agente (comandi, scritture, rete): rifiutate in
-  automatico; nel thread compare "approvazione rifiutata: non supportata in questa
-  versione". Per Codex la risposta di protocollo è `decline` (comandi, file),
-  nessun permesso concesso (`item/permissions/requestApproval`) o `decline`
-  (elicitation MCP); le richieste sconosciute ricevono un errore. Il thread Codex usa
-  `approvalsReviewer: "user"`, così le richieste non vanno al revisore automatico di Codex.
-- **Stop** in qualsiasi momento: interrompe il turno di Codex (`turn/interrupt`) o termina
-  l'albero di processi di Claude, chiude un'attesa dell'utente anche se la sua callback
-  ignora il segnale, e chiude le sessioni.
-- **Log**: ogni evento (messaggi, intercettazioni, decisioni e modifiche dell'utente,
-  approvazioni rifiutate, errori, esito) viene aggiunto a un file JSONL **fuori dal
-  workspace**: `openEventLog` rifiuta un percorso relativo o interno al workspace. I delta
-  di streaming vanno solo all'interfaccia.
+The **runtime** labels every thread response (`message`) using
+`AgentTurnResult.identity`, which reflects what the adapter observed. The label
+includes the provider (and proxy, as in "Codex via Headroom persistent proxy"), model,
+effort, and session or thread ID. The runtime takes these fields from the protocol
+rather than the agent's response text.
 
-## Indipendenza dai provider
+## Rules
 
-Il runtime conosce solo `AgentFactory`/`AgentSession`/`AgentTurn` (`agent.ts`); gli
-adapter ne replicano la forma senza importare il runtime. Quale CLI fa da leader, da
-implementatore o da revisore, con quale modello e sforzo, è configurazione di chi crea le
-factory (l'estensione).
+- **Malformed delegation.** The thread receives `delegation_invalid`. The user can
+  request a corrected call, edit the brief manually and approve it, or cancel.
+  Automatic approval allows one retry for a malformed tool call.
+- **Approvals.** Current interactive approval policy is in [security.md](security.md).
+  In the bootstrap loop, requests for commands, writes, or network access were denied
+  automatically and the thread displayed an unsupported-approval message. Codex received
+  `decline` for commands, files, and MCP elicitation, and no granted permissions for
+  `item/permissions/requestApproval`. Unknown requests received an error. The Codex
+  thread used `approvalsReviewer: "user"` to route approval away from the automatic
+  reviewer. ADR 0035 automatically allows the side-effect-free `ooc` tools.
+- **Stop** is available at any time. It interrupts the Codex turn (`turn/interrupt`) or
+  terminates the Claude process tree, cancels any wait for the user even if the callback
+  ignores the signal, and closes the loop's sessions.
+- **Logs** append each event (messages, interceptions, user decisions and edits, denied
+  approvals, errors, and outcomes) to a JSONL file **outside the workspace**.
+  `openEventLog` rejects relative paths and paths in the workspace. Streaming deltas
+  go only to the UI.
 
-## Limiti
+## Provider independence
 
-- I turni Codex del fake seguono un turno reale (`question-turn.jsonl`, registrato con
-  `OOC_CODEX_TRACE` e redatto, con la demo tolta dall'ADR 0034), confrontato sui campi che il
-  client legge. Il fake non emette hook, stati di avvio MCP, uso dei token e rate
-  limit.
-- **Sotto-agenti** di ciascun CLI (D13, [subagents.md](subagents.md)): visibili nel thread
-  sotto il turno che li crea, con etichetta del runtime, vincolati dalla policy del ruolo
-  (`LoopOptions.subagents`) e controllati a posteriori; non sono intercettati.
-- La risposta finale di un turno Codex è la concatenazione dei messaggi `agentMessage`
-  completati nel turno.
-- Le approvazioni non sono ancora mediate: arriveranno con le prossime iterazioni.
+The runtime uses `AgentFactory`, `AgentSession`, and `AgentTurn` (`agent.ts`).
+Adapters expose the same shape independently of the runtime. The extension creates the
+factories and configures the CLI, model, and effort for the leader, implementer, and
+reviewer roles.
+
+## Limits
+
+- Fake Codex turns follow a real turn (`question-turn.jsonl`) recorded with
+  `OOC_CODEX_TRACE` using the demo removed by ADR 0034. The recording was redacted.
+  Comparisons cover the fields read by the client. The fake omits hooks, MCP startup
+  status, token usage, and rate limits.
+- Provider **subagents** (D13) appear beneath the turn that creates them, use
+  runtime-generated labels, and follow the role's policy (`LoopOptions.subagents`).
+  The runtime checks them after launch. See [subagents.md](subagents.md).
+- The final response of a Codex turn concatenates its completed `agentMessage`
+  messages.

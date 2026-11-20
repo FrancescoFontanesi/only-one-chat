@@ -224,14 +224,14 @@ function Labels({
 
 const ROLES = [
   { id: 'leader', name: 'Leader', short: 'LDR' },
-  { id: 'implementer', name: 'Implementatore', short: 'IMP' },
-  { id: 'reviewer', name: 'Revisore', short: 'REV' },
+  { id: 'implementer', name: 'Implementer', short: 'IMP' },
+  { id: 'reviewer', name: 'Reviewer', short: 'REV' },
 ] as const;
 
 /** The reviewer on or off (ADR 0033): the setting, for the chat open and the next. */
 const REVIEWER_ON: readonly { value: 'on' | 'off'; label: string; title: string }[] = [
-  { value: 'on', label: 'Acceso', title: 'Rivede ogni lavoro dell’implementatore' },
-  { value: 'off', label: 'Spento', title: 'Nessuna revisione; il leader legge il rapporto' },
+  { value: 'on', label: 'On', title: 'Reviews all implementer work' },
+  { value: 'off', label: 'Off', title: 'The leader reads the implementer’s report directly' },
 ];
 
 const EFFORT_SHORT: Record<string, string> = {
@@ -305,11 +305,11 @@ function Switch<T extends string>({
 
 /** How the leader's delegations reach the implementer (ADR 0018). */
 const DELIVERY: readonly { value: ApprovalMode; label: string; title: string }[] = [
-  { value: 'auto', label: 'Auto', title: 'Il brief parte subito per l’implementatore' },
+  { value: 'auto', label: 'Auto', title: 'Send the brief to the implementer immediately' },
   {
     value: 'manual',
-    label: 'Manuale',
-    title: 'Il brief aspetta te, modificabile; la chat si ferma finché non lo invii o annulli',
+    label: 'Manual',
+    title: 'Edit the brief before sending. The chat waits until you send or cancel it.',
   },
 ];
 
@@ -318,13 +318,13 @@ const DELIVERY: readonly { value: ApprovalMode; label: string; title: string }[]
  * read only, ask before acting, auto (Claude Code's own auto mode). From its next turn.
  */
 const PERMISSION_TITLE: Record<PermissionLevel, string> = {
-  'read-only': 'Legge e cerca, non modifica nulla',
-  ask: 'Chiede prima di ogni modifica o comando',
-  auto: 'Lavora nella cartella senza chiedere; per Claude decide la modalità auto di Claude Code',
+  'read-only': 'Can read and search files',
+  ask: 'Asks before making changes or running commands',
+  auto: 'Works in the folder without asking. Claude Code uses its own auto mode.',
 };
 const PERMISSION_OPTIONS = PERMISSIONS.map((p) => ({
   value: p.value,
-  label: p.value === 'read-only' ? 'Legge' : p.short,
+  label: p.short,
   title: PERMISSION_TITLE[p.value],
 }));
 
@@ -471,7 +471,7 @@ export function RoleHud({
       <div
         class="hud__ring"
         aria-hidden="true"
-        title="Cambia ruolo"
+        title="Change role"
         onClick={() => {
           go(selected + 1);
         }}
@@ -490,7 +490,7 @@ export function RoleHud({
         aria-valuemin={1}
         aria-valuemax={Math.max(1, efforts.length)}
         aria-valuenow={shownStep + 1}
-        aria-valuetext={level ?? 'nessuno'}
+        aria-valuetext={level ?? 'none'}
         onPointerDown={(event: PointerEvent) => {
           if (efforts.length === 0) return;
           (event.currentTarget as Element).setPointerCapture(event.pointerId);
@@ -523,8 +523,8 @@ export function RoleHud({
       <button
         class="hud__grp"
         type="button"
-        aria-label={`Gruppo: ${node?.name ?? groups[0]?.name ?? ''}${groups.length > 1 ? '. Cambia' : ''}`}
-        title={groups.length > 1 ? 'Gruppo o nodo: clic o rotella per cambiare' : 'Gruppo'}
+        aria-label={`Team or node: ${node?.name ?? groups[0]?.name ?? ''}`}
+        title={groups.length > 1 ? 'Click or scroll to switch teams or nodes' : 'Team'}
         disabled={groups.length < 2}
         onClick={() => {
           cycle(1);
@@ -542,7 +542,7 @@ export function RoleHud({
       </button>
       <span class="hud__meta hud__meta--left">
         {info ? PROVIDER[info.cli] : '—'}
-        {status === 'working' ? ' · ▶ Lavora' : status === 'waiting' ? ' · ▲ Aspetta te' : ''}
+        {status === 'working' ? ' · ▶ Working' : status === 'waiting' ? ' · ▲ Waiting' : ''}
       </span>
       <Decode class="hud__big hud__big--left" text={current.name} />
       <span class="hud__read">
@@ -557,13 +557,13 @@ export function RoleHud({
       <button
         class="hud__model"
         type="button"
-        aria-label={canModel ? 'Passa al modello successivo' : 'Modello'}
+        aria-label={canModel ? 'Next model' : 'Model'}
         title={
           isLeader
-            ? 'Il modello del leader resta quello della chat'
+            ? 'The leader’s model stays fixed for this chat'
             : canModel
-              ? 'Passa al modello successivo, nella stessa sessione'
-              : 'Nessun altro modello da questo provider'
+              ? 'Switch to the next model in this session'
+              : 'No other models from this provider'
         }
         disabled={!canModel}
         onClick={nextModel}
@@ -574,12 +574,12 @@ export function RoleHud({
       <div class="hud__act">
         {node ? (
           // A node has no role: no delivery, permissions or handoff here (Squad sets them).
-          <span class="hud__k">Nodo · senza ruolo</span>
+          <span class="hud__k">Standalone node</span>
         ) : isLeader ? (
-          <Switch label="Consegna" value={mode} options={DELIVERY} onChange={setMode} />
+          <Switch label="Delivery" value={mode} options={DELIVERY} onChange={setMode} />
         ) : reviewer ? (
           <Switch
-            label="Revisione"
+            label="Review"
             value={reviewer.enabled ? 'on' : 'off'}
             options={REVIEWER_ON}
             onChange={(value) => {
@@ -590,7 +590,7 @@ export function RoleHud({
           <>
             {info && (
               <Switch
-                label="Permessi"
+                label="Permissions"
                 value={info.permission}
                 options={PERMISSION_OPTIONS}
                 onChange={(permission) => {
@@ -604,10 +604,10 @@ export function RoleHud({
               disabled={busy || !started}
               title={
                 !started
-                  ? 'La chat non è ancora partita: l’implementatore parte già da zero'
+                  ? 'The implementer will start a new session when the chat begins'
                   : busy
-                    ? 'Un messaggio è in corso: l’handoff si fa quando finisce'
-                    : 'Una sessione nuova dello stesso modello, che parte da un passaggio di consegne di questa'
+                    ? 'Handoff is available after the current turn'
+                    : 'Start a new session with the same model and a handoff from this one'
               }
               onClick={() => {
                 post({ type: 'handoff' });
@@ -633,11 +633,11 @@ const PROVIDERS = [
 
 /** Why a provider's 5-hour window shows no number. */
 const NO_WINDOW: Record<Cli, { word: string; note: string }> = {
-  codex: { word: 'Non letto', note: 'L’utilizzo di Codex non è ancora stato letto.' },
-  claude: { word: 'Dopo un turno', note: 'Claude riporta l’utilizzo alla fine di un turno.' },
+  codex: { word: 'Unavailable', note: 'Codex usage has not been loaded yet.' },
+  claude: { word: 'After a turn', note: 'Claude reports usage at the end of a turn.' },
   antigravity: {
-    word: 'Non letto',
-    note: 'Letto da agy (/quota) senza consumare quota, quando un nodo usa Antigravity.',
+    word: 'Unavailable',
+    note: 'When a node uses Antigravity, agy reads /quota without using quota.',
   },
 };
 
@@ -698,16 +698,16 @@ export function UsageHud({
         aria-valuemin={1}
         aria-valuemax={PROVIDERS.length}
         aria-valuenow={selected + 1}
-        aria-valuetext={`${PROVIDER[cli]}, 5H ${five ? `${String(Math.round(left(five)))}% rimasto` : '—'}`}
+        aria-valuetext={`${PROVIDER[cli]}, 5H ${five ? `${String(Math.round(left(five)))}% left` : '—'}`}
         {...turn.handlers}
       />
       <Labels side="right" items={PROVIDERS} rot={rot} selected={selected} pick={setChosen} />
       <span class="cn-tag hud__key hud__key--right">
-        <b>U/</b> Rimanente
+        <b>U/</b> Remaining
       </span>
       <span class="hud__meta hud__meta--right">
         {PROVIDER[cli]}
-        {over ? ' ▲ Soglia' : ''}
+        {over ? ' ▲ Threshold' : ''}
       </span>
       {five ? (
         <span class="hud__fig" title={data?.note || undefined}>
@@ -736,7 +736,7 @@ export function UsageHud({
             <span>{String(Math.round(left(week)))}%</span>
           </span>
         )}
-        {five?.resetsAt && <span class="hud__k">Rinnovo {clock(five.resetsAt * 1000)}</span>}
+        {five?.resetsAt && <span class="hud__k">Resets at {clock(five.resetsAt * 1000)}</span>}
       </div>
     </div>
   );

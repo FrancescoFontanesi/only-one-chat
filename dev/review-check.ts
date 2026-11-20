@@ -117,7 +117,7 @@ async function main(): Promise<void> {
   writeFileSync(join(dir, 'test_calc.py'), tests.replace(TEST_INVALID, ''));
 
   const facts = await verifiedFacts(dir, baseline, ['python', '-m', 'unittest']);
-  process.stdout.write(`Cartella: ${dir}\n${facts}\n\n`);
+  process.stdout.write(`Folder: ${dir}\n${facts}\n\n`);
 
   const claudeExecutable = await resolveClaudeExecutable({
     configuredPath: env['CLAUDE_EXECUTABLE'] ?? '',
@@ -174,8 +174,8 @@ async function main(): Promise<void> {
         const turn = await session.runTurn(
           (env['OOC_NOEXEC']
             ? [
-                'Nota del runtime: in questa sessione non si possono eseguire comandi, nemmeno git:',
-                'leggi i file con lo strumento di lettura e basta.',
+                'Runtime note: commands, including Git, are unavailable in this session.',
+                'Read files using the file-reading tool.',
                 '',
                 '',
               ].join('\n')
@@ -214,7 +214,7 @@ async function main(): Promise<void> {
         };
         results.push(row);
         process.stdout.write(
-          `${spec} #${String(run)}: ${row.kind}, verdetto ${String(row.verdict)}, bloccante ${String(found)}, comandi ${String(activity.length)}, negati ${String(denied.length)}\n`,
+          `${spec} #${String(run)}: ${row.kind}, verdict ${String(row.verdict)}, blocking issue ${String(found)}, commands ${String(activity.length)}, denied ${String(denied.length)}\n`,
         );
       } finally {
         await session.close();

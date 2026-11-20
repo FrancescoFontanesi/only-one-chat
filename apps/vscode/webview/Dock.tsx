@@ -25,8 +25,8 @@ export function NotReady({ session }: { session: SessionInfo }) {
       <span>×</span>
       <span>
         {noFolder
-          ? 'Nessuna cartella aperta: apri quella in cui gli agenti devono lavorare.'
-          : 'Cartella non attendibile (Workspace Trust): gli agenti possono leggere e modificare file solo in una cartella attendibile.'}
+          ? 'Open a folder for the agents to work in.'
+          : 'Workspace Trust requires a trusted folder before agents can read or edit files.'}
       </span>
       <button
         class="cn-btn--bare cn-btn cn-btn--outline cn-btn--sm"
@@ -35,7 +35,7 @@ export function NotReady({ session }: { session: SessionInfo }) {
           post({ type: noFolder ? 'openFolder' : 'manageTrust' });
         }}
       >
-        <span class="cn-btn__label">{noFolder ? 'APRI CARTELLA' : 'GESTISCI ATTENDIBILITÀ'}</span>
+        <span class="cn-btn__label">{noFolder ? 'OPEN FOLDER' : 'MANAGE TRUST'}</span>
       </button>
     </div>
   );
@@ -88,7 +88,7 @@ export function Dock({
   return (
     <footer class="dock">
       <div class="dock__in">
-        <aside class="dock__side" aria-label="Parli con">
+        <aside class="dock__side" aria-label="Chat recipient">
           <RoleHud
             roles={roles}
             monitor={monitor}
@@ -110,21 +110,21 @@ export function Dock({
                   {node
                     ? waitingWho
                     : permission.role === 'leader'
-                      ? 'IL LEADER'
+                      ? 'THE LEADER'
                       : permission.role === 'reviewer'
-                        ? 'IL REVISORE'
-                        : 'L’IMPLEMENTATORE'}{' '}
-                  ASPETTA LA TUA RISPOSTA · L’INVIO RIPRENDE DOPO
+                        ? 'THE REVIEWER'
+                        : 'THE IMPLEMENTER'}{' '}
+                  IS WAITING FOR YOUR RESPONSE
                 </span>
                 <button
                   class="cn-btn cn-btn--outline cn-btn--sm"
                   type="button"
-                  aria-label="Ferma tutto e nega le richieste in attesa"
+                  aria-label="Stop and deny pending requests"
                   onClick={() => {
                     post(node ? { type: 'stop', node: node.id } : { type: 'stop' });
                   }}
                 >
-                  <span class="cn-btn__label">FERMA</span>
+                  <span class="cn-btn__label">STOP</span>
                   <span class="cn-btn__icon">■</span>
                 </button>
               </div>
@@ -149,7 +149,7 @@ export function Dock({
             />
           )}
         </div>
-        <aside class="dock__side" aria-label="Utilizzo">
+        <aside class="dock__side" aria-label="Usage">
           <UsageHud
             usage={usage}
             threshold={session?.usageThreshold ?? 0}

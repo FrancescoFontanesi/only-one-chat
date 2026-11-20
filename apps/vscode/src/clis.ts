@@ -57,7 +57,7 @@ export async function cliLaunch(context: vscode.ExtensionContext, cli: Cli): Pro
     return { executable, launcherArgs: [] };
   } catch (error) {
     // No path set and not on VS Code's PATH (which is read when VS Code starts, so a CLI
-    // installed later is missing from it): the places RILEVA searches (ADR 0025).
+    // installed later is missing from it): the places DETECT searches (ADR 0025).
     const found = configuredPath === '' ? await detectCli(cli) : undefined;
     if (!found) throw error;
     return { executable: found, launcherArgs: [] };

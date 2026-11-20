@@ -5,7 +5,6 @@
   "version": "0.0.1",
   "publisher": "francesco-fontanesi",
   "private": true,
-  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/FrancescoFontanesi/only-one-chat"
@@ -94,7 +93,7 @@
         "onlyOneChat.leader.model": {
           "type": "string",
           "default": "gpt-6.1-sol",
-          "description": "Model of the leader, as its CLI names it; chosen in the Ruoli view from the models the CLI offers."
+          "description": "Model of the leader, as its CLI names it; chosen in the Roles section in Settings from the models the CLI offers."
         },
         "onlyOneChat.leader.effort": {
           "type": "string",
@@ -114,7 +113,7 @@
             "Acts inside the folder; asks you to go beyond it."
           ],
           "default": "auto",
-          "description": "What the implementer may do without asking. Changed in the Ruoli view, it applies from the role's next turn, in the same session."
+          "description": "What the implementer may do without asking. Changed in the Roles section in Settings, it applies from the role's next turn, in the same session."
         },
         "onlyOneChat.implementer.cli": {
           "type": "string",
@@ -128,7 +127,7 @@
         "onlyOneChat.implementer.model": {
           "type": "string",
           "default": "sonnet",
-          "description": "Model of the implementer, as its CLI names it; chosen in the Ruoli view from the models the CLI offers."
+          "description": "Model of the implementer, as its CLI names it; chosen in the Roles section in Settings from the models the CLI offers."
         },
         "onlyOneChat.implementer.effort": {
           "type": "string",
@@ -395,7 +394,7 @@
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p webview/tsconfig.json && tsc --noEmit -p test/tsconfig.json",
     "test:e2e": "node esbuild.mjs --tests && vscode-test",
-    "package": "node esbuild.mjs --production && vsce package --no-dependencies"
+    "package": "node esbuild.mjs --production && vsce package --no-dependencies --skip-license"
   },
   "dependencies": {
     "@only-one-chat/adapters": "workspace:*",

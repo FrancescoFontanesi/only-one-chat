@@ -1,50 +1,52 @@
-# Diagnosi della configurazione dei CLI
+# CLI configuration diagnosis
 
-Come sono configurati Codex e Claude nei profili personali dell'utente, e cosa ne segue
-per gli adapter. Strumento: `pnpm diagnose` (`packages/adapters/dev/diagnose.ts`), che non
-consuma quota del modello, stampa solo campi in whitelist e non apre file di credenziali.
-Rilevazione del 2026-10-25 su Windows 11 x64.
+This record describes the user's personal Codex and Claude profiles and the implications
+for their adapters. `pnpm diagnose` (`packages/adapters/dev/diagnose.ts`) uses no model
+quota, prints only allow-listed fields, and leaves credential files unopened. The
+findings are from 2026-10-25 on Windows 11 x64.
 
-## Risultati
+## Findings
 
-| Voce                         | Codex                                                    | Claude                                                |
-| ---------------------------- | -------------------------------------------------------- | ----------------------------------------------------- |
-| CLI                          | 0.164.0, release ufficiale `rust-v0.164.0`               | 2.1.308 (canale stable), binario ufficiale            |
-| Profilo                      | personale (`~/.codex`)                                   | personale                                             |
-| Autenticazione               | `account/read`: `chatgpt`, piano `plus`                  | `auth status`: `claude.ai`, `firstParty`, piano `pro` |
-| `requiresOpenaiAuth`         | `true` (lo dichiara il provider `headroom`)              | —                                                     |
-| Fonte della chiave           | token ChatGPT gestito da Codex                           | evento `init`: `apiKeySource: "none"` (OAuth)         |
-| Provider attivo              | `headroom` ("Headroom persistent proxy")                 | `firstParty`                                          |
-| Base URL                     | `http://127.0.0.1:8787/v1` (anche `openai_base_url`)     | non esposto da `init`; nessun `ANTHROPIC_*` nell'env  |
-| Variabili di chiave nell'env | nessuna                                                  | nessuna                                               |
-| Consumo oltre il piano       | —                                                        | `overageStatus: "rejected"` (`org_level_disabled`)    |
-| Modello del profilo          | `gpt-6.1-sol`, effort `high`                             | default dell'utente                                   |
-| Modello economico            | `gpt-6-luna` (anche `gpt-5.6-luna`), effort minimo `low` | alias `haiku` → `claude-haiku-5-5`, `--effort low`    |
+| Item                      | Codex                                                    | Claude                                                              |
+| ------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------- |
+| CLI                       | 0.164.0, official `rust-v0.164.0` release                | 2.1.308 (stable channel), official binary                           |
+| Profile                   | Personal (`~/.codex`)                                    | Personal                                                            |
+| Authentication            | `account/read` reports `chatgpt`, `plus` plan            | `auth status` reports `claude.ai`, `firstParty`, `pro` plan         |
+| `requiresOpenaiAuth`      | `true` (declared by the `headroom` provider)             | —                                                                   |
+| Key source                | ChatGPT token managed by Codex                           | `init` event reports `apiKeySource: "none"` (OAuth)                 |
+| Active provider           | `headroom` ("Headroom persistent proxy")                 | `firstParty`                                                        |
+| Base URL                  | `http://127.0.0.1:8787/v1` (also `openai_base_url`)      | `init` omits it, and the environment has no `ANTHROPIC_*` variables |
+| Key environment variables | None                                                     | None                                                                |
+| Usage beyond the plan     | —                                                        | `overageStatus: "rejected"` (`org_level_disabled`)                  |
+| Profile model             | `gpt-6.1-sol`, effort `high`                             | User default                                                        |
+| Lower-cost model          | `gpt-6-luna` (also `gpt-5.6-luna`), minimum effort `low` | `haiku` alias → `claude-haiku-5-5`, `--effort low`                  |
 
-## Routing del traffico di Codex con il login ChatGPT
+## Codex traffic routing with ChatGPT login
 
-Il traffico dei turni passa da Headroom. `ModelProviderInfo::to_api_provider`
-(`model-provider-info/src/lib.rs:429-447`, tag `rust-v0.164.0`) usa il `base_url` del
-provider quando è impostato, qualunque sia l'autenticazione; ricade su
-`https://chatgpt.com/backend-api/codex` solo se manca. Con `requires_openai_auth = true`
-Codex invia a Headroom il token ChatGPT, che Headroom inoltra: la fatturazione resta la
-subscription. Le chiamate di account e rate limit usano invece `chatgpt_base_url`
-(`https://chatgpt.com/backend-api/`), non il provider.
+Turn traffic passes through Headroom. `ModelProviderInfo::to_api_provider`
+(`model-provider-info/src/lib.rs:429-447`, tag `rust-v0.164.0`) uses the provider's
+`base_url` when set, regardless of authentication. It falls back to
+`https://chatgpt.com/backend-api/codex` when that value is absent.
+With `requires_openai_auth = true`, Codex sends the ChatGPT token to Headroom, which
+forwards it. Billing remains on the subscription. Account and rate-limit calls use
+`chatgpt_base_url` (`https://chatgpt.com/backend-api/`).
 
-## Turno Claude di diagnosi
+## Claude diagnostic turn
 
-Un turno `claude -p --input-format stream-json --output-format stream-json --verbose
---no-session-persistence --tools "" --strict-mcp-config --model haiku --effort low`,
-prompt "Rispondi solo OK": risposta `OK`, `model: claude-haiku-5-5`, `apiKeySource:
-none`, `per_turn_effort_active: true`. Un primo tentativo era stato rifiutato con `429`
-(limite delle 5 ore esaurito) prima di qualsiasi inferenza (`model: "<synthetic>"`).
+The command was `claude -p --input-format stream-json --output-format stream-json --verbose
+--no-session-persistence --tools "" --strict-mcp-config --model haiku --effort low`. The
+prompt asked Claude to reply only with OK. Claude returned `OK` with
+`model: claude-haiku-5-5`, `apiKeySource: none`, and `per_turn_effort_active: true`.
+An initial attempt returned `429` (five-hour limit exhausted) before any inference
+(`model: "<synthetic>"`).
 
-Osservazioni che entrano nell'adapter:
+Adapter findings:
 
-- `--tools ""` toglie gli strumenti integrati ma non quelli MCP: restavano attivi i
-  connettori claude.ai, fra cui "Claude Docs" con `create`, `update` e `delete`, che
-  scrivono su un servizio esterno. Serve `--strict-mcp-config`.
-- `total_cost_usd` è una stima nominale anche con la subscription: non indica addebito.
-- L'evento `rate_limit_event` riporta le finestre `five_hour` e `seven_day`
-  (`utilization`, `resetsAt`), utili per il failover.
-- `claude doctor` indica l'auto-update attivo (canale `latest`).
+- `--tools ""` removes built-in tools. The claude.ai MCP connectors remained active,
+  including "Claude Docs" with `create`, `update`, and `delete`, which write to an
+  external service. The adapter needs `--strict-mcp-config`.
+- `total_cost_usd` is a nominal estimate under the subscription and does not represent
+  a charge.
+- `rate_limit_event` reports the `five_hour` and `seven_day` windows with
+  `utilization` and `resetsAt`, which can inform failover.
+- `claude doctor` reports that auto-update is active on the `latest` channel.

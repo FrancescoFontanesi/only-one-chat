@@ -18,8 +18,8 @@ describe('assessRisk', () => {
       ],
       new Map(),
     );
-    expect(risk.level).toBe('basso');
-    expect(risk.reasons[0]).toBe('1 file di codice, 6 righe cambiate');
+    expect(risk.level).toBe('low');
+    expect(risk.reasons[0]).toBe('1 code file, 6 changed lines');
   });
 
   it('a large change spread over files and folders, with branches and no test, is high', () => {
@@ -32,9 +32,9 @@ describe('assessRisk', () => {
       })),
       new Map(),
     );
-    expect(risk.level).toBe('alto');
-    expect(risk.reasons).toContain('nessun test cambiato');
-    expect(risk.reasons).toContain('3 cartelle');
+    expect(risk.level).toBe('high');
+    expect(risk.reasons).toContain('no tests changed');
+    expect(risk.reasons).toContain('3 folders');
   });
 
   it('code that touches what an attacker controls is high, whatever its size', () => {
@@ -42,8 +42,8 @@ describe('assessRisk', () => {
       [{ path: 'main.py', before: 'a = 1', after: 'a = 1\nsubprocess.run(cmd, shell=True)' }],
       new Map(),
     );
-    expect(risk.level).toBe('alto');
-    expect(risk.reasons).toContain('tocca comandi');
+    expect(risk.level).toBe('high');
+    expect(risk.reasons).toContain('touches commands');
   });
 
   it('a shortcut flag lifts a low change to medium', () => {
@@ -57,14 +57,14 @@ describe('assessRisk', () => {
       ],
       new Map(),
     );
-    expect(risk.level).toBe('medio');
-    expect(risk.reasons.at(-1)).toBe('1 segnalazioni dei controlli sul diff');
+    expect(risk.level).toBe('medium');
+    expect(risk.reasons.at(-1)).toBe('1 diff check flag');
   });
 
   it('counts only the sensitive calls the change adds', () => {
     const before = 'with open(path) as f:\n    pass';
     const risk = assessRisk([{ path: 'io.py', before, after: `${before}\nx = 1` }], new Map());
-    expect(risk.level).toBe('basso');
+    expect(risk.level).toBe('low');
   });
 });
 
@@ -83,11 +83,9 @@ describe('fanIn', () => {
 });
 
 describe('riskFact', () => {
-  it('writes the level, the score with a comma, and the reasons', () => {
+  it('writes the level, the score with a decimal point, and the reasons', () => {
     expect(
-      riskFact({ level: 'medio', score: 0.31, reasons: ['2 file di codice, 50 righe cambiate'] }),
-    ).toBe(
-      'Rischio della modifica, stimato dal runtime: medio (0,31) — 2 file di codice, 50 righe cambiate.',
-    );
+      riskFact({ level: 'medium', score: 0.31, reasons: ['2 code files, 50 changed lines'] }),
+    ).toBe('Change risk estimated by the runtime: medium (0.31) — 2 code files, 50 changed lines.');
   });
 });

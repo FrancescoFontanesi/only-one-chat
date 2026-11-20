@@ -36,7 +36,7 @@ export async function openFile(
   // An absolute path too, if it is in the folder: the agents' links use them.
   const found = cwd ? insideFolder(cwd, file.replace(/\/+$/, '')) : undefined;
   if (!found) {
-    warn(`${file} non è un percorso della cartella aperta.`);
+    warn(`${file} is outside the open folder.`);
     return;
   }
   const uri = vscode.Uri.file(found.full);
@@ -75,7 +75,7 @@ export async function reviewFile(
       'vscode.diff',
       checkpointUri(host.recordId, change.before, change.path),
       checkpointUri(host.recordId, change.after, change.path),
-      `${change.path} · prima ↔ dopo il messaggio`,
+      `${change.path} · before ↔ after the message`,
       { preview: true },
     );
     return;
@@ -85,15 +85,15 @@ export async function reviewFile(
     return;
   }
   if (host.busy) {
-    host.notice('warn', 'Un messaggio è in corso: rifiuta il file quando è concluso.');
+    host.notice('warn', 'Wait for the current message to finish before reverting the file.');
     return;
   }
   try {
     if (store.current(change.path) !== change.after) {
       const answer = await vscode.window.showWarningMessage(
-        `${change.path} è cambiato ancora dopo il messaggio. Rimetterlo com’era prima del messaggio, perdendo anche quei cambiamenti?`,
+        `${change.path} changed again after the message. Revert it to its earlier version and discard those later changes?`,
         { modal: true },
-        'Rimetti com’era',
+        'Revert File',
       );
       if (!answer) return;
     }
@@ -101,13 +101,13 @@ export async function reviewFile(
   } catch (error) {
     host.notice(
       'error',
-      `Il file non è stato rimesso: ${error instanceof Error ? error.message : String(error)}`,
+      `Could not revert the file: ${error instanceof Error ? error.message : String(error)}`,
     );
     return;
   }
   host.emit({ type: 'change_decided', id, path: file, decision: 'rejected' });
   host.noteFiles(
-    `${change.path}: ${change.kind === 'added' ? 'tolto (era nuovo)' : 'rimesso com’era prima del messaggio'}`,
+    `${change.path}: ${change.kind === 'added' ? 'removed (new file)' : 'restored to its state before the message'}`,
   );
 }
 
@@ -116,17 +116,17 @@ export async function restoreCheckpoint(host: FileHost, id: string): Promise<voi
   const store = host.store;
   const checkpoint = store?.load(id);
   if (!store || !checkpoint) {
-    host.notice('error', 'Il checkpoint di questo messaggio non c’è più.');
+    host.notice('error', 'This message’s checkpoint is no longer available.');
     return;
   }
   if (host.busy) {
-    host.notice('warn', 'Un messaggio è in corso: ripristina quando è concluso.');
+    host.notice('warn', 'Wait for the current message to finish before restoring the checkpoint.');
     return;
   }
   const answer = await vscode.window.showWarningMessage(
-    'Riportare i file della cartella a com’erano prima di questo messaggio? Ciò che è cambiato dopo, anche a mano, si perde. La conversazione resta com’è; i comandi eseguiti fuori dalla cartella non si annullano.',
+    'Restore the workspace files to their state before this message? This discards all later file changes, including manual edits. The conversation stays intact. Changes outside the workspace are unaffected.',
     { modal: true },
-    'Ripristina',
+    'Restore',
   );
   if (!answer) return;
   let paths: string[];
@@ -135,7 +135,7 @@ export async function restoreCheckpoint(host: FileHost, id: string): Promise<voi
   } catch (error) {
     host.notice(
       'error',
-      `Ripristino non riuscito: ${error instanceof Error ? error.message : String(error)}`,
+      `Could not restore the checkpoint: ${error instanceof Error ? error.message : String(error)}`,
     );
     return;
   }
@@ -144,12 +144,15 @@ export async function restoreCheckpoint(host: FileHost, id: string): Promise<voi
     level: 'info',
     text:
       paths.length === 0
-        ? 'Ripristino: la cartella era già com’era prima di quel messaggio.'
-        : ['Cartella riportata a prima del messaggio:', ...paths.map((p) => `- ${p}`)].join('\n'),
+        ? 'The workspace already matches the checkpoint for this message.'
+        : [
+            'Workspace files restored to their state before the message:',
+            ...paths.map((p) => `- ${p}`),
+          ].join('\n'),
   });
   if (paths.length > 0) {
     host.noteFiles(
-      `la cartella è tornata a prima di un messaggio precedente (${paths.join(', ')})`,
+      `workspace files were restored to their state before an earlier message (${paths.join(', ')})`,
     );
   }
 }
@@ -173,13 +176,13 @@ export async function saveBeforeSend(cwd: string | null): Promise<boolean> {
   if (dirty.length === 0) return true;
   if (policy !== 'always') {
     const answer = await vscode.window.showWarningMessage(
-      `${String(dirty.length)} file della cartella non sono salvati: gli agenti vedono i file su disco.`,
+      `${String(dirty.length)} unsaved files in the workspace. Agents read the versions on disk.`,
       { modal: true },
-      'Salva e invia',
-      'Invia senza salvare',
+      'Save and Send',
+      'Send Without Saving',
     );
     if (answer === undefined) return false;
-    if (answer === 'Invia senza salvare') return true;
+    if (answer === 'Send Without Saving') return true;
   }
   await Promise.all(dirty.map((document) => document.save()));
   return true;

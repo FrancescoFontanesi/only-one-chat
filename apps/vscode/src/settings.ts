@@ -16,43 +16,43 @@ interface Definition {
   readonly max?: number;
   /** Development host only. */
   readonly development?: boolean;
-  /** The path of this CLI's executable: the page offers RILEVA and SELEZIONA (ADR 0025). */
+  /** The path of this CLI's executable: the page offers DETECT and SELECT (ADR 0025). */
   readonly cli?: Cli;
 }
 
 const SECTIONS: readonly { title: string; items: readonly Definition[] }[] = [
   {
-    title: 'Deleghe e flusso',
+    title: 'Delegation and workflow',
     items: [
       {
         key: 'approvalMode',
-        label: 'Consegna delle deleghe',
+        label: 'Delegation delivery',
         kind: 'enum',
         options: [
-          { value: 'manual', label: 'manuale' },
-          { value: 'auto', label: 'automatica' },
+          { value: 'manual', label: 'Manual' },
+          { value: 'auto', label: 'Automatic' },
         ],
       },
       {
         key: 'leaderReview',
-        label: 'Revisione del leader dopo una delega',
+        label: 'Leader review after a delegation',
         kind: 'enum',
         options: [
-          { value: 'always', label: 'subito' },
-          { value: 'deferred', label: 'con il messaggio successivo' },
+          { value: 'always', label: 'Immediately' },
+          { value: 'deferred', label: 'With the next message' },
         ],
       },
-      { key: 'verifyCommand', label: 'Comando di verifica dopo una delega', kind: 'list' },
+      { key: 'verifyCommand', label: 'Verification command after a delegation', kind: 'list' },
     ],
   },
   {
     // Its provider, model and reasoning are with the roles, at the top of the page (ADR 0029).
-    title: 'Revisore',
+    title: 'Reviewer',
     items: [
-      { key: 'reviewer.enabled', label: 'Revisione di ogni lavoro', kind: 'boolean' },
+      { key: 'reviewer.enabled', label: 'Review every change', kind: 'boolean' },
       {
         key: 'reviewer.rounds',
-        label: 'Giri di correzione al massimo',
+        label: 'Maximum correction rounds',
         kind: 'number',
         min: 0,
         max: 3,
@@ -60,54 +60,54 @@ const SECTIONS: readonly { title: string; items: readonly Definition[] }[] = [
     ],
   },
   {
-    title: 'Istruzioni per ruolo',
+    title: 'Role instructions',
     items: [
       { key: 'leader.instructions', label: 'Leader', kind: 'text' },
-      { key: 'implementer.instructions', label: 'Implementatore', kind: 'text' },
-      { key: 'reviewer.instructions', label: 'Revisore', kind: 'text' },
+      { key: 'implementer.instructions', label: 'Implementer', kind: 'text' },
+      { key: 'reviewer.instructions', label: 'Reviewer', kind: 'text' },
     ],
   },
   {
-    title: 'Sotto-agenti',
+    title: 'Subagents',
     items: [
-      { key: 'subagents.codexModel', label: 'Modello dei sotto-agenti di Codex', kind: 'string' },
-      { key: 'subagents.claudeModel', label: 'Modello dei sotto-agenti di Claude', kind: 'string' },
-      { key: 'subagents.effort', label: 'Reasoning dei sotto-agenti', kind: 'string' },
+      { key: 'subagents.codexModel', label: 'Codex subagent model', kind: 'string' },
+      { key: 'subagents.claudeModel', label: 'Claude subagent model', kind: 'string' },
+      { key: 'subagents.effort', label: 'Subagent reasoning effort', kind: 'string' },
     ],
   },
   {
-    title: 'Permessi e file',
+    title: 'Permissions and files',
     items: [
-      { key: 'allowedCommands', label: 'Programmi che Claude esegue senza chiedere', kind: 'list' },
+      { key: 'allowedCommands', label: 'Commands Claude can run without asking', kind: 'list' },
       {
         key: 'ignoredPaths',
-        label: 'Percorsi ignorati da fatti, checkpoint e modifiche (come in .gitignore)',
+        label: 'Paths excluded from verified facts, checkpoints, and changes (gitignore syntax)',
         kind: 'list',
       },
       {
         key: 'saveBeforeSend',
-        label: 'File non salvati prima di un messaggio',
+        label: 'Unsaved files before sending',
         kind: 'enum',
         options: [
-          { value: 'ask', label: 'chiedi' },
-          { value: 'always', label: 'salva sempre' },
-          { value: 'never', label: 'non salvare' },
+          { value: 'ask', label: 'Ask' },
+          { value: 'always', label: 'Always save' },
+          { value: 'never', label: 'Do not save' },
         ],
       },
     ],
   },
   {
     title: 'Composer',
-    items: [{ key: 'composer.enterSends', label: 'Invio invia il messaggio', kind: 'boolean' }],
+    items: [{ key: 'composer.enterSends', label: 'Enter sends the message', kind: 'boolean' }],
   },
   {
-    title: 'Notifiche',
+    title: 'Notifications',
     items: [
-      { key: 'notifications.waiting', label: 'Un agente aspetta te', kind: 'boolean' },
-      { key: 'notifications.turnEnd', label: 'Un messaggio è concluso', kind: 'boolean' },
+      { key: 'notifications.waiting', label: 'An agent is waiting for you', kind: 'boolean' },
+      { key: 'notifications.turnEnd', label: 'A message has finished', kind: 'boolean' },
       {
         key: 'notifications.usageThreshold',
-        label: 'Soglia di utilizzo (%)',
+        label: 'Usage threshold (%)',
         kind: 'number',
         min: 0,
         max: 100,
@@ -117,17 +117,17 @@ const SECTIONS: readonly { title: string; items: readonly Definition[] }[] = [
   {
     title: 'Provider',
     items: [
-      { key: 'codexPath', label: 'Eseguibile di Codex', kind: 'string', cli: 'codex' },
-      { key: 'claudePath', label: 'Eseguibile di Claude Code', kind: 'string', cli: 'claude' },
+      { key: 'codexPath', label: 'Codex executable', kind: 'string', cli: 'codex' },
+      { key: 'claudePath', label: 'Claude Code executable', kind: 'string', cli: 'claude' },
       {
         key: 'antigravityPath',
-        label: 'Eseguibile di Antigravity (agy)',
+        label: 'Antigravity executable (agy)',
         kind: 'string',
         cli: 'antigravity',
       },
       {
         key: 'fake',
-        label: 'CLI finti (sviluppo, nessuna quota)',
+        label: 'Fake CLIs (development, no quota use)',
         kind: 'boolean',
         development: true,
       },
@@ -227,18 +227,17 @@ export async function writeSetting(
   target: SettingsTarget,
 ): Promise<string | undefined> {
   const definition = definitions(context).find((d) => d.key === key);
-  if (!definition) return `Impostazione sconosciuta: ${key}`;
+  if (!definition) return `Unknown setting: ${key}`;
   const property = contributed(context)[`onlyOneChat.${key}`];
   const userOnly = property?.scope === 'machine' || property?.scope === 'application';
   if (target === 'workspace' && userOnly) {
-    return 'Questa impostazione vale solo per l’utente, mai per una cartella.';
+    return 'This is a user setting.';
   }
   if (target === 'workspace' && !vscode.workspace.workspaceFolders?.length) {
-    return 'Nessuna cartella aperta.';
+    return 'Open a folder first.';
   }
   const next = value === undefined ? undefined : checked(definition, value);
-  if (value !== undefined && next === undefined)
-    return `Valore non valido per ${definition.label}.`;
+  if (value !== undefined && next === undefined) return `Invalid value for ${definition.label}.`;
   await vscode.workspace
     .getConfiguration('onlyOneChat')
     .update(

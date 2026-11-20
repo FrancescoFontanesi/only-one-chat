@@ -19,11 +19,11 @@ import {
 import { Lattice } from './lattice.js';
 import { Opts, post, PROVIDER, ROLE, RoleFields, useTheme } from './ui.js';
 
-const SCOPE = { user: '■ Utente', workspace: '■ Cartella' } as const;
+const SCOPE = { user: '■ User', workspace: '■ Workspace' } as const;
 
 /** What a section is for, under its title. */
 const ABOUT: Record<string, string> = {
-  Ruoli: 'Chi guida e chi esegue nelle prossime chat: provider, modello, reasoning, permessi.',
+  Roles: 'Choose the provider, model, reasoning effort, and permissions for roles in future chats.',
 };
 
 const slug = (title: string) =>
@@ -75,7 +75,7 @@ function TextField({
       type="text"
       aria-label={item.label}
       value={text}
-      placeholder={list ? 'valori separati da virgole' : 'vuoto'}
+      placeholder={list ? 'comma-separated values' : 'empty'}
       onInput={(event) => {
         setText((event.target as HTMLInputElement).value);
       }}
@@ -101,7 +101,7 @@ function Control({ item, write }: { item: SettingItem; write: (value: SettingVal
           label={item.label}
           value={item.value ? 'yes' : 'no'}
           options={[
-            { value: 'yes', label: 'Sì' },
+            { value: 'yes', label: 'Yes' },
             { value: 'no', label: 'No' },
           ]}
           onChange={(value) => {
@@ -154,22 +154,22 @@ function Control({ item, write }: { item: SettingItem; write: (value: SettingVal
             <button
               class="cn-btn cn-btn--outline cn-btn--sm"
               type="button"
-              title="Cerca l’eseguibile nel PATH e nelle installazioni note"
+              title="Find the executable on PATH and in known installation locations"
               onClick={() => {
                 post({ type: 'detectCli', cli });
               }}
             >
-              <span class="cn-btn__label">Rileva</span>
+              <span class="cn-btn__label">Detect</span>
             </button>
             <button
               class="cn-btn cn-btn--outline cn-btn--sm"
               type="button"
-              title="Scegli la cartella che contiene l’eseguibile"
+              title="Choose the folder containing the executable"
               onClick={() => {
                 post({ type: 'pickCli', cli });
               }}
             >
-              <span class="cn-btn__label">Seleziona</span>
+              <span class="cn-btn__label">Browse</span>
             </button>
           </span>
         </div>
@@ -202,21 +202,21 @@ function settingEntry(item: SettingItem, target: SettingsTarget): Entry {
     side: (
       <>
         {item.scope === 'default' ? (
-          <span class="cn-tag">○ Predefinito</span>
+          <span class="cn-tag">○ Default</span>
         ) : (
           <span class="cn-tag cn-tag--ink">{SCOPE[item.scope]}</span>
         )}
-        {item.userOnly && <span class="cn-tag">Solo utente</span>}
+        {item.userOnly && <span class="cn-tag">User only</span>}
         {resettable && (
           <button
             class="cn-btn cn-btn--text"
             type="button"
-            title="Toglie il valore da qui: vale quello dell’utente o il predefinito"
+            title="Clear this value to use the user setting or default"
             onClick={() => {
               post({ type: 'setSetting', key: item.key, target: where });
             }}
           >
-            <span class="cn-btn__label">Ripristina</span>
+            <span class="cn-btn__label">Reset</span>
           </button>
         )}
       </>
@@ -251,7 +251,7 @@ function Sheet({
   const lead = (
     <>
       <span class="cn-tag">
-        <b>{number}/</b> Sezione
+        <b>{number}/</b> Section
       </span>
       <h2 class="t-heading cn-caps sl-title">{title}</h2>
       {ABOUT[title] && <p class="t-body mut sl-about">{ABOUT[title]}</p>}
@@ -270,7 +270,7 @@ function Sheet({
         </span>
       </div>
       <div class="cn-cell cn-cell--row sl-end" style={area(1, 8, 2, 15)}>
-        <span class="cn-tag">Only/One · Impostazioni</span>
+        <span class="cn-tag">Only/One · Settings</span>
         <span class="cn-tag">
           <b>{number}</b> / {pad(total)}
         </span>
@@ -324,7 +324,7 @@ export function SettingsApp() {
   const [state, setState] = useState<SettingsState>();
   const [target, setTarget] = useState<SettingsTarget>('user');
   const [query, setQuery] = useState('');
-  const [current, setCurrent] = useState('ruoli');
+  const [current, setCurrent] = useState('roles');
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<unknown>) => {
@@ -341,13 +341,13 @@ export function SettingsApp() {
   if (!state) {
     return (
       <div class="cn app app--page" data-theme={theme}>
-        <p class="hint sl-wait">Lettura delle impostazioni…</p>
+        <p class="hint sl-wait">Loading settings…</p>
       </div>
     );
   }
   const q = query.trim().toLowerCase();
   const sections = [
-    { id: 'ruoli', title: 'Ruoli' },
+    { id: 'roles', title: 'Roles' },
     ...state.sections.map((s) => ({ id: slug(s.title), title: s.title })),
   ];
   const go = (id: string) => {
@@ -355,7 +355,7 @@ export function SettingsApp() {
     document.getElementById(id)?.scrollIntoView({ block: 'start' });
   };
   const providers = sections.find((s) => s.title === 'Provider');
-  const showRoles = q === '' || 'ruoli modello reasoning permessi provider'.includes(q);
+  const showRoles = q === '' || 'roles model reasoning permissions provider'.includes(q);
   const visible = state.sections
     .map((section, index) => ({
       section,
@@ -379,8 +379,8 @@ export function SettingsApp() {
           <span class="sl-model">{info.modelName}</span>
           <p class="sl-d">
             {role === 'leader'
-              ? 'Antigravity non è disponibile come leader. Nella chat il modello si blocca al primo messaggio.'
-              : 'In chat, un altro provider vale dalla chat successiva.'}
+              ? 'Antigravity is unavailable as a leader because the model can stall on the first message.'
+              : 'Provider changes apply to new chats.'}
           </p>
         </>
       ),
@@ -392,13 +392,13 @@ export function SettingsApp() {
   roleEntries.push({
     key: 'reviewer',
     name: `C / ${ROLE.reviewer}`,
-    side: <span class="cn-tag">{reviewer.enabled ? PROVIDER[reviewer.cli] : 'SPENTO'}</span>,
+    side: <span class="cn-tag">{reviewer.enabled ? PROVIDER[reviewer.cli] : 'OFF'}</span>,
     about: (
       <>
         <span class="sl-model">{reviewer.modelName}</span>
         <p class="sl-d">
-          Rivede ogni lavoro dell’implementatore: lo prova e scrive test, mai il codice. Si accende
-          e si spegne qui sotto, in Squad o sulla ghiera.
+          The reviewer checks all implementer work and only edits test files. Toggle reviews below,
+          in Squad, or on the role dial.
         </p>
       </>
     ),
@@ -408,7 +408,7 @@ export function SettingsApp() {
         role="implementer"
         info={reviewer}
         catalog={state.roles.catalog}
-        only={['Provider', 'Modello', 'Reasoning']}
+        only={['Provider', 'Model', 'Reasoning']}
         node={{
           name: ROLE.reviewer,
           write: (change) => {
@@ -433,7 +433,11 @@ export function SettingsApp() {
             <div class="cn-cell cn-cell--row" style={area(1, 1, 2, 4)}>
               <span class="lt-mark">Only/One</span>
             </div>
-            <nav class="cn-cell cn-cell--row sl-nav" aria-label="Sezioni" style={area(1, 4, 2, 11)}>
+            <nav
+              class="cn-cell cn-cell--row sl-nav"
+              aria-label="Sections"
+              style={area(1, 4, 2, 11)}
+            >
               {sections.map((section, index) => (
                 <a
                   key={section.id}
@@ -473,20 +477,20 @@ export function SettingsApp() {
             <div class="cn-cell cn-cell--margin" style={area(2, 1, 3, 2)} />
             <div class="cn-cell cn-cell--center sl-hero" style={area(2, 2, 3, 14)}>
               <header class="cn-heading cn-heading--center cn-bracket">
-                <h1 class="t-caps sl-h1">Impostazioni</h1>
+                <h1 class="t-caps sl-h1">Settings</h1>
                 <p class="cn-heading__sub">
-                  {String(total)} sezioni · salvate per{' '}
-                  {target === 'user' ? 'l’utente' : 'questa cartella'}
+                  {String(total)} sections · save to{' '}
+                  {target === 'user' ? 'user settings' : 'workspace settings'}
                 </p>
               </header>
             </div>
             <div class="cn-cell cn-cell--margin" style={area(2, 14, 3, 15)} />
             <div class="cn-cell cn-cell--row" style={area(3, 1, 4, 8)}>
               <label class="cn-field sl-search">
-                <span class="sr">Cerca un’impostazione</span>
+                <span class="sr">Search settings</span>
                 <span class="cn-field__box" data-prompt="/">
                   <input
-                    placeholder="Cerca un’impostazione"
+                    placeholder="Search settings"
                     value={query}
                     onInput={(event) => {
                       setQuery((event.target as HTMLInputElement).value);
@@ -497,16 +501,16 @@ export function SettingsApp() {
             </div>
             <div class="cn-cell cn-cell--row sl-end" style={area(3, 8, 4, 15)}>
               <Opts
-                lead="Salva per"
-                label="Salva per"
+                lead="Save to"
+                label="Save to"
                 value={target}
                 options={[
-                  { value: 'user', label: 'Utente' },
+                  { value: 'user', label: 'User' },
                   {
                     value: 'workspace',
-                    label: 'Cartella',
+                    label: 'Workspace',
                     disabled: !state.hasWorkspace,
-                    ...(state.hasWorkspace ? {} : { title: 'Nessuna cartella aperta' }),
+                    ...(state.hasWorkspace ? {} : { title: 'No folder open' }),
                   },
                 ]}
                 onChange={setTarget}
@@ -520,9 +524,9 @@ export function SettingsApp() {
               >
                 <span class="sl-fake__t">
                   <span class="cn-tag">
-                    <b>▲</b> CLI finti attivi
+                    <b>▲</b> Using mock CLIs
                   </span>
-                  <span class="t-title">Le chat non parlano con modelli veri.</span>
+                  <span class="t-title">Chats use simulated models.</span>
                 </span>
                 {providers && (
                   <button
@@ -532,7 +536,7 @@ export function SettingsApp() {
                       go(providers.id);
                     }}
                   >
-                    <span class="cn-btn__label">Vai a Provider</span>
+                    <span class="cn-btn__label">Go to Provider</span>
                     <span class="cn-btn__icon">→</span>
                   </button>
                 )}
@@ -542,11 +546,11 @@ export function SettingsApp() {
 
           {showRoles && (
             <Sheet
-              id="ruoli"
+              id="roles"
               index={1}
               total={total}
-              title="Ruoli"
-              count="Valori per le prossime chat"
+              title="Roles"
+              count="Settings for new chats"
               entries={roleEntries}
             />
           )}
@@ -558,7 +562,7 @@ export function SettingsApp() {
               index={index + 2}
               total={total}
               title={section.title}
-              count={`${String(items.length)} ${items.length === 1 ? 'voce' : 'voci'}`}
+              count={`${String(items.length)} ${items.length === 1 ? 'item' : 'items'}`}
               entries={items.map((item) => settingEntry(item, target))}
             />
           ))}
@@ -566,7 +570,7 @@ export function SettingsApp() {
           {!showRoles && visible.length === 0 && (
             <Lattice class="sl-cols" edges={{ top: true }}>
               <div class="cn-cell sl-none" style={area(1, 2, 2, 14)}>
-                <span class="hint">Nessuna impostazione per “{query.trim()}”.</span>
+                <span class="hint">No settings match “{query.trim()}”.</span>
               </div>
             </Lattice>
           )}
@@ -574,8 +578,8 @@ export function SettingsApp() {
           <Lattice class="sl-cols sl-foot" edges={{ top: true }}>
             <div class="cn-cell cn-cell--row" style={area(1, 1, 2, 10)}>
               <span class="cn-tag">
-                Salvate in <b>{target === 'user' ? 'utente' : 'cartella'}</b> | Sezioni{' '}
-                <b>{String(total)}</b> | <b>Only/One</b>
+                Save to <b>{target === 'user' ? 'user settings' : 'workspace settings'}</b> |
+                Sections <b>{String(total)}</b> | <b>Only/One</b>
               </span>
             </div>
             <div class="cn-cell cn-cell--row sl-end" style={area(1, 10, 2, 15)}>

@@ -31,7 +31,7 @@ export class SettingsPanel {
     const mediaRoot = vscode.Uri.joinPath(context.extensionUri, 'media');
     const panel = vscode.window.createWebviewPanel(
       SettingsPanel.viewType,
-      'Only One Chat · Impostazioni',
+      'Only One Chat · Settings',
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
@@ -47,7 +47,7 @@ export class SettingsPanel {
       styleUris: STYLESHEETS.map((file) =>
         panel.webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'cn', file)).toString(),
       ),
-      title: 'Impostazioni',
+      title: 'Settings',
       view: 'settings',
     });
     SettingsPanel.current = new SettingsPanel(panel, context, roles, catalog, chat);
@@ -126,7 +126,7 @@ export class SettingsPanel {
           found = await detectCli(cli);
           if (!found) {
             void vscode.window.showWarningMessage(
-              `${cliLabel(cli)} non trovato: usa SELEZIONA per indicarne la cartella, o scrivi il percorso.`,
+              `${cliLabel(cli)} was not found. Use SELECT to choose its folder or enter its path.`,
             );
           }
         } else {
@@ -134,15 +134,15 @@ export class SettingsPanel {
             canSelectFolders: true,
             canSelectFiles: false,
             canSelectMany: false,
-            openLabel: 'Usa questa cartella',
-            title: `Cartella di ${cliLabel(cli)}`,
+            openLabel: 'Use This Folder',
+            title: `${cliLabel(cli)} Folder`,
           });
           const folder = picked?.[0]?.fsPath;
           if (!folder) break;
           found = await findInFolder(cli, folder);
           if (!found) {
             void vscode.window.showWarningMessage(
-              `In ${folder} (e nella sua bin) non c’è l’eseguibile di ${cliLabel(cli)}.`,
+              `The ${cliLabel(cli)} executable was not found in ${folder} or its bin subfolder.`,
             );
           }
         }

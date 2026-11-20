@@ -1,122 +1,120 @@
-# Sotto-agenti
+# Subagents
 
-Stato: iterazione 1, decisione D13 ([ADR 0007](decisions/0007-subagents-visible-not-intercepted.md)).
-Codice: `packages/runtime/src/loop.ts` (policy, etichette, controlli), adapter
-`packages/adapters/src/codex/agent.ts` e `src/claude/agent.ts`, `src/claude/turn.ts`.
+Iteration 1, decision D13 ([ADR 0007](decisions/0007-subagents-visible-not-intercepted.md)).
+`packages/runtime/src/loop.ts` handles policy, labels, and checks. Provider code lives
+in `packages/adapters/src/codex/agent.ts`, `src/claude/agent.ts`, and `src/claude/turn.ts`.
 
-## Il modello
+## Model
 
-- **Agenti esterni** (Codex, Claude): parlano fra loro solo con il blocco di delega, che il
-  runtime intercetta e l'utente approva, modifica o annulla.
-- **Sotto-agenti**: istanze interne dello stesso CLI, create solo su richiesta esplicita.
-  Non si approvano, come nell'estensione di Codex, ma sono **sempre visibili** e **vincolati**
-  per modello, effort, numero e nome. Codex usa Luna, Claude usa Haiku 5.5, entrambi con effort
-  `low` e al massimo 2 contemporanei (la politica di ogni ruolo; nella prova
-  `dev/subagent-check.ts` dalle variabili `OOC_CODEX_SUBAGENT_*` e `OOC_CLAUDE_SUBAGENT_*`).
-- Un sotto-agente non deve chiamarsi come un agente esterno o un suo modello, né
-  presentarsi come tale. Lo dicono le istruzioni di ruolo e il runtime lo controlla, su
-  parole intere e relativamente al provider: per Codex sono vietati `claude`, `haiku`,
-  `opus`, `sonnet` e `gemini` (`CODEX_SUBAGENT_FORBIDDEN_NAMES`), per Claude `codex`, `luna`,
-  `sol`, `gpt` e `gemini` (`CLAUDE_SUBAGENT_FORBIDDEN_NAMES`). I nomi del proprio provider
-  restano validi: `haiku-file-reader` sotto Claude è ammesso, `solution-finder` non contiene
-  la parola `sol`.
+- **External agents** (Codex, Claude) hand work off through the runtime. The user can
+  approve, edit, or cancel the intercepted delegation. ADR 0035 replaced the original
+  delegation block with a structured tool call.
+- **Subagents** run within the same CLI and only on explicit request. Like Codex
+  extension subagents, they require no approval. They are **always visible** and
+  **constrained** by model, effort, count, and name. The role policies use Luna for Codex
+  and Haiku 5.5 for Claude, both with effort `low` and up to two running at once. The
+  `dev/subagent-check.ts` trial read the `OOC_CODEX_SUBAGENT_*` and
+  `OOC_CLAUDE_SUBAGENT_*` variables.
+- A subagent may neither use nor claim the name of an external agent or its model.
+  Role instructions specify this and the runtime checks whole words by provider. For
+  Codex, `CODEX_SUBAGENT_FORBIDDEN_NAMES` forbids `claude`, `haiku`, `opus`, `sonnet`, and
+  `gemini`. For Claude, `CLAUDE_SUBAGENT_FORBIDDEN_NAMES` forbids `codex`, `luna`, `sol`,
+  `gpt`, and `gemini`. Its own provider names are valid, so Claude permits
+  `haiku-file-reader`. `solution-finder` contains no whole-word match for `sol`.
 
-La policy è configurazione per ruolo (`LoopOptions.subagents`: `model`, `effort`,
-`maxConcurrent`, `forbiddenNames`). Il runtime scrive il testo delle regole
-(`subagentRules`) e lo passa con la policy alla factory dell'agente; l'adapter la applica con
-i meccanismi del suo CLI, senza toccare la configurazione dell'utente.
+Each role configures its policy through `LoopOptions.subagents` (`model`, `effort`,
+`maxConcurrent`, and `forbiddenNames`). The runtime generates `subagentRules` and
+passes the rules and policy to the agent factory. The adapter applies them through
+native CLI mechanisms and leaves the user's configuration untouched.
 
-## Vincoli imposti
+## Enforced constraints
 
-**Codex** (override per thread di `thread/start` `config`; chiavi da
-`codex-rs/core/config.schema.json` a `rust-v0.164.0`, backend multi-agente v2):
+**Codex** uses per-thread `thread/start` `config` overrides. The keys come from
+`codex-rs/core/config.schema.json` at `rust-v0.164.0` (multi-agent backend v2).
 
-| Chiave                                                        | Valore                                  |
-| ------------------------------------------------------------- | --------------------------------------- |
-| `agents.default_subagent_model`                               | modello della policy (`gpt-6-luna`)     |
-| `agents.default_subagent_reasoning_effort`                    | effort della policy (`low`)             |
-| `agents.max_concurrent_threads_per_session` e la stessa in v2 | `maxConcurrent` (2)                     |
-| `features.multi_agent_v2.expose_spawn_agent_model_overrides`  | `false`: lo spawn non sceglie modello   |
-| `features.multi_agent_v2.multi_agent_mode_hint_text`          | solo su richiesta esplicita             |
-| `features.multi_agent_v2.root_agent_usage_hint_text`          | strumenti, `fork_turns: "none"`, regole |
-| `features.multi_agent_v2.subagent_usage_hint_text`            | identità interna, regole                |
+| Key                                                               | Value                                        |
+| ----------------------------------------------------------------- | -------------------------------------------- |
+| `agents.default_subagent_model`                                   | Policy model (`gpt-6-luna`)                  |
+| `agents.default_subagent_reasoning_effort`                        | Policy effort (`low`)                        |
+| `agents.max_concurrent_threads_per_session` and its v2 equivalent | `maxConcurrent` (2)                          |
+| `features.multi_agent_v2.expose_spawn_agent_model_overrides`      | `false`, preventing model selection at spawn |
+| `features.multi_agent_v2.multi_agent_mode_hint_text`              | Spawn only on explicit request               |
+| `features.multi_agent_v2.root_agent_usage_hint_text`              | Tools, `fork_turns: "none"`, and rules       |
+| `features.multi_agent_v2.subagent_usage_hint_text`                | Internal identity and rules                  |
 
-I due testi di ruolo sostituiscono per intero quelli di Codex (`core/src/session/multi_agents.rs`),
-quindi descrivono anche gli strumenti. `MultiAgentV2ConfigToml` rifiuta le chiavi sconosciute:
-verificato su un `thread/start` reale, senza turni.
+The two role hints fully replace those in Codex (`core/src/session/multi_agents.rs`),
+so they also describe the tools. A real `thread/start` with no turns verified that
+`MultiAgentV2ConfigToml` rejects unknown keys.
 
-**Claude** (ambiente del solo processo figlio; nomi dalla documentazione e presenti nel
-binario 2.1.308): `CLAUDE_CODE_SUBAGENT_MODEL` con `_FORCE=1`, `CLAUDE_CODE_EFFORT_LEVEL`,
-`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`, `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`,
-strumento `Agent` aggiunto a `Read,Grep,Glob` e `--forward-subagent-text`.
+**Claude** sets `CLAUDE_CODE_SUBAGENT_MODEL` with `_FORCE=1`,
+`CLAUDE_CODE_EFFORT_LEVEL`, `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`, and
+`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` in the child process environment only. These
+names are documented and present in the 2.1.308 binary. The adapter adds the `Agent`
+tool to `Read,Grep,Glob` and passes `--forward-subagent-text`.
 
-- I sotto-agenti ereditano gli strumenti del padre e restano in sola lettura.
-- Senza `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` un sotto-agente parte in background e riporta
-  in un turno successivo, che un turno `-p` ripreso non riceve in modo affidabile. Con la
-  variabile, Claude lo aspetta dentro il turno. Il caso è documentato in
-  `calc-session`. `CLAUDE_CODE_EFFORT_LEVEL` vale anche per la sessione principale, quindi
-  l'effort della policy deve coincidere con il suo.
+- Subagents inherit the parent tools and stay read-only.
+- Without `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`, a subagent runs in the background and
+  reports in a later turn, which a resumed `-p` turn may miss. With the variable set,
+  Claude waits within the same turn. `calc-session` documents the case.
+  `CLAUDE_CODE_EFFORT_LEVEL` also applies to the parent session, so the policy effort
+  must match the parent effort.
 
-## Monitoraggio
+## Monitoring
 
-|                    | Codex                                                                        | Claude                                                                                                        |
-| ------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Inizio             | `subAgentActivity` `started` sul thread padre, con modello ed effort risolti | `tool_use` `Agent` (nome da `subagent_type`); il modello arriva con il primo messaggio (`parent_tool_use_id`) |
-| Messaggi e comandi | notifiche del thread del sotto-agente sulla stessa connessione               | messaggi con `parent_tool_use_id`                                                                             |
-| Fine               | `subAgentActivity` `completed`/`interrupted`, `turn/completed` del figlio    | `tool_result` della chiamata `Agent`                                                                          |
-| Stop               | `turn/interrupt` a ogni turno di sotto-agente ancora attivo e al padre       | fine dell'albero di processi                                                                                  |
+| Activity              | Codex                                                                             | Claude                                                                                                              |
+| --------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Start                 | `subAgentActivity` `started` on the parent thread with resolved model and effort  | `Agent` `tool_use` with the name from `subagent_type`. Model arrives with the first message (`parent_tool_use_id`). |
+| Messages and commands | Subagent thread notifications on the same connection                              | Messages with `parent_tool_use_id`                                                                                  |
+| End                   | `subAgentActivity` `completed` or `interrupted`, and the child's `turn/completed` | `tool_result` for the `Agent` call                                                                                  |
+| Stop                  | `turn/interrupt` for each active subagent turn and for the parent                 | Process tree termination                                                                                            |
 
-Ogni sotto-agente diventa un evento del thread (`subagent`), figlio del turno che l'ha
-creato, con un'etichetta scritta dal runtime: agente padre, nome, modello, effort e stato.
-I suoi testi e comandi arrivano in streaming (`subagent_text`, `subagent_activity`).
+Each subagent becomes a thread event (`subagent`) nested under the turn that created it.
+The runtime labels it with the parent agent, name, model, effort, and status. Text and
+commands stream through `subagent_text` and `subagent_activity`.
 
-**Controllo a posteriori** (`checkSubagent`): modello o effort diversi da quelli imposti,
-nome di un agente esterno (parola intera, per esempio `/root/claude_review`) o più
-sotto-agenti del massimo: il turno si interrompe con `subagent_violation` e l'esito è
-`failed`, con un errore chiaro. Un valore non riportato dal CLI non è una violazione: si
-vede come "non riportato" nell'etichetta.
+**Post-launch checks** (`checkSubagent`) stop the turn with `subagent_violation` and a
+clear `failed` result if the model or effort conflicts with the policy, the subagent
+name contains a whole-word external agent name (such as `/root/claude_review`), or the
+count exceeds the limit. A value omitted by the CLI is allowed and shown as
+"not reported" in the label.
 
-**Attribuzione (tolta)**: fino all'ADR 0034 il runtime emetteva `attribution_warning` quando la
-conclusione del leader nominava un agente esterno senza che il worker avesse lavorato. L'evento
-è stato tolto con le modalità sperimentali; non c'è più un avviso di questo tipo.
+**Former attribution warning.** Until ADR 0034, the runtime emitted
+`attribution_warning` when the leader's conclusion named an external agent that had
+done no work. ADR 0034 removed it along with the experimental modes.
 
-## Verifica reale (`dev/subagent-check.ts`, un turno per CLI)
+## Historical live verification (`dev/subagent-check.ts`, one turn per CLI)
 
-- **Claude Code 2.1.308, Haiku, low**: un sotto-agente `haiku-file-reader` (agente
-  personalizzato del profilo dell'utente), eseguito su `claude-haiku-5-5`, profondità 1,
-  solo `Grep` e `Read`, nessuna violazione. L'effort non compare da nessuna parte nello
-  stream né in `result` (`modelUsage`, `subagent_stats`): è imposto, non osservabile. Nello
-  stream reale ci sono anche gli eventi `system` `task_started`, `task_progress`,
-  `task_updated` e `task_notification`, e `init` elenca lo strumento come `Task`.
-  Registrato come `turn-subagent.jsonl`, che il fake riproduce.
-- **Codex 0.164.0, Luna, low**, primo turno: creazione fallita con `no rollout found`,
-  nessun sotto-agente avviato. `spawn_agent` eredita per default tutta la cronologia del
-  padre (`fork_turns: "all"`), che un thread `ephemeral` non conserva su disco. Da allora
-  l'istruzione di ruolo chiede `fork_turns: "none"` con il contesto nel compito.
-- **Codex, secondo turno** (`subagent-turn.jsonl`): il sotto-agente `/root/env_read` parte,
-  con il proprio thread, un comando di lettura e stato `completed`. `subAgentActivity`
-  riporta `gpt-6-luna` ed effort `low`, mentre il thread padre ha effort `high` (il
-  predefinito del profilo): l'override `default_subagent_reasoning_effort` si applica (nel
-  run 2, senza override, l'effort era `medium`). Nessuna violazione.
-  `multiAgentMode` nella risposta di `thread/start` resta `explicitRequestOnly` anche con il
-  testo guida per thread: il campo non lo riflette. Il comportamento (un sotto-agente, solo
-  perché richiesto) è coerente con il testo, ma anche con la modalità predefinita, quindi
-  questo turno non dimostra che il testo guida venga applicato.
+- **Claude Code 2.1.308, Haiku, low.** The user's custom `haiku-file-reader` agent ran
+  on `claude-haiku-5-5` at depth 1 with only `Grep` and `Read`, with no violation.
+  Effort was enforced and absent throughout the stream and `result` (`modelUsage`,
+  `subagent_stats`). The real stream also included `system` events `task_started`,
+  `task_progress`, `task_updated`, and `task_notification`. `init` listed the tool as
+  `Task`. The fake replays the recording in `turn-subagent.jsonl`.
+- **Codex 0.164.0, Luna, low, first turn.** Creation failed with `no rollout found`
+  and launched no subagent. `spawn_agent` inherits the full parent history by default
+  (`fork_turns: "all"`), which an `ephemeral` thread does not keep on disk. The role
+  instructions now ask for `fork_turns: "none"` and context in the task.
+- **Codex, second turn** (`subagent-turn.jsonl`). The subagent `/root/env_read` started
+  with its own thread, ran a read command, and reached `completed`.
+  `subAgentActivity` reported `gpt-6-luna` and effort `low` while the parent thread
+  used the profile default `high`. The `default_subagent_reasoning_effort` override
+  took effect (`medium` in run 2 without the override). There was no violation.
+  `multiAgentMode` in the `thread/start` response stayed `explicitRequestOnly` with
+  the per-thread hint, so the field did not reflect it. The one explicitly requested
+  subagent is consistent with both the hint and the default mode, leaving application
+  of the hint unverified.
 
-## Limiti
+## Limits
 
-- Codex: nessuna approvazione prima della partenza, perché il protocollo non ha una
-  richiesta per lo spawn. Il controllo arriva quando il sotto-agente è già partito (28 ms
-  prima del suo turno nel run 2) e consuma un po' di quota.
-- Codex: un ruolo dell'utente (`agents.<nome>.config_file`) potrebbe fissare un altro
-  modello; il controllo a posteriori lo intercetta.
-- **Claude: l'effort dei sotto-agenti non è osservabile** (limite noto). L'adapter lo impone
-  con `CLAUDE_CODE_EFFORT_LEVEL` nell'ambiente del processo, ma Claude Code 2.1.308 non lo
-  riporta da nessuna parte: né nei messaggi del sotto-agente, né negli eventi `system`
-  `task_*`, né in `result` (`modelUsage`, `subagent_stats`), verificato su un turno reale.
-  Quindi il controllo a posteriori verifica solo il modello: l'etichetta mostra "effort non
-  riportato" e un effort diverso non può interrompere il turno. Se una versione futura lo
-  riportasse, basterà inviarlo nell'evento `identified`.
-- Il nome di un agente personalizzato dell'utente diventa il nome del sotto-agente: se
-  contenesse come parola intera un nome esterno al suo provider (per esempio un agente
-  Claude chiamato `gpt-helper`), il turno verrebbe interrotto.
+- Codex has no spawn approval request in its protocol. The runtime checks after
+  the launch has already used some quota (28 ms before the subagent turn in run 2).
+- A user-defined Codex role (`agents.<name>.config_file`) could set another model.
+  The post-launch check detects this.
+- **Claude subagent effort is unobservable.** The adapter sets
+  `CLAUDE_CODE_EFFORT_LEVEL` in the process environment. In the real turn, Claude Code
+  2.1.308 omitted effort from subagent messages, `system` `task_*` events, and `result`
+  (`modelUsage`, `subagent_stats`). The post-launch check can verify only the model.
+  The label says "effort not reported", and an effort mismatch cannot stop the turn.
+  If a future version reports effort, pass it in the `identified` event.
+- User-defined agent names become subagent names. A whole-word external provider or
+  model name, such as `gpt-helper` under Claude, stops the turn.

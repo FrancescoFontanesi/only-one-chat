@@ -239,7 +239,7 @@ describe('ACP agent (ADR 0023)', () => {
     // Older than 1.1.11, `/quota` would be a prompt: a turn, and quota spent. Never asked.
     await expect(
       readAntigravityQuota({ ...options, baseEnv: { ...process.env, FAKE_AGY_VERSION: '1.1.10' } }),
-    ).rejects.toThrow('non riporta la quota');
+    ).rejects.toThrow('requires a turn to report quota');
     expect(answersQuota('1.5.5\n')).toBe(true);
     expect(answersQuota('1.1.11')).toBe(true);
     expect(answersQuota('1.0.99')).toBe(false);

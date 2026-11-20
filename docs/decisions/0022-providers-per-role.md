@@ -1,58 +1,32 @@
-# 0022. Qualsiasi provider in qualsiasi ruolo, e le domande di Claude
+# 0022. Provider-independent roles and Claude questions
 
-Stato: Accettata (iterazione 3). Precisa l'ADR 0011 (permessi per ruolo) e l'ADR 0019 (domande
-del leader).
+Status: Accepted (iteration 3). Clarifies permissions per role in ADR 0011 and leader questions in ADR 0019.
 
-## Contesto
+## Context
 
-- **I ruoli erano già configurabili per provider** (impostazioni e Squad), ma il backend no:
-  - la chat sceglieva fra Codex e Claude in un unico `if`;
-  - le domande erano solo di un leader Codex;
-  - il ponte dei permessi era solo dei ruoli Claude che scrivono.
-- **Claude leader con Codex implementatore partiva già,** ma senza domande.
-- **In futuro arriveranno altri provider** (altri CLI, modelli locali). La chat e Squad non
-  devono sapere quale provider ha un ruolo. Devono sapere di che cosa ha bisogno il ruolo.
-- **Claude Code ha uno strumento per chiedere all'utente,** `AskUserQuestion`. Verificato su
-  2.1.322:
-  - con `-p` e `--permission-prompts none` lo strumento non c'è, anche se è in `--tools`;
-  - non c'è nemmeno con `--permission-prompts host`;
-  - c'è con `--permission-prompt-tool stdio`, cioè l'host dell'Agent SDK. La chiamata arriva
-    sullo stream come richiesta di controllo `can_use_tool`, e l'host la approva con le
-    risposte nell'input (`answers`).
-  - Un hook `PermissionRequest` non basta, perché lo strumento non viene offerto.
+- **Settings and Squad already allowed provider selection per role.** The backend still chose between Codex and Claude in one `if`, restricted questions to Codex leaders, and reserved the permissions bridge for Claude roles with write access.
+- **A Claude leader already worked with a Codex implementer.** Interactive questions were missing.
+- **Future providers include other CLIs and local models.** Chat and Squad should work from the role's requirements and let the provider handle its own integration.
+- **Claude Code provides `AskUserQuestion`.** Tests on 2.1.322 showed how the tool is enabled.
+  - `-p` with `--permission-prompts none` omits the tool even if `--tools` lists it.
+  - `--permission-prompts host` also omits it.
+  - `--permission-prompt-tool stdio` enables it through the Agent SDK host protocol. The stream carries a `can_use_tool` control request and the host approves it with `answers` in the input.
+  - A `PermissionRequest` hook alone leaves the tool unavailable.
 
-## Decisione
+## Decision
 
-1. **Una tabella dei provider** (`apps/vscode/src/session/providers.ts`). La chat descrive il
-   ruolo (scelta di CLI, modello, reasoning e permesso; leader sì o no) e il provider lo
-   traduce nel proprio harness. Ogni provider dichiara:
-   - come crea le sessioni;
-   - se chiede tramite il ponte dell'estensione (Claude) o con il proprio protocollo (Codex);
-   - i nomi vietati ai sotto-agenti.
+1. **A provider registry** in `apps/vscode/src/session/providers.ts`. The chat describes the role with a CLI, model, reasoning level, permissions, and whether it is the leader. The provider translates that description to its own harness. Each provider defines how to create sessions, whether it requests permission through the extension bridge (Claude) or its own protocol (Codex), and the disallowed subagent names. Adding a provider requires a registry entry and adapter.
+2. **All leaders can ask questions.** Codex uses `requestUserInput` and Claude uses `AskUserQuestion`.
+3. **A Claude leader hosts the SDK protocol for questions only.**
+   - The turn starts with `AskUserQuestion` in `--tools` and replaces `--permission-prompts none` with `--permission-prompt-tool stdio`.
+   - The turn's `onQuestion` handles `can_use_tool` requests for `AskUserQuestion` through the same runtime path as Codex. Questions are logged and cancelled when the turn stops.
+   - The returned input keys each answer by question text and separates multiple selections with commas. The call is denied if no answer is returned.
+   - All other requests that would prompt are denied immediately with a message attributing the denial to the read-only role. The historical message was `Negato dal ruolo` (Denied by role). The effect matches `--permission-prompts none`.
+   - The leader runs without a bridge or hook. `--tools` excludes write tools.
+4. **The Claude implementer continues to use the permission hook (R9) and auto mode (ADR 0021).** Interactive questions remain exclusive to the leader (ADR 0019).
 
-   La chat non contiene più rami per provider. Un provider nuovo è una voce della tabella più
-   il suo adapter.
+## Consequences
 
-2. **Ogni leader ha le domande**, Codex con `requestUserInput`, Claude con `AskUserQuestion`.
-3. **Il turno del leader Claude fa da host dell'SDK per le sole domande.**
-   - Il turno parte con `AskUserQuestion` in `--tools` e con `--permission-prompt-tool stdio`,
-     che prende il posto di `--permission-prompts none`.
-   - La richiesta `can_use_tool` di `AskUserQuestion` va a `onQuestion` del turno, quindi
-     passa dal runtime come quelle di Codex: è registrata nel log ed è fermata con il turno.
-   - Le risposte tornano nell'input, per testo della domanda, con più scelte separate da
-     virgole. Senza risposta la chiamata viene negata.
-   - Ogni altra richiesta che chiederebbe viene negata subito con "Negato dal ruolo": il ruolo
-     è in sola lettura, non è l'utente ad aver rifiutato. È lo stesso effetto di
-     `--permission-prompts none`, con un messaggio esatto.
-   - Il leader non ha ponte né hook. Gli strumenti di scrittura restano fuori da `--tools`.
-4. **L'implementatore Claude non cambia:** niente domande (ADR 0019), permessi tramite l'hook
-   (R9) e modalità auto (ADR 0021).
-
-## Conseguenze
-
-- Claude leader con Codex implementatore funziona come la coppia opposta: delega, rapporto,
-  revisione e domande.
-- La chat non sa più quale provider ha un ruolo. Restano per provider: gli eseguibili e i
-  sotto-agenti in `ChatConfig`, la lettura dei modelli e dell'utilizzo, le etichette della UI.
-- Usiamo una parte del protocollo di controllo dell'SDK (`can_use_tool`) senza l'SDK. Una
-  versione di Claude Code che la cambiasse romperebbe le domande, non i permessi.
+- A Claude leader and Codex implementer can delegate, report, review, and ask questions like the reverse pairing.
+- Provider-specific details remain in `ChatConfig` for executables and subagents, and in model catalogs, usage retrieval, and UI labels.
+- The integration uses `can_use_tool` directly without the SDK. A Claude Code change to that control protocol could break questions. Permissions use a separate mechanism.

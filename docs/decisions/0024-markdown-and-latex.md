@@ -1,57 +1,36 @@
-# 0024. Markdown e LaTeX nei messaggi degli agenti
+# 0024. Markdown and LaTeX in agent messages
 
-Stato: Accettata (iterazione 3). Precisa la minaccia T6 di [security.md](../security.md) e i
-riferimenti dell'ADR 0018.
+Status: Accepted (iteration 3). Clarifies threat T6 in [security.md](../security.md) and file references in ADR 0018.
 
-## Contesto
+## Context
 
-- **Il testo degli agenti era reso come testo semplice:** titoli, grassetto, elenchi, tabelle e
-  blocchi di codice restavano marcatori visibili, e le formule restavano sorgente LaTeX.
-- **Il markdown dei modelli non è fidato** (T6). La webview ha una CSP stretta: niente script
-  inline, niente stili inline, niente rete.
-- **Gli agenti citano i file in modi diversi:** `[README.md](file:///C:/…/README.md)`,
-  `[app.py](app.py)`, `` `src/masks.py` ``, `` `a.py:12` ``. Prima era cliccabile solo `@percorso`.
+- **Agent messages were rendered as plain text.** Headings, bold, lists, tables, and code blocks kept their visible markers, and formulas appeared as LaTeX source.
+- **Model-generated Markdown is untrusted** (T6). The webview's strict CSP disallows inline scripts, inline styles, and network access.
+- **Agents refer to files through links and inline code**, for example `[README.md](file:///C:/…/README.md)`, `[app.py](app.py)`, `` `src/masks.py` ``, and `` `a.py:12` ``. Previously, only `@path` was clickable.
 
-## Decisione
+## Decision
 
-1. **Markdown con un renderer nostro, senza dipendenze** (`webview/markdownModel.ts`,
-   `webview/markdown.tsx`).
-   - Produce solo elementi Preact, mai HTML: l'HTML che un modello scrive resta testo visibile,
-     quindi non c'è nulla da sanificare.
-   - Copre il sottoinsieme che i CLI scrivono: titoli, paragrafi, elenchi anche annidati e misti,
-     citazioni, blocchi di codice, tabelle, separatori; codice inline, grassetto, corsivo, link.
-   - Regge il testo ancora in arrivo, per esempio un blocco di codice non ancora chiuso.
-   - Il testo è Regular (400) e il grassetto Bold (700): in Rajdhani 500 e 700 quasi non si
-     distinguono.
-2. **Riferimenti ai file.**
-   - L'host riconosce, oltre a `@percorso`, i destinatari dei link markdown e il codice inline che
-     ha la forma di un percorso, con `#L10-20` o `:12`.
-   - Sono cliccabili solo quelli che esistono nella cartella aperta, anche se scritti come
-     percorso assoluto.
-   - `openFile` accetta percorsi assoluti solo dentro la cartella, e la verifica resta nell'host.
-   - Ogni altro link mostra il testo, con l'indirizzo come title: la webview non apre indirizzi.
-   - **Aspetto:** come in Copilot Chat e Claude Code, il file è un chip. Ha carattere
-     monospazio, bordo, le righe attenuate dopo il nome e il segno ↗, e si inverte al passaggio
-     del mouse; il percorso completo è nel title. Il codice inline ha invece un fondo pieno e
-     nessun bordo, così non si confonde con un file.
-   - **Riapertura:** i riferimenti si ricalcolano quando una chat viene riaperta.
-3. **LaTeX con KaTeX 0.19.1** (MIT), con uscita MathML.
-   - Riconosciuto in `$…$`, `\(…\)`, `$$…$$` e `\[…\]`. Un `$` apre solo se seguito da un carattere
-     non spazio e chiude solo se preceduto da uno, senza una cifra dopo (la regola di pandoc), così
-     "$5 e $10" resta testo; `\$` resta un dollaro.
-   - MathML è disegnato dal browser: niente CSS né font di KaTeX da caricare, niente stili inline.
-   - Il markup lo scrive KaTeX, non il modello. Opzioni: `trust: false` (niente `\href` né comandi
-     HTML), `maxSize` e `maxExpand` limitati, `throwOnError: false` (una formula sbagliata resta
-     com'è scritta).
-   - È l'unico punto in cui la webview inserisce markup (`dangerouslySetInnerHTML`), ed è markup
-     generato da KaTeX.
-   - Le formule già disegnate stanno in una cache, perché durante lo streaming lo stesso testo si
-     ridisegna molte volte.
+1. **Render Markdown with a dependency-free renderer** (`webview/markdownModel.ts` and `webview/markdown.tsx`).
+   - The renderer produces Preact elements exclusively. It displays any HTML in model output as text, so no sanitization is needed.
+   - The subset used by the CLIs includes headings, paragraphs, nested and mixed lists, block quotes, code blocks, tables, horizontal rules, inline code, bold, italics, and links.
+   - It handles streamed text, including an unfinished code block.
+   - Body text uses Regular (400) and bold text uses Bold (700). Rajdhani weights 500 and 700 are hard to distinguish.
+2. **File references.**
+   - The host recognizes `@path`, Markdown link targets, and inline code shaped like a path, including `#L10-20` and `:12` line references.
+   - References are clickable only when the file exists inside the open folder, even with an absolute path.
+   - `openFile` accepts absolute paths inside the folder only, and the host performs the check.
+   - Other links display their text with the address as the title. The webview does not open the address.
+   - As in Copilot Chat and Claude Code, a file appears as a chip with monospace text, a border, muted line numbers after the name, a ↗, and inverted colors on hover. Its title shows the full path. Inline code has a solid background and no border, so it is distinguishable from file references.
+   - References are recalculated when a chat reopens.
+3. **Render LaTeX with KaTeX 0.19.1** (MIT), targeting MathML.
+   - Recognize `$…$`, `\(…\)`, `$$…$$`, and `\[…\]`. Following Pandoc's rule, `$` opens only when followed by a non-space character. It closes only when preceded by a non-space character and followed by no digit. For example, "$5 and $10" stays plain text and `\$` renders as a dollar sign.
+   - The browser renders MathML without KaTeX stylesheets, fonts, or inline styles.
+   - KaTeX produces the markup. Settings include `trust: false` to disable `\href` and HTML commands, bounded `maxSize` and `maxExpand`, and `throwOnError: false` so an invalid formula shows its source.
+   - The webview inserts markup through `dangerouslySetInnerHTML` for this KaTeX output only.
+   - Rendered formulas are cached because streaming rerenders the same text repeatedly.
 
-## Conseguenze
+## Consequences
 
-- **Dimensione:** il bundle della webview cresce di circa 250 KB.
-- **Non coperto:** immagini, note a piè di pagina, elenchi di attività, HTML del modello (resta
-  testo).
-- **MathML:** la resa dipende dal motore del browser di VS Code (Chromium), meno rifinita del CSS
-  di KaTeX. Se servisse, il CSS e i font di KaTeX si possono servire dalla cartella `media`.
+- The webview bundle grows by about 250 KB.
+- Images, footnotes, and task lists are unsupported. Model-generated HTML remains plain text.
+- MathML relies on VS Code's browser engine (Chromium) and looks less polished than KaTeX CSS. KaTeX CSS and fonts could be served from `media` if needed.

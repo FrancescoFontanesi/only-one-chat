@@ -12,7 +12,7 @@
 import { lineCounts } from './checkpoints.js';
 import { TEST_FILE, shortcutFlags, type TextChange } from './shortcuts.js';
 
-type RiskLevel = 'basso' | 'medio' | 'alto';
+type RiskLevel = 'low' | 'medium' | 'high';
 
 interface RiskAssessment {
   readonly level: RiskLevel;
@@ -31,23 +31,23 @@ const DECISIONS =
 /** What an attacker can reach, by the calls that reach it. */
 const SENSITIVE: readonly (readonly [string, RegExp])[] = [
   [
-    'file e percorsi',
+    'files and paths',
     /\bopen\s*\(|readFile|writeFile|\bfs\.|os\.path|pathlib|\bPath\s*\(|realpath|unlink|rmSync|shutil|createReadStream/,
   ],
   [
-    'comandi',
+    'commands',
     /subprocess|child_process|\bspawn\s*\(|\bexec(?:Sync|File)?\s*\(|os\.system|popen|ShellExecute|Process\.Start/,
   ],
   [
-    'rete',
+    'network',
     /\bfetch\s*\(|https?:\/\/|\bsocket\b|requests\.|axios|urllib|http\.(?:get|request)|WebSocket/,
   ],
   [
-    'codice o dati non fidati',
+    'untrusted code or data',
     /\beval\s*\(|new Function\s*\(|pickle\.|yaml\.load\s*\((?![^)]*SafeLoader)|marshal\.|deserializ|innerHTML|dangerouslySetInnerHTML/i,
   ],
   ['query', /\b(?:SELECT|INSERT|UPDATE|DELETE)\b[^;\n]*(?:\+|\$\{|%s|f["'])/],
-  ['credenziali', /password|secret|token|api[_-]?key|credential|private[_-]?key/i],
+  ['credentials', /password|secret|token|api[_-]?key|credential|private[_-]?key/i],
 ];
 
 const count = (text: string | null, pattern: RegExp) => text?.match(pattern)?.length ?? 0;
@@ -133,25 +133,25 @@ export function assessRisk(
     0.15 * logCap(dependents, 20) +
     0.15 * (untested ? 1 : 0);
   const reasons = [
-    `${String(code.length)} file di codice, ${String(churn)} righe cambiate`,
-    ...(folders.size > 1 ? [`${String(folders.size)} cartelle`] : []),
-    ...(decisions > 0 ? [`+${String(decisions)} punti di decisione`] : []),
-    ...(dependents > 0 ? [`usato da ${String(dependents)} file`] : []),
-    ...(untested ? ['nessun test cambiato'] : []),
+    `${String(code.length)} code file${code.length === 1 ? '' : 's'}, ${String(churn)} changed line${churn === 1 ? '' : 's'}`,
+    ...(folders.size > 1 ? [`${String(folders.size)} folders`] : []),
+    ...(decisions > 0 ? [`+${String(decisions)} decision point${decisions === 1 ? '' : 's'}`] : []),
+    ...(dependents > 0 ? [`used by ${String(dependents)} file${dependents === 1 ? '' : 's'}`] : []),
+    ...(untested ? ['no tests changed'] : []),
   ];
-  let level: RiskLevel = score >= 0.55 ? 'alto' : score >= 0.25 ? 'medio' : 'basso';
+  let level: RiskLevel = score >= 0.55 ? 'high' : score >= 0.25 ? 'medium' : 'low';
   const raise = (to: RiskLevel, why: string) => {
     reasons.push(why);
-    if (to === 'alto' || level === 'basso') level = to;
+    if (to === 'high' || level === 'low') level = to;
   };
   const touched = SENSITIVE.filter(([, pattern]) => pattern.test(added)).map(([name]) => name);
-  if (touched.length > 0) raise('alto', `tocca ${touched.join(', ')}`);
+  if (touched.length > 0) raise('high', `touches ${touched.join(', ')}`);
   const flags = shortcutFlags(changes).length;
-  if (flags > 0) raise('medio', `${String(flags)} segnalazioni dei controlli sul diff`);
+  if (flags > 0) raise('medium', `${String(flags)} diff check flag${flags === 1 ? '' : 's'}`);
   return { level, score: Math.round(score * 100) / 100, reasons };
 }
 
 /** The assessment as a line of the facts. */
 export function riskFact(risk: RiskAssessment): string {
-  return `Rischio della modifica, stimato dal runtime: ${risk.level} (${risk.score.toFixed(2).replace('.', ',')}) — ${risk.reasons.join('; ')}.`;
+  return `Change risk estimated by the runtime: ${risk.level} (${risk.score.toFixed(2)}) — ${risk.reasons.join('; ')}.`;
 }

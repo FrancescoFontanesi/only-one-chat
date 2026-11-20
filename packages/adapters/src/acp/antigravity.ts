@@ -106,12 +106,14 @@ export function antigravityQuota(data: unknown): AntigravityQuotaGroup[] {
 export async function readAntigravityQuota(options: AgyOptions): Promise<AntigravityQuotaGroup[]> {
   const version = await runAgy(options, ['--version']);
   if (!answersQuota(version)) {
-    throw new Error(`agy ${version.trim()} non riporta la quota senza un turno (serve 1.1.11)`);
+    throw new Error(
+      `agy ${version.trim()} requires a turn to report quota. Install version 1.1.11 or later.`,
+    );
   }
   const out = await runAgy(options, ['-p', '/quota', '--output-format', 'json']);
   const payload = JSON.parse(out) as unknown;
   if (!isRecord(payload) || payload['num_turns'] !== 0 || !isRecord(payload['command'])) {
-    throw new Error('agy non ha risposto a /quota da sé');
+    throw new Error('agy did not answer /quota directly');
   }
   return antigravityQuota(payload['command']['data']);
 }

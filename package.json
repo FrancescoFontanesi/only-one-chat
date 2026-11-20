@@ -3,7 +3,6 @@
   "version": "0.0.0",
   "private": true,
   "description": "VS Code extension that coordinates multiple AI coding agents through one shared conversation.",
-  "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@10.34.6",
   "engines": {

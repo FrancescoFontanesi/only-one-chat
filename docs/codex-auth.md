@@ -1,131 +1,132 @@
-# Autenticazione Codex: profilo personale, subscription verificata
+# Codex authentication with a personal profile and verified subscription
 
-Stato: iterazione 1. Codex gira nel profilo personale dell'utente
-([ADR 0006](decisions/0006-personal-cli-profiles.md), che sostituisce lo 0005).
+Iteration 1. Codex runs in the user's personal profile.
+[ADR 0006](decisions/0006-personal-cli-profiles.md) supersedes ADR 0005.
 
-Codice: `packages/adapters/src/codex/auth.ts` (interpretazione dello stato),
-`session.ts` (lancio, gate, metodi negati), `src/environment.ts` (filtro dell'ambiente).
-Test: `test/codex-auth.test.ts`, `test/codex-contract.test.ts`.
+`packages/adapters/src/codex/auth.ts` interprets auth status, `session.ts` handles launch,
+the authentication gate, and denied methods, and `src/environment.ts` filters the
+environment. Tests live in `test/codex-auth.test.ts` and `test/codex-contract.test.ts`.
 
-## Regola
+## Policy
 
-Il modello si può usare con un account **ChatGPT** su un provider che usa
-l'autenticazione OpenAI (`requiresOpenaiAuth: true`). Un provider che non la usa (proxy o
-provider personalizzato) non permette di verificare la subscription: è ammesso solo se il
-chiamante lo abilita con `allowUnverifiedProvider`. Le API key sono sempre rifiutate. Se
-lo stato non è verificabile, il risultato è il rifiuto.
+Access to the model requires a **ChatGPT** account with a provider that uses OpenAI
+authentication (`requiresOpenaiAuth: true`). For providers that cannot verify the
+subscription, such as proxies or custom providers that use a different authentication
+method, access requires the caller to enable `allowUnverifiedProvider`. The gate always
+rejects API keys and fails closed when it cannot verify status.
 
-## Contratto
+## Contract
 
-`connectCodex(options)` avvia `codex app-server` senza override, completa l'handshake e
-**subito dopo** esegue `account/read` seguito da `config/read`, che dà il provider. Lo
-stato `auth` è uno dei seguenti:
+`connectCodex(options)` starts `codex app-server` without overrides, completes the
+handshake, and immediately calls `account/read` followed by `config/read` to identify
+the provider. The `auth` state is one of the following:
 
-| Risposta di `account/read`                                    | Stato                                  |
-| ------------------------------------------------------------- | -------------------------------------- |
-| `account.type: "apiKey"`, con qualsiasi provider              | `rejected / api_key`                   |
-| `requiresOpenaiAuth: true`, `account.type: "chatgpt"` + piano | `authorized`                           |
-| `requiresOpenaiAuth: true`, `account: null`                   | `login_required` (login nel terminale) |
-| `requiresOpenaiAuth: false`, `allowUnverifiedProvider` attivo | `unverified_provider { provider }`     |
-| `requiresOpenaiAuth: false`, opzione spenta                   | `rejected / provider_not_verified`     |
-| `account.type` diverso (`amazonBedrock`, tipi futuri)         | `rejected / unsupported_mode`          |
-| errore, timeout, risposta incompleta o malformata             | `rejected / read_failed`               |
+| `account/read` response                                            | State                                    |
+| ------------------------------------------------------------------ | ---------------------------------------- |
+| `account.type: "apiKey"` with any provider                         | `rejected / api_key`                     |
+| `requiresOpenaiAuth: true`, `account.type: "chatgpt"`, and a plan  | `authorized`                             |
+| `requiresOpenaiAuth: true`, `account: null`                        | `login_required` (login in the terminal) |
+| `requiresOpenaiAuth: false` with `allowUnverifiedProvider` enabled | `unverified_provider { provider }`       |
+| `requiresOpenaiAuth: false` with the option disabled               | `rejected / provider_not_verified`       |
+| Other `account.type` values (`amazonBedrock`, future types)        | `rejected / unsupported_mode`            |
+| Error, timeout, incomplete response, or malformed response         | `rejected / read_failed`                 |
 
-`provider` è `{ id, name, baseUrl, unofficialBaseUrl }` da `config/read`
-(`model_provider` e la sua voce in `model_providers`: `name`, `base_url`).
-`unofficialBaseUrl` è vero quando il `base_url` non è un endpoint HTTPS di
-`api.openai.com` o `chatgpt.com`, oppure quando un provider diverso da `openai` non ne
-dichiara uno; se `config/read` fallisce vale `{ id: "unknown", name: null, baseUrl: null,
-unofficialBaseUrl: true }`. Il messaggio di `provider_not_verified` nomina il provider e
-spiega come abilitarlo.
+`provider` is `{ id, name, baseUrl, unofficialBaseUrl }` from `config/read`, using
+`model_provider` and its entry in `model_providers` (`name`, `base_url`).
+`unofficialBaseUrl` is true when `base_url` points outside the HTTPS endpoints at
+`api.openai.com` and `chatgpt.com`, or when a provider other than `openai` omits it.
+If `config/read` fails, the value is
+`{ id: "unknown", name: null, baseUrl: null, unofficialBaseUrl: true }`. The
+`provider_not_verified` message names the provider and explains how to enable it.
 
-**Provider visibile.** `session.provider` riporta il provider dell'ultima lettura, sempre,
-anche con `requiresOpenaiAuth: true`. È informativo e non bloccante: serve all'indicatore
-"via proxy" (con Headroom: `headroom`, `http://127.0.0.1:8787/v1`,
-`unofficialBaseUrl: true`); l'accesso lo decide solo lo stato `auth`.
+**Provider display.** `session.provider` reports the latest provider even with
+`requiresOpenaiAuth: true`. It supports the "via proxy" indicator (for Headroom,
+`headroom`, `http://127.0.0.1:8787/v1`, and `unofficialBaseUrl: true`). The `auth`
+state alone controls access.
 
-**Gate.** `session.request()` lascia passare senza verifica solo `account/read`. Ogni
-altra richiesta richiede `authorized` o `unverified_provider`, non stale; altrimenti la
-Promise viene rifiutata con `CodexAuthError` e **il messaggio non raggiunge il server**.
-Per `login_required` il messaggio dice di eseguire `codex login` in un terminale.
+**Gate.** `session.request()` lets only `account/read` through without verification.
+Each other request requires a current `authorized` or `unverified_provider` state.
+Otherwise, the promise rejects with `CodexAuthError` before the message reaches the
+server. For `login_required`, the message directs the user to run `codex login` in a
+terminal.
 
-**Metodi mai inviati**, in qualsiasi stato (`deniedReason`):
+**Methods denied in every state** (`deniedReason`):
 
-| Metodo                                 | Motivo                                     |
-| -------------------------------------- | ------------------------------------------ |
-| `account/rateLimitResetCredit/consume` | spende un credito di reset dei rate limit  |
-| `account/sendAddCreditsNudgeEmail`     | invia un'e-mail                            |
-| `feedback/upload`                      | invia feedback, log e thread a OpenAI      |
-| `plugin/share/save`                    | pubblica un plugin ad altre persone        |
-| `plugin/share/updateTargets`           | cambia con chi è condiviso un plugin       |
-| `account/login/start`, `/cancel`       | il login si fa con il CLI nel terminale    |
-| `account/logout`                       | disconnetterebbe il profilo dell'utente    |
-| `remoteControl/*`                      | il client non pilota mai il remote control |
+| Method                                 | Reason                                      |
+| -------------------------------------- | ------------------------------------------- |
+| `account/rateLimitResetCredit/consume` | Spends a rate-limit reset credit            |
+| `account/sendAddCreditsNudgeEmail`     | Sends email                                 |
+| `feedback/upload`                      | Sends feedback, logs, and threads to OpenAI |
+| `plugin/share/save`                    | Publishes a plugin to other people          |
+| `plugin/share/updateTargets`           | Changes who a plugin is shared with         |
+| `account/login/start`, `/cancel`       | Login uses the CLI in the terminal          |
+| `account/logout`                       | Logs out the user's profile                 |
+| `remoteControl/*`                      | The user controls remote control            |
 
-`initialize` non dichiara mai la capability `experimentalApi`, che i metodi sperimentali
-(remote control compreso) richiedono. Il remote control resta una funzione dell'utente:
-nulla viene disattivato nella sua configurazione.
+`initialize` omits the `experimentalApi` capability required by experimental methods,
+including remote control. The user's own remote control configuration remains in effect.
 
-**Cambi di account.** `account/updated` e `account/login/completed` rendono lo stato
-_stale_: la richiesta successiva rilegge `account/read`. La notifica da sola può solo
-togliere l'autorizzazione (`apikey` → `api_key`, `null` → `login_required`, altro →
-`unsupported_mode`; `chatgpt` richiede una rilettura). Una lettura in corsa con un cambio
-viene scartata.
+**Account changes.** `account/updated` and `account/login/completed` mark the state as
+_stale_. The next request rereads `account/read`. A notification alone can only remove
+authorization (`apikey` → `api_key`, `null` → `login_required`, another value →
+`unsupported_mode`). `chatgpt` requires a fresh read. An in-flight read is discarded
+if the account changes.
 
-**Avvio.** Con un profilo in cui l'utente ha fatto login, Codex annuncia l'account
-(`account/updated` con `authMode: "chatgpt"`) **mentre** è in corso la prima
-`account/read`, che quindi viene scartata (transcript `personal-startup.jsonl`; misurato a
-riposo per 65 s: la notifica arriva una volta sola, a 0,58 s). All'avvio `connectCodex`
-rilegge al massimo **3 volte** finché una lettura si completa senza cambi in mezzo; se non
-succede, lo stato resta `rejected / read_failed`.
+**Startup.** In a signed-in profile, Codex announces the account through
+`account/updated` with `authMode: "chatgpt"` **during** the first `account/read`, which
+is then discarded. In `personal-startup.jsonl`, the notification occurred once at
+0.58 s in a 65 s idle observation. At startup, `connectCodex` reads at most **3 times**
+until a read completes without an intervening change. If none does, the state remains
+`rejected / read_failed`.
 
-## Ambiente e lancio
+## Environment and launch
 
-- Profilo e configurazione dell'utente: nessun `CODEX_HOME` imposto, nessun override `-c`.
-- Ambiente dell'utente meno le sole variabili di chiave: `OPENAI_API_KEY`,
-  `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
-  `GEMINI_API_KEY`, `GOOGLE_API_KEY` (in qualsiasi combinazione di maiuscole). Base URL,
-  proxy e le variabili di Headroom e rtk passano.
-- **Profili isolati di test e registratore**: solo lì un `CODEX_HOME` temporaneo e
-  `-c features.plugins=false`, `-c skills.bundled.enabled=false`
-  (`dev/isolated-profile.ts`), per avere registrazioni riproducibili e senza rete.
+- The launch uses the user's profile and configuration without forcing `CODEX_HOME` or
+  passing `-c` overrides.
+- The user's environment is passed through except for key variables, matched
+  case-insensitively: `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN`,
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `GEMINI_API_KEY`, and `GOOGLE_API_KEY`.
+  Base URLs, proxies, and Headroom and rtk variables are preserved.
+- **Isolated test and recorder profiles** use a temporary `CODEX_HOME`,
+  `-c features.plugins=false`, and `-c skills.bundled.enabled=false`
+  (`dev/isolated-profile.ts`) to make recordings reproducible and network-free.
 
-## Comportamenti verificati
+## Verified behavior
 
-Con il fake server: account ChatGPT autorizzato; API key rifiutata anche con un provider
-personalizzato e `allowUnverifiedProvider`; `login_required` senza altre chiamate e con il
-rimando a `codex login`; Bedrock e tipi sconosciuti rifiutati; provider personalizzato
-rifiutato per default con nome e istruzioni, ammesso con l'opzione; provider e base URL
-esposti a ogni lettura; annuncio dell'account durante la prima lettura (rilettura) e
-limite delle 3 letture; errori e risposte incomplete rifiutati; cambi di account; ambiente con
-chiavi tolte e base URL e proxy conservati; lancio senza override; metodi negati mai
-inviati.
+Fake-server checks covered authorization for ChatGPT, API key rejection even with a custom
+provider and `allowUnverifiedProvider`, and `login_required` with instructions to run
+`codex login` and no additional calls. They covered rejection of Bedrock and unknown
+account types, default rejection of custom providers with the name and setup instructions,
+and opt-in access. The tests checked that every read exposes the provider and base URL,
+that an account announcement prompts a reread with a three-read cap, and that account
+changes are handled. They also covered rejection of errors and incomplete responses,
+environment filtering that preserves the base URL and proxy, launch without overrides,
+and blocking denied methods.
 
-Con Codex CLI 0.164.0 reale:
+Historical findings from the real Codex CLI 0.164.0:
 
-- profilo isolato nuovo: `account/read` →
-  `{ account: null, requiresOpenaiAuth: true, workspaceRouting: null }`, quindi
-  `login_required`; `config/read` → `model_provider: null`, `model_providers: {}`
-  (provider `openai`); con un provider personalizzato senza auth OpenAI →
-  `requiresOpenaiAuth: false` e il suo `name` in `config/read` (transcript
-  `startup.jsonl` e `custom-provider.jsonl`);
-- profilo personale dell'utente (diagnosi, [diagnosis.md](diagnosis.md), e transcript
-  `personal-startup.jsonl`): ChatGPT Plus, provider `headroom` con
-  `requires_openai_auth = true`, quindi `authorized`; `workspaceRouting` è un oggetto
-  (`chatgptAccountId`, `backendOrigin`, `accountRoutingOverride`); remote control
-  `disabled`, `environmentId: null`.
+- With a new isolated profile, `account/read` returned
+  `{ account: null, requiresOpenaiAuth: true, workspaceRouting: null }`, so the state
+  was `login_required`. `config/read` returned `model_provider: null` and
+  `model_providers: {}` (the `openai` provider). With a custom provider that bypasses
+  OpenAI authentication, `requiresOpenaiAuth` was false and `config/read` reported the
+  provider's `name`. See the `startup.jsonl` and `custom-provider.jsonl` transcripts.
+- The user's personal profile had ChatGPT Plus and the `headroom` provider with
+  `requires_openai_auth = true`, yielding `authorized`. `workspaceRouting` was an object
+  with `chatgptAccountId`, `backendOrigin`, and `accountRoutingOverride`. Remote control
+  was `disabled` with `environmentId: null`. See [diagnosis.md](diagnosis.md) and
+  `personal-startup.jsonl`.
 
-## Limiti residui
+## Remaining limitations
 
-- **Fiducia nel provider.** Con `requires_openai_auth = true` Codex invia il token ChatGPT
-  al `base_url` del provider (Headroom, nel caso dell'utente). La verifica si fida di
-  quella dichiarazione e del proxy configurato dall'utente.
-- **Validità del token.** `account/read` riporta le credenziali salvate, non garantisce
-  che il token sia ancora accettato: l'errore emergerà alla prima richiesta reale.
-- **Configurazione gestita di sistema** (managed config, requirements): ha la precedenza
-  e non è sotto il nostro controllo; un provider imposto così viene comunque rilevato da
-  `requiresOpenaiAuth`.
-- **Configurazione globale dei processi lanciati da Codex**: `git` per i plugin oggi, i
-  comandi durante i turni domani, leggono la configurazione globale dell'utente (per
-  esempio `~/.gitconfig` con `http.proxy`, `url.*.insteadOf` o i credential helper).
-- **Piano.** Nessuna distinzione fra i piani ChatGPT (`free`, `plus`, `pro`, …).
+- **Trust in the provider.** With `requires_openai_auth = true`, Codex sends the ChatGPT
+  token to the provider's `base_url` (Headroom in the user's case). Verification relies
+  on that declaration and the user-configured proxy.
+- **Token validity.** `account/read` reports stored credentials. An expired or revoked
+  token fails on the first real request.
+- **System-managed configuration** takes precedence and is outside the extension's
+  control. `requiresOpenaiAuth` still identifies a provider imposed this way.
+- **Global configuration for processes started by Codex.** Processes such as plugin
+  `git` today and commands during future turns read the user's global configuration,
+  including `~/.gitconfig` with `http.proxy`, `url.*.insteadOf`, or credential helpers.
+- **Plan.** ChatGPT plans (`free`, `plus`, `pro`, and others) are treated the same.

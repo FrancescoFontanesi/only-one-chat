@@ -16,19 +16,19 @@ import { duration, kilo, post, ShownNode, useWho } from './ui.js';
 
 type Item<K extends ThreadItem['kind']> = Extract<ThreadItem, { kind: K }>;
 
-const STATUS = { running: 'IN CORSO', done: '■ CONCLUSO', failed: '× INTERROTTO' } as const;
+const STATUS = { running: 'RUNNING', done: '■ DONE', failed: '× STOPPED' } as const;
 
 function Copy({ text }: { text: string }) {
   return (
     <button
       class="cn-btn cn-btn--text act"
       type="button"
-      title="Copia il testo"
+      title="Copy text"
       onClick={() => {
         post({ type: 'copy', text });
       }}
     >
-      <span class="cn-btn__label">COPIA</span>
+      <span class="cn-btn__label">COPY</span>
     </button>
   );
 }
@@ -51,7 +51,7 @@ function Linked({ text, refs }: { text: string; refs: readonly string[] | undefi
         class="ref"
         type="button"
         title={
-          lines ? `Apri ${path}, righe ${String(lines.from)}-${String(lines.to)}` : `Apri ${path}`
+          lines ? `Open ${path}, lines ${String(lines.from)}-${String(lines.to)}` : `Open ${path}`
         }
         onClick={() => {
           post({
@@ -77,7 +77,7 @@ function User({ item, index, busy }: { item: Item<'user'>; index: number; busy: 
     <section class="turn turn--you">
       <div class="who">
         <span>{String(index).padStart(2, '0')}/</span>
-        <b>TU</b>
+        <b>YOU</b>
         <span>→ {recipient}</span>
         <span class="who__acts">
           <Copy text={message.text} />
@@ -86,13 +86,13 @@ function User({ item, index, busy }: { item: Item<'user'>; index: number; busy: 
               class="cn-btn cn-btn--text act"
               type="button"
               disabled={busy}
-              title="Riporta i file della cartella a com’erano prima di questo messaggio. La conversazione resta com’è."
+              title="Restore the workspace files to their state before this message. The conversation is preserved."
               onClick={() => {
                 if (item.checkpoint)
                   post({ type: 'restoreCheckpoint', checkpoint: item.checkpoint });
               }}
             >
-              <span class="cn-btn__label">↺ RIPRISTINA QUI</span>
+              <span class="cn-btn__label">↺ RESTORE HERE</span>
             </button>
           )}
         </span>
@@ -155,13 +155,15 @@ function ToolLog({ item, ops }: { item: Item<'turn'>; ops: readonly { line: stri
       >
         <span>{open ? '−' : '+'}</span>
         <b>
-          {ops.length} {ops.length === 1 ? 'AZIONE' : 'AZIONI'}
+          {ops.length} {ops.length === 1 ? 'ACTION' : 'ACTIONS'}
         </b>
         {ops.length > 0 && <span class="mut">{opsSummary(ops.map((o) => o.op))}</span>}
         {item.subagents.length > 0 && (
-          <span class="mut">· {item.subagents.length} SOTTO-AGENTI</span>
+          <span class="mut">
+            · {item.subagents.length} {item.subagents.length === 1 ? 'SUBAGENT' : 'SUBAGENTS'}
+          </span>
         )}
-        {hidden > 0 && shown.length > 0 && <span class="mut">· {hidden} PRIMA</span>}
+        {hidden > 0 && shown.length > 0 && <span class="mut">· {hidden} EARLIER</span>}
       </button>
       {(shown.length > 0 || subagents.length > 0) && (
         <ol class="tlog__l">
@@ -169,7 +171,7 @@ function ToolLog({ item, ops }: { item: Item<'turn'>; ops: readonly { line: stri
             <li key={s.id} class="tl tl--sub">
               <span>{s.status === 'running' ? '▶' : s.status === 'completed' ? '■' : '×'}</span>
               <span>
-                <b>{s.label.toUpperCase()}</b> · sola lettura
+                <b>{s.label.toUpperCase()}</b> · read-only
               </span>
               <span>{s.status === 'running' && <Progress variant="spinner" />}</span>
             </li>
@@ -248,9 +250,9 @@ function Steps({ item }: { item: Item<'turn'> }) {
     return state === 'running' ? (
       <Progress variant="spinner" />
     ) : state === 'stopped' ? (
-      <span class="mut">× INTERROTTO</span>
+      <span class="mut">× STOPPED</span>
     ) : state === 'failed' ? (
-      <span>× ERRORE</span>
+      <span>× ERROR</span>
     ) : null;
   };
   return (
@@ -278,7 +280,7 @@ function Steps({ item }: { item: Item<'turn'> }) {
                 >
                   <span>◇</span>
                   <span>
-                    <b>RAGIONA</b> {!isOpen && step.text.split('\n')[0]}
+                    <b>REASONING</b> {!isOpen && step.text.split('\n')[0]}
                   </span>
                   <span />
                 </button>
@@ -353,7 +355,7 @@ function Steps({ item }: { item: Item<'turn'> }) {
                 <span class="tl">
                   <span>☰</span>
                   <span>
-                    <b>PIANO</b> {step.explanation}
+                    <b>PLAN</b> {step.explanation}
                   </span>
                   <span />
                 </span>
@@ -486,17 +488,15 @@ function Turn({ item }: { item: Item<'turn'> }) {
             leaf={(text) => <Linked text={text} refs={item.refs} />}
           />
         ) : (
-          running && <Progress label="LAVORA" />
+          running && <Progress label="WORKING" />
         )}
         {handoff && !running && <HandoffCard handoff={handoff} refs={item.refs} />}
         {usage && (
           <div class="tfoot">
-            <span>CONTESTO {kilo(usage.context)}</span>
+            <span>CONTEXT {kilo(usage.context)}</span>
             <span>OUTPUT {kilo(usage.output)}</span>
             <span>{duration(usage.durationMs)}</span>
-            {usage.costUsd !== null && (
-              <span>COSTO NOMINALE ${usage.costUsd.toFixed(2).replace('.', ',')}</span>
-            )}
+            {usage.costUsd !== null && <span>ESTIMATED COST ${usage.costUsd.toFixed(2)}</span>}
           </div>
         )}
       </div>
@@ -505,19 +505,19 @@ function Turn({ item }: { item: Item<'turn'> }) {
 }
 
 const DECIDED: Record<string, string> = {
-  approve: '■ INVIATA',
-  edit: '■ INVIATA MODIFICATA',
-  sent: '■ INVIATA · AUTO',
-  cancel: '× ANNULLATA',
-  interrupted: '× INTERROTTA',
+  approve: '■ SENT',
+  edit: '■ SENT WITH EDITS',
+  sent: '■ SENT · AUTO',
+  cancel: '× CANCELED',
+  interrupted: '× STOPPED',
 };
 
 /** A report of older chats, approved before it reached the leader. */
 const REPORT_DECIDED: Record<string, string> = {
-  approve: '■ APPROVATO',
-  edit: '■ APPROVATO MODIFICATO',
-  cancel: '× ANNULLATO',
-  interrupted: '× INTERROTTO',
+  approve: '■ APPROVED',
+  edit: '■ APPROVED WITH EDITS',
+  cancel: '× CANCELED',
+  interrupted: '× STOPPED',
 };
 
 /** A message between agents, once decided: a record, its text one click away. */
@@ -533,7 +533,7 @@ function Hand({ item, number }: { item: Item<'approval'>; number: string }) {
             {delegation ? '→ D' : '← R'}
             {number}
           </b>{' '}
-          {delegation ? 'DELEGA' : 'RAPPORTO'} · {item.from} → {item.to}
+          {delegation ? 'DELEGATION' : 'REPORT'} · {item.from} → {item.to}
         </span>
         <span class="cn-tag">{decided}</span>
       </div>
@@ -545,7 +545,7 @@ function Hand({ item, number }: { item: Item<'approval'>; number: string }) {
           setOpen(!open);
         }}
       >
-        <span class="cn-btn__label">{delegation ? 'BRIEF' : 'APRI'}</span>
+        <span class="cn-btn__label">{delegation ? 'BRIEF' : 'OPEN'}</span>
       </button>
       {open && (
         <pre class="opn">
@@ -557,9 +557,9 @@ function Hand({ item, number }: { item: Item<'approval'>; number: string }) {
 }
 
 const ASKED: Record<string, string> = {
-  answered: '■ RISPOSTA',
-  declined: '× SENZA RISPOSTA',
-  interrupted: '× INTERROTTA',
+  answered: '■ ANSWERED',
+  declined: '× UNANSWERED',
+  interrupted: '× STOPPED',
 };
 
 /** An agent's questions, once closed: each question and the answer given (ADR 0019). */
@@ -569,7 +569,7 @@ function Asked({ item }: { item: Item<'question'> }) {
     <div class="hand asked">
       <div class="hand__l">
         <span class="cn-tag">
-          <b>▲ DOMANDA</b> · {who}
+          <b>▲ QUESTION</b> · {who}
         </span>
         <span class="cn-tag">{ASKED[item.closed ?? ''] ?? item.closed}</span>
       </div>
@@ -586,10 +586,10 @@ function Asked({ item }: { item: Item<'question'> }) {
 }
 
 const PERMIT: Record<string, string> = {
-  accept: 'CONSENTITO',
-  acceptForSession: 'PER LA SESSIONE',
-  decline: 'NEGATO',
-  interrupted: 'INTERROTTO',
+  accept: 'ALLOWED',
+  acceptForSession: 'ALLOWED FOR SESSION',
+  decline: 'DENIED',
+  interrupted: 'STOPPED',
 };
 
 function Permission({ item }: { item: Item<'permission'> }) {
@@ -599,7 +599,7 @@ function Permission({ item }: { item: Item<'permission'> }) {
     <div class="hand">
       <div class="hand__l">
         <span class="cn-tag">
-          <b>{allowed ? '■' : '×'} PERMESSO</b> {who}
+          <b>{allowed ? '■' : '×'} PERMISSION</b> {who}
         </span>
         <span class="t-data">{item.summary}</span>
       </div>
@@ -613,27 +613,27 @@ function FactsTurn({ text, number }: { text: string; number: string | undefined 
   return (
     <section class="turn">
       <div class="who">
-        <b>ESTENSIONE</b>
-        <span>FATTI VERIFICATI</span>
+        <b>EXTENSION</b>
+        <span>VERIFIED FACTS</span>
         {number && <span>D{number}</span>}
       </div>
       <div class="tb">
         <dl class="cn-spec facts">
-          <dt>FILE CAMBIATI</dt>
+          <dt>FILES CHANGED</dt>
           <dd class="t-data">
             {facts.files.length > 0
               ? facts.files.map((f) => f.replace(/^(added|modified|deleted) /, '')).join(' · ')
-              : 'nessuno'}
+              : 'none'}
           </dd>
           {facts.verify && (
             <>
-              <dt>VERIFICA</dt>
+              <dt>VERIFICATION</dt>
               <dd class="t-data">{facts.verify}</dd>
             </>
           )}
           {facts.failed.length > 0 && (
             <>
-              <dt>FALLITI</dt>
+              <dt>FAILED TESTS</dt>
               <dd class="t-data">{facts.failed.join(' · ')}</dd>
             </>
           )}
@@ -663,10 +663,10 @@ function Changes({
   return (
     <section class="turn" id={`item-${item.id}`}>
       <div class="who">
-        <b>MODIFICHE</b>
+        <b>CHANGES</b>
         {number && <span>D{number}</span>}
         <span>
-          {item.files.length} FILE · +{added} −{removed}
+          {item.files.length} {item.files.length === 1 ? 'FILE' : 'FILES'} · +{added} −{removed}
         </span>
       </div>
       <div class="tb tb--flush">
@@ -678,7 +678,7 @@ function Changes({
               <button
                 class="lnk"
                 type="button"
-                title="Apri il diff"
+                title="Open diff"
                 onClick={() => {
                   review(file.path, 'diff');
                 }}
@@ -687,28 +687,28 @@ function Changes({
               </button>
               <span class="chg__n">
                 {file.binary
-                  ? 'BINARIO'
+                  ? 'BINARY'
                   : file.kind === 'deleted'
                     ? `−${String(file.removed)}`
                     : `+${String(file.added)} −${String(file.removed)}`}
               </span>
               <span class="chg__a">
                 {decision === 'accepted' ? (
-                  <span class="cn-tag cn-tag--ink">■ ACCETTATO</span>
+                  <span class="cn-tag cn-tag--ink">■ ACCEPTED</span>
                 ) : decision === 'rejected' ? (
-                  <span class="cn-tag">× RIFIUTATO</span>
+                  <span class="cn-tag">× REJECTED</span>
                 ) : (
                   <>
                     <button
                       class="cn-btn cn-btn--text"
                       type="button"
                       disabled={busy}
-                      title="Rimette il file com’era prima del messaggio"
+                      title="Restore the file to its state before this message"
                       onClick={() => {
                         review(file.path, 'reject');
                       }}
                     >
-                      <span class="cn-btn__label">RIFIUTA</span>
+                      <span class="cn-btn__label">REJECT</span>
                     </button>
                     <button
                       class="cn-btn cn-btn--text"
@@ -717,7 +717,7 @@ function Changes({
                         review(file.path, 'accept');
                       }}
                     >
-                      <span class="cn-btn__label">ACCETTA</span>
+                      <span class="cn-btn__label">ACCEPT</span>
                     </button>
                   </>
                 )}
@@ -727,16 +727,16 @@ function Changes({
         })}
         {item.uncovered.map((path) => (
           <div key={path} class="chg">
-            <span aria-label="non registrato">~</span>
+            <span aria-label="not tracked">~</span>
             <span class="t-data">{path}</span>
-            <span class="chg__n">OLTRE 2 MB</span>
+            <span class="chg__n">OVER 2 MB</span>
             <span class="chg__a">
-              <span class="cn-tag">▲ NON ANNULLABILE</span>
+              <span class="cn-tag">▲ CANNOT RESTORE</span>
             </span>
           </div>
         ))}
         {item.uncovered.length > 0 && (
-          <p class="hint hint--gap">FILE OLTRE 2 MB: RIFIUTA NON PUÒ RIPRISTINARLI.</p>
+          <p class="hint hint--gap">FILES OVER 2 MB CANNOT BE RESTORED.</p>
         )}
       </div>
     </section>
@@ -758,7 +758,7 @@ function Notice({ item, retry }: { item: Item<'notice'>; retry: (() => void) | n
         <span class="ctl__g note__a">
           {retry && (
             <button class="cn-btn cn-btn--text act" type="button" onClick={retry}>
-              <span class="cn-btn__label">RIPROVA</span>
+              <span class="cn-btn__label">RETRY</span>
             </button>
           )}
           <button
@@ -768,7 +768,7 @@ function Notice({ item, retry }: { item: Item<'notice'>; retry: (() => void) | n
               post({ type: 'copy', text: item.text });
             }}
           >
-            <span class="cn-btn__label">COPIA DETTAGLI</span>
+            <span class="cn-btn__label">COPY DETAILS</span>
           </button>
         </span>
       ) : (

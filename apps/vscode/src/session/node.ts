@@ -77,17 +77,17 @@ export function nodesOf(value: unknown): NodeChoice[] {
 /** What a node is told before the user's first message. */
 export function nodeInstructions(node: NodeChoice): string {
   const lines = [
-    `Sei "${node.name}", un agente di Only One Chat. L’utente ti scrive direttamente, in una`,
-    'conversazione tua: non vedi le altre conversazioni della chat, né il leader né',
-    'l’implementatore. Rispondi in italiano.',
+    `You are "${node.name}", an agent in Only One Chat. The user writes to you directly in a`,
+    'private thread. You cannot see the other chat threads, the leader, or',
+    'the implementer. Reply in the user’s language, defaulting to English.',
   ];
   if (node.permission === 'read-only') {
     lines.push(
-      'Sei in sola lettura: leggi i file con i tuoi strumenti di lettura e di ricerca. I comandi di',
-      'terminale e le modifiche ai file ti sono negati dal ruolo, non usarli.',
+      'You are read-only. Use your search and file-reading tools to read files. This role',
+      'cannot run terminal commands or edit files.',
     );
   } else {
-    lines.push('Lavori nella cartella aperta e non modifichi nulla fuori da essa.');
+    lines.push('Work in the open folder. Keep all changes inside it.');
   }
   return lines.join('\n');
 }
@@ -163,7 +163,7 @@ export class NodeSession {
       this.events.update({
         type: 'notice',
         level: 'warn',
-        text: `La sessione salvata di ${node.name} non si riapre (${error instanceof Error ? error.message : String(error)}): ne parte una nuova, che non ricorda la conversazione.`,
+        text: `Could not resume ${node.name}’s saved session (${error instanceof Error ? error.message : String(error)}). A new session will start without the conversation history.`,
       });
       return factory(options);
     }
@@ -175,7 +175,7 @@ export class NodeSession {
       this.events.update({
         type: 'notice',
         level: 'warn',
-        text: 'Un messaggio è già in corso: aspetta o fermalo.',
+        text: 'Wait for the current message to finish or stop it.',
       });
       return;
     }
@@ -250,7 +250,7 @@ export class NodeSession {
         this.events.update({
           type: 'notice',
           level: 'info',
-          text: ['File cambiati:', ...changed.map((c) => `- ${c}`)].join('\n'),
+          text: ['Files changed:', ...changed.map((c) => `- ${c}`)].join('\n'),
         });
       }
       this.events.busy(false);

@@ -1,60 +1,40 @@
-# 0014. Checkpoint della cartella e revisione delle modifiche
+# 0014. Folder checkpoints and change review
 
-Stato: Accettata (iterazione 3).
+Status: Accepted (iteration 3).
 
-## Contesto
+## Context
 
-- **Dopo un messaggio** l'utente vedeva solo l'elenco dei file cambiati: nessun diff, nessun
-  modo di rifiutare un file o di tornare indietro. Delegare a un altro modello senza poter
-  controllare e annullare non regge su un progetto vero (ADR 0013, A6 e A7).
-- **I CLI hanno i loro checkpoint** (Claude) o nessuno utilizzabile da fuori (Codex in
-  app-server); servono uguali per entrambi, e sotto il controllo dell'estensione.
+- **After a message**, users saw only a list of changed files. They needed diffs, per-file rejection, and the ability to restore the folder to review and undo delegated work on a real project (ADR 0013, A6 and A7).
+- **The CLIs differ in checkpoint support.** Claude has its own checkpoints, and Codex App Server exposes no comparable feature for external clients. The extension needs a common mechanism under its own control.
 
-## Decisione
+## Decision
 
-### Checkpoint
+### Checkpoints
 
-- **Prima di ogni messaggio dell'utente** l'estensione registra i file della cartella:
-  - ogni contenuto una volta sola, sotto il suo SHA-256, nello storage dell'estensione per quella
-    chat (`checkpoints/<chat>/blobs`), scritto in modo atomico;
-  - un manifesto percorso → hash per il checkpoint (`checkpoints/<chat>/checkpoints/<id>.json`).
-- **Niente git e niente repository ombra:** nessuna dipendenza, nessun `.git` toccato, e lo
-  stesso comportamento su ogni cartella.
-- **Le stesse esclusioni dei fatti verificati:** `.git`, `node_modules`, `__pycache__`, `.venv`,
-  `venv`, `dist`, `out`; al massimo 5000 file.
-- **I file oltre 2 MB** non si registrano: se cambiano, la scheda lo dice ("non annullabili") e
-  il ripristino non li tocca, né li cancella.
-- **Una chat tolta dallo storico** porta via i suoi checkpoint.
+- **Before each user message**, the extension records the folder's files.
+  - Store each distinct content blob once under its SHA-256 in the extension's storage for the chat (`checkpoints/<chat>/blobs`). Writes are atomic.
+  - Record a path-to-hash manifest for each checkpoint (`checkpoints/<chat>/checkpoints/<id>.json`).
+- **Use the same storage mechanism for every folder**, independent of Git or a shadow repository. The extension needs no additional dependency and keeps `.git` untouched.
+- **Reuse the exclusions from verified facts** (`.git`, `node_modules`, `__pycache__`, `.venv`, `venv`, `dist`, and `out`) and cap checkpoints at 5,000 files.
+- **Skip files over 2 MB.** If they change, the card marks them as not reversible. Restoration keeps those files as they are.
+- **Deleting a chat from history** also deletes its checkpoints.
 
-### Revisione
+### Review
 
-- **A fine messaggio, una scheda MODIFICHE:** ogni file con il tipo (aggiunto, modificato,
-  tolto) e le righe aggiunte e tolte. Prende il posto dell'elenco semplice dei file cambiati;
-  i fatti per il leader restano come prima.
-- **Il diff si apre nel diff nativo di VS Code**, fra il contenuto prima e quello dopo il
-  messaggio, entrambi registrati: resta il diff di quel messaggio anche se il file cambia poi.
-- **ACCETTA** segna il file come visto. **RIFIUTA** lo rimette com'era prima del messaggio; se
-  nel frattempo il file è cambiato ancora, chiede conferma.
-- **"Ripristina qui"** sul messaggio dell'utente riporta la cartella a prima di quel messaggio,
-  dopo una conferma.
-- **La conversazione non si ripristina** (ADR 0013): le sessioni dei CLI non si accorciano.
-  Invece, con il messaggio successivo il leader e l'implementatore ricevono una nota del
-  runtime con i file rimessi com'erano, perché il loro contesto ricorda le modifiche.
-- **Rifiuto e ripristino** non partono mentre un messaggio è in corso.
+- **A CHANGES card at the end of each message** shows the type of change (added, modified, removed) and the number of inserted and deleted lines per file. This replaces the plain list of changed files. The leader continues to receive verified facts as before.
+- **Open the native VS Code diff** between the recorded content from before and after the message. The diff represents that message even if the file changes again.
+- **ACCEPT** marks the file as reviewed. **REJECT** restores it to its state before the message and asks for confirmation if it has changed again in the meantime.
+- **Restore Here** on a user message restores the folder to its state before the message, after confirmation.
+- **The conversation continues after a restore** (ADR 0013). CLI sessions cannot be shortened. On the next message the runtime tells the leader and implementer which files were restored, because their context still includes the earlier changes.
+- **Reject and restore** are available only when no message is running.
 
-### Sicurezza
+### Security
 
-- **La webview nomina un file, l'host lo cerca nella scheda registrata:** si tocca solo un
-  percorso che il checkpoint ha registrato, e mai fuori dalla cartella (il percorso risolto
-  deve restare dentro).
-- **I contenuti del diff** si leggono da uno schema in sola lettura
-  (`only-one-chat-checkpoint:`), solo per hash validi.
+- **The webview names a file and the host looks it up in the stored card.** Only paths recorded by the checkpoint are in scope, and each resolved path must stay inside the folder.
+- **Serve diff contents through the read-only scheme** `only-one-chat-checkpoint:` and require valid hashes.
 
-## Conseguenze
+## Consequences
 
-- **Non coperti, e detto all'utente:** ciò che un comando fa fuori dalla cartella o nelle
-  cartelle escluse, e i file oltre 2 MB.
-- **Spazio:** il primo checkpoint di una chat copia i file della cartella; i successivi solo i
-  contenuti nuovi.
-- **Le note sui file rimessi** si salvano con la chat, per ruolo, finché ciascun ruolo non le
-  riceve: sopravvivono alla chiusura di VS Code e tornano con la chat riaperta.
+- **Explain the checkpoint boundary to the user.** The extension can restore only eligible files inside the folder. Shell effects outside the folder or in excluded directories, and files over 2 MB, are outside that boundary.
+- **Storage.** The first checkpoint copies the eligible files in the folder. Subsequent checkpoints copy only new contents.
+- **Restoration notes** are saved per role with the chat until that role receives them. They survive closing VS Code and return when the chat reopens.

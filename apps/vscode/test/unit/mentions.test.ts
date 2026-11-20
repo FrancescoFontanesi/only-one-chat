@@ -35,15 +35,15 @@ describe('mentions in a message (ADR 0015)', () => {
       { path: 'src/calc.py', kind: 'file', lines: { from: 2, to: 3 } },
       { path: 'src/', kind: 'folder' },
     ]);
-    expect(expanded.attachments).toContain('- src/calc.py, righe 2-3:\n```py\nb = 2\nc = 3\n```');
-    expect(expanded.attachments).toContain('- src/ (cartella)');
+    expect(expanded.attachments).toContain('- src/calc.py, lines 2-3:\n```py\nb = 2\nc = 3\n```');
+    expect(expanded.attachments).toContain('- src/ (folder)');
   });
 
   it('names a long range without copying it', () => {
     const lines = Array.from({ length: MAX_EXCERPT_LINES + 10 }, (_, i) => `x${String(i)}`);
     writeFileSync(join(cwd, 'big.py'), lines.join('\n'));
     const expanded = expandMentions(`@big.py#L1-${String(MAX_EXCERPT_LINES + 5)}`, cwd);
-    expect(expanded.attachments).toContain('troppe per includerle');
+    expect(expanded.attachments).toContain('too many lines to include');
     expect(expanded.attachments).not.toContain('x3');
   });
 
@@ -116,7 +116,7 @@ describe('@ paths in any text (ADR 0018)', () => {
         cwd,
       ),
     ).toBe(
-      'Cambia src/calc.py (righe 2-3) e src/calc.py (riga 4), non @src/nuovo.ts né `@src/calc.py`.',
+      'Cambia src/calc.py (lines 2-3) e src/calc.py (line 4), non @src/nuovo.ts né `@src/calc.py`.',
     );
   });
 

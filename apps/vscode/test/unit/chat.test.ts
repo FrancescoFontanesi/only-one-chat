@@ -178,7 +178,7 @@ describe('chat session: checkpoints and review (ADR 0014)', () => {
       uncovered: [],
     });
     // The card replaces the plain list of changed files.
-    expect(updates.some((u) => u.type === 'notice' && u.text.startsWith('File cambiati'))).toBe(
+    expect(updates.some((u) => u.type === 'notice' && u.text.startsWith('Files changed'))).toBe(
       false,
     );
   });
@@ -239,9 +239,7 @@ describe('chat session: the user’s instructions per role (ADR 0013)', () => {
     }
     const run = claudeRuns()[0] ?? [];
     const prompt = run[run.indexOf('--append-system-prompt') + 1] ?? '';
-    expect(prompt).toContain(
-      'Istruzioni dell’utente per questo ruolo:\nRispondi sempre in inglese.',
-    );
+    expect(prompt).toContain('User instructions for this role:\nRispondi sempre in inglese.');
   });
 });
 
@@ -261,7 +259,7 @@ describe('chat session: a reopened chat (R5)', () => {
       source: 'direct',
       request: 'aggiungi round',
       report: 'fatto: round in calc.py',
-      facts: 'File cambiati: calc.py',
+      facts: 'Files changed: calc.py',
     };
     const { chat, updates, kept } = session('auto', 'always', undefined, [report]);
     try {
@@ -381,7 +379,7 @@ describe('chat session: handoff of the implementer (ADR 0017)', () => {
     expect(runs[2]?.[runs[2].indexOf('--model') + 1]).toBe('sonnet');
     const prompt = runs[2]?.[runs[2].indexOf('--append-system-prompt') + 1] ?? '';
     // The fake echoes its prompt: the handoff it wrote is the request it got.
-    expect(prompt).toContain('Il suo passaggio di consegne:\nECHO: Passaggio di consegne.');
+    expect(prompt).toContain('Here is its handoff:\nECHO: Handoff.');
     expect(sessionIds).toContainEqual(['implementer', '']);
     expect(doneTurns(updates)).toHaveLength(3);
     // Three fake CLI processes one after the other: past 5 s when the machine is busy.
@@ -483,7 +481,7 @@ describe('chat session: any provider in any role (ADR 0022)', () => {
       ask: { updatedInput: { answers: unknown } };
     };
     expect(bash.behavior).toBe('deny');
-    expect(bash.message).toMatch(/^Negato dal ruolo/);
+    expect(bash.message).toMatch(/^Denied because this Only One Chat role is read-only/);
     expect(ask.updatedInput.answers).toEqual({ 'Quale formato?': 'JSON' });
   });
 });
@@ -562,7 +560,7 @@ describe('chat session', () => {
       'leader',
     ]);
     const notices = updates.flatMap((u) => (u.type === 'notice' ? [u.text] : []));
-    expect(notices.some((text) => text.startsWith('File cambiati'))).toBe(true);
+    expect(notices.some((text) => text.startsWith('Files changed'))).toBe(true);
     // Each turn carries its handoff, rendered; the text is only the agent's prose.
     const [leader, implementer] = doneTurns(updates);
     expect(leader?.handoff).toMatchObject({ tool: 'delegate' });
@@ -588,12 +586,12 @@ describe('chat session', () => {
       await chat.dispose();
     }
     const facts = updates.flatMap((u) =>
-      u.type === 'notice' && u.text.startsWith('File cambiati') ? [u.text] : [],
+      u.type === 'notice' && u.text.startsWith('Files changed') ? [u.text] : [],
     );
     expect(facts).toHaveLength(1);
-    expect(facts[0]).toContain('Controlli sul diff, fatti dal runtime');
-    expect(facts[0]).toContain('- calc.test.ts: test saltati o isolati (skip, only) aggiunti: 1');
-    expect(facts[0]).toContain('- lockfile cambiato: pnpm-lock.yaml');
+    expect(facts[0]).toContain('Runtime diff checks');
+    expect(facts[0]).toContain('- calc.test.ts: new skipped or isolated tests (skip, only): 1');
+    expect(facts[0]).toContain('- lockfile changed: pnpm-lock.yaml');
   });
 
   it('says the checks on the diff were not made when the folder has no checkpoint', async () => {
@@ -604,9 +602,9 @@ describe('chat session', () => {
       await chat.dispose();
     }
     const facts = updates.flatMap((u) =>
-      u.type === 'notice' && u.text.startsWith('File cambiati') ? [u.text] : [],
+      u.type === 'notice' && u.text.startsWith('Files changed') ? [u.text] : [],
     );
-    expect(facts[0]).toContain('non eseguiti, senza checkpoint della cartella');
+    expect(facts[0]).toContain('skipped diff checks because there was no workspace checkpoint');
   });
 
   it('with a reviewer, runs its turn after the implementer’s, read-only, before the leader’s (ADR 0029)', async () => {
@@ -645,7 +643,9 @@ describe('chat session', () => {
     // Its `review` call ends the review, and the thread says how; the card carries the verdict.
     expect(done[2]?.handoff).toMatchObject({ tool: 'review', verdict: 'approved' });
     const notices = updates.flatMap((u) => (u.type === 'notice' ? [u.text] : []));
-    expect(notices.some((text) => /^Revisione di Claude.*APPROVED · 0 giri/.test(text))).toBe(true);
+    expect(
+      notices.some((text) => /^Review by Claude.*APPROVED · 0 correction rounds/.test(text)),
+    ).toBe(true);
     // Its session: the reviewer's prompt and the user's instructions for it, no tool that writes.
     const reviewer = claudeRuns().find((argv) => argv.includes('haiku')) ?? [];
     const after = (flag: string) => reviewer[reviewer.indexOf(flag) + 1] ?? '';
@@ -814,7 +814,7 @@ ${blocked}`,
     expect(updates).toContainEqual({
       type: 'notice',
       level: 'warn',
-      text: 'Il revisore è spento: accendilo per chiedergli una revisione.',
+      text: 'Enable the reviewer before requesting a review.',
     });
   });
 

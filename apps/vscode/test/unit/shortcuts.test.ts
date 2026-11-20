@@ -19,10 +19,10 @@ describe('shortcutFlags', () => {
         { path: 'tests/test_d.py', before: 'def test_a(): assert 1', after: 'def test_a(): pass' },
       ]),
     ).toEqual([
-      'test eliminato: test/a.test.ts',
-      'test/b.test.ts: casi di test da 4 a 3',
-      'test/c.test.ts: asserzioni da 8 a 5',
-      'tests/test_d.py: asserzioni da 1 a 0',
+      'test removed: test/a.test.ts',
+      'test/b.test.ts: test cases reduced from 4 to 3',
+      'test/c.test.ts: assertions reduced from 8 to 5',
+      'tests/test_d.py: assertions reduced from 1 to 0',
     ]);
   });
 
@@ -39,8 +39,8 @@ describe('shortcutFlags', () => {
         { path: 'src/c_test.py', before: null, after: '@pytest.mark.skip\ndef test_c(): pass' },
       ]),
     ).toEqual([
-      'src/a.test.ts: test saltati o isolati (skip, only) aggiunti: 3',
-      'src/c_test.py: test saltati o isolati (skip, only) aggiunti: 1',
+      'src/a.test.ts: new skipped or isolated tests (skip, only): 3',
+      'src/c_test.py: new skipped or isolated tests (skip, only): 1',
     ]);
   });
 
@@ -56,8 +56,8 @@ describe('shortcutFlags', () => {
         { path: 'src/c.py', before: null, after: 'import y  # type: ignore' },
       ]),
     ).toEqual([
-      'src/a.ts: controlli disattivati o tipi forzati aggiunti: 2',
-      'src/c.py: controlli disattivati o tipi forzati aggiunti: 1',
+      'src/a.ts: new check suppressions or type overrides: 2',
+      'src/c.py: new check suppressions or type overrides: 1',
     ]);
   });
 
@@ -71,10 +71,10 @@ describe('shortcutFlags', () => {
         { path: 'src/main.ts', before: 'a', after: 'b' },
       ]),
     ).toEqual([
-      'lockfile cambiato: pnpm-lock.yaml',
-      'configurazione dei controlli cambiata: apps/vscode/tsconfig.json',
-      'configurazione dei controlli cambiata: .github/workflows/ci.yml',
-      'configurazione dei controlli cambiata: eslint.config.mjs',
+      'lockfile changed: pnpm-lock.yaml',
+      'check configuration changed: apps/vscode/tsconfig.json',
+      'check configuration changed: .github/workflows/ci.yml',
+      'check configuration changed: eslint.config.mjs',
     ]);
   });
 
@@ -92,14 +92,12 @@ describe('shortcutFlags', () => {
 
 describe('shortcutFacts', () => {
   it('says so when there is nothing to flag, and what it could not check', () => {
-    expect(shortcutFacts([])).toBe(
-      'Controlli sul diff, fatti dal runtime (segnalazioni da verificare, non prove):\n- nessuna segnalazione',
-    );
+    expect(shortcutFacts([])).toBe('Runtime diff checks (flags for review):\n- no flags');
     expect(shortcutFacts([{ path: 'pnpm-lock.yaml', before: 'a', after: 'b' }], ['big.log'])).toBe(
       [
-        'Controlli sul diff, fatti dal runtime (segnalazioni da verificare, non prove):',
-        '- lockfile cambiato: pnpm-lock.yaml',
-        'Non controllati, troppo grandi: big.log',
+        'Runtime diff checks (flags for review):',
+        '- lockfile changed: pnpm-lock.yaml',
+        'Skipped because they were too large: big.log',
       ].join('\n'),
     );
   });

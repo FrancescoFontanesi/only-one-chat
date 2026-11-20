@@ -69,7 +69,7 @@ describe('usage warnings (ADR 0013)', () => {
       },
     ];
     expect(usageAlerts(providers, 80, seen)).toEqual([
-      'Codex: hai usato il 85% della finestra di 5 ore.',
+      'Codex: you have used 85% of your 5-hour allowance.',
     ]);
     expect(usageAlerts(providers, 80, seen)).toEqual([]);
     // A new window after the reset warns again.
@@ -89,15 +89,15 @@ describe('usage warnings (ADR 0013)', () => {
       ['5h', 10],
     ]);
     expect(read?.note).toBe(
-      'Mostra Gemini Models. Gemini Models: 5 ore 10%, settimana 25%. Claude and GPT models: 5 ore 0%, settimana —.',
+      'Showing Gemini Models. Gemini Models: 5-hour 10%, weekly 25%. Claude and GPT models: 5-hour 0%, weekly —.',
     );
     expect(providerOf('Antigravity')).toBe('antigravity');
     const store = new UsageStore();
     store.setProviders(['antigravity']);
     if (read) store.setQuota('antigravity', read.quota, 1, read.note);
-    expect(store.snapshot()[0]?.note).toContain('senza consumare quota');
+    expect(store.snapshot()[0]?.note).toContain('without using quota');
     expect(usageAlerts(store.snapshot(), 20, new Set())).toEqual([
-      'Antigravity: hai usato il 25% della finestra di settimana.',
+      'Antigravity: you have used 25% of your weekly allowance.',
     ]);
   });
 });

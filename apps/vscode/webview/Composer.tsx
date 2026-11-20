@@ -20,11 +20,11 @@ import { kilo, Meter, Pick, post, ShownNode } from './ui.js';
 
 /** How the leader's delegations reach the implementer (ADR 0018). */
 const DELIVERY: readonly { value: ApprovalMode; label: string; title: string }[] = [
-  { value: 'auto', label: 'AUTO', title: 'Il brief parte subito per l’implementatore' },
+  { value: 'auto', label: 'AUTO', title: 'Send the brief to the implementer immediately' },
   {
     value: 'manual',
-    label: 'MANUALE',
-    title: 'Il brief aspetta te, modificabile; la chat si ferma finché non lo invii o annulli',
+    label: 'MANUAL',
+    title: 'Edit the brief before sending. The chat waits until you send or cancel it.',
   },
 ];
 
@@ -54,6 +54,7 @@ function matchSkills(
 
 interface Command {
   name: string;
+  alias?: string;
   hint: string;
   run: () => void;
 }
@@ -70,17 +71,17 @@ interface Pop {
 }
 
 const RECIPIENTS: readonly { value: TurnRole; label: string; title: string }[] = [
-  { value: 'leader', label: 'LEADER', title: 'Ragioni con il leader; delega quando glielo chiedi' },
+  { value: 'leader', label: 'LEADER', title: 'Plan with the leader. It delegates when you ask.' },
   {
     value: 'implementer',
-    label: 'IMPLEMENTATORE',
-    title: 'Diretto all’implementatore: il revisore lo rivede, poi il leader legge la revisione',
+    label: 'IMPLEMENTER',
+    title:
+      'Message the implementer directly. The reviewer checks the work and the leader reads the review.',
   },
   {
     value: 'reviewer',
-    label: 'REVISORE',
-    title:
-      'Chiedi una revisione dell’ultimo lavoro: il leader la legge con il tuo prossimo messaggio',
+    label: 'REVIEWER',
+    title: 'Request a review of the latest work. The leader reads it with your next message.',
   },
 ];
 
@@ -169,58 +170,62 @@ export function Composer({
   const commands: Command[] = [
     {
       name: 'impl',
-      hint: 'Scrivi all’implementatore',
+      hint: 'Message the implementer',
       run: () => {
         setTo('implementer');
       },
     },
     {
       name: 'leader',
-      hint: 'Scrivi al leader',
+      hint: 'Message the leader',
       run: () => {
         setTo('leader');
       },
     },
     {
       name: 'rev',
-      hint: 'Chiedi una revisione al revisore',
+      hint: 'Request a review',
       run: () => {
         setTo('reviewer');
       },
     },
     {
-      name: 'allega',
-      hint: 'Allega file al contesto',
+      name: 'attach',
+      alias: 'allega',
+      hint: 'Attach files to the chat',
       run: () => {
         post({ type: 'attachFiles' });
       },
     },
     {
       name: 'skill',
-      hint: 'Usa una skill di chi ricevi',
+      hint: 'Use a skill available to the recipient',
       run: () => {
         openSkills(null, '');
       },
     },
     busy
       ? {
-          name: 'ferma',
-          hint: 'Ferma tutto e nega le richieste in attesa',
+          name: 'stop',
+          alias: 'ferma',
+          hint: 'Stop and deny pending requests',
           run: () => {
             post({ type: 'stop' });
           },
         }
       : {
-          name: 'nuova',
-          hint: 'Una chat nuova',
+          name: 'new',
+          alias: 'nuova',
+          hint: 'New Chat',
           run: () => {
             post({ type: 'newChat' });
           },
         },
-    { name: 'squad', hint: 'Ruoli, eventi, utilizzo', run: openSquad },
+    { name: 'squad', hint: 'Roles, events, and usage', run: openSquad },
     {
-      name: 'impostazioni',
-      hint: 'Tutte le impostazioni',
+      name: 'settings',
+      alias: 'impostazioni',
+      hint: 'Settings',
       run: () => {
         post({ type: 'openSettings' });
       },
@@ -232,10 +237,13 @@ export function Composer({
     pop?.kind === 'skill' && skillList?.status === 'ready'
       ? matchSkills(skillList.skills, pop.query)
       : [];
+  const commandQuery = pop?.kind === 'command' ? pop.query.toLowerCase() : null;
   const commandOptions =
-    pop?.kind === 'command'
-      ? commands.filter((c) => c.name.startsWith(pop.query.toLowerCase()))
-      : [];
+    commandQuery === null
+      ? []
+      : commands.filter(
+          (c) => c.name.startsWith(commandQuery) || c.alias?.startsWith(commandQuery),
+        );
   const optionCount =
     pop?.kind === 'file'
       ? fileOptions.length
@@ -247,11 +255,11 @@ export function Composer({
     pop?.kind !== 'skill'
       ? null
       : !cli || !skillList || skillList.status === 'loading'
-        ? 'LETTURA DELLE SKILL…'
+        ? 'LOADING SKILLS…'
         : skillList.status === 'unavailable'
-          ? `× ${skillList.note ?? 'SKILL NON DISPONIBILI'}`
+          ? `× ${skillList.note ?? 'SKILLS UNAVAILABLE'}`
           : skillOptions.length === 0
-            ? 'NESSUNA SKILL CON QUESTO NOME'
+            ? 'NO MATCHING SKILLS'
             : null;
 
   const follow = (value: string, caret: number) => {
@@ -346,10 +354,10 @@ export function Composer({
           <div class="cn-frame__head pop__h">
             <span class="t-label">
               {pop.kind === 'file'
-                ? 'ALLEGA FILE'
+                ? 'ATTACH FILES'
                 : pop.kind === 'skill'
                   ? `SKILL · ${cli === 'claude' ? 'CLAUDE' : 'CODEX'}`
-                  : 'COMANDI'}
+                  : 'COMMANDS'}
             </span>
             <span class="t-label mut">
               {pop.kind === 'file' ? '@' : pop.kind === 'skill' ? '$' : '/'}
@@ -360,7 +368,7 @@ export function Composer({
             ? fileOptions.map((path, index) => (
                 <button key={path} {...option(index)}>
                   <span class="pick__n">{path}</span>
-                  <span class="pick__m">{path.endsWith('/') ? 'CARTELLA' : ''}</span>
+                  <span class="pick__m">{path.endsWith('/') ? 'FOLDER' : ''}</span>
                 </button>
               ))
             : pop.kind === 'skill'
@@ -382,7 +390,7 @@ export function Composer({
                   </button>
                 ))}
           <div class="cn-frame__foot pop__f">
-            <span class="hint">↑↓ · INVIO O TAB SCEGLIE · ESC CHIUDE</span>
+            <span class="hint">↑↓ · ENTER OR TAB TO SELECT · ESC TO CLOSE</span>
           </div>
         </section>
       )}
@@ -394,7 +402,7 @@ export function Composer({
                 $ {skill}{' '}
                 <button
                   type="button"
-                  aria-label={`Togli la skill ${skill}`}
+                  aria-label={`Remove skill ${skill}`}
                   onClick={() => {
                     setSkill(null);
                   }}
@@ -408,7 +416,7 @@ export function Composer({
                 @ {a}{' '}
                 <button
                   type="button"
-                  aria-label={`Rimuovi ${a}`}
+                  aria-label={`Remove ${a}`}
                   onClick={() => {
                     setAttachments((current) => current.filter((c) => c !== a));
                   }}
@@ -421,7 +429,7 @@ export function Composer({
         )}
         <div class="cmp__in">
           <label class="sr" for="msg">
-            Messaggio
+            Message
           </label>
           <textarea
             id="msg"
@@ -431,20 +439,20 @@ export function Composer({
             value={text}
             placeholder={
               node?.removed
-                ? `${node.name} non è più sulla lavagna: la sua conversazione si legge soltanto.`
+                ? `${node.name} was removed. Its conversation is read-only.`
                 : !ready
-                  ? 'Invio non disponibile finché la chat non è pronta.'
+                  ? 'Wait until the chat is ready to send a message.'
                   : node
-                    ? `Scrivi a ${node.name} · una conversazione sua, il leader non la vede`
+                    ? `Message ${node.name} · separate conversation`
                     : to === 'leader'
-                      ? 'Scrivi al leader · @ nomina un file · $ skill · / comandi'
+                      ? 'Message the leader · @ mention a file · $ skills · / commands'
                       : to === 'reviewer'
                         ? reviewerOn
-                          ? 'Chiedi una revisione dell’ultimo lavoro · il leader la leggerà dopo'
-                          : 'Il revisore è spento: accendilo da Squad o dalla ghiera'
+                          ? 'Request a review of the latest work · the leader reads it later'
+                          : 'Enable the reviewer in Squad or on the role dial.'
                         : reviewerOn
-                          ? 'Scrivi all’implementatore · il revisore lo rivede, il leader legge dopo'
-                          : 'Scrivi all’implementatore · il leader leggerà il rapporto dopo'
+                          ? 'Message the implementer · the leader reads the review later'
+                          : 'Message the implementer · the leader reads the report later'
             }
             onInput={(event) => {
               const area = event.target as HTMLTextAreaElement;
@@ -493,7 +501,7 @@ export function Composer({
             ) : (
               <Pick
                 short="A"
-                label="Destinatario"
+                label="Recipient"
                 value={to}
                 options={RECIPIENTS}
                 disabled={!ready}
@@ -503,22 +511,22 @@ export function Composer({
             {to === 'leader' && !node ? (
               <Pick
                 compact
-                label="Consegna"
+                label="Delivery"
                 value={session?.mode ?? 'manual'}
                 options={DELIVERY}
                 onChange={setMode}
               />
             ) : (
               <span class="pk pk--off pk--compact">
-                <span class="pk__v">DIRETTO</span>
+                <span class="pk__v">DIRECT</span>
               </span>
             )}
           </span>
           <button
             class="cn-btn cn-btn--outline cn-btn--sm cmp__add"
             type="button"
-            title="Allega file al contesto del messaggio"
-            aria-label="Allega file"
+            title="Attach files to the message"
+            aria-label="Attach Files"
             disabled={!ready}
             onClick={() => {
               post({ type: 'attachFiles' });
@@ -530,8 +538,8 @@ export function Composer({
             class="ctx cmp__ctx"
             title={
               context
-                ? `Contesto della sessione dopo il suo ultimo turno: ${String(context.used)} token${context.window ? ` su ${String(context.window)}` : ''}.`
-                : 'Il contesto si conosce dopo il primo turno.'
+                ? `Session context after its last turn. ${String(context.used)} tokens${context.window ? ` of ${String(context.window)}` : ''}.`
+                : 'Context usage is available after the first turn.'
             }
           >
             CTX
@@ -551,7 +559,7 @@ export function Composer({
           <button
             class="cn-btn--bare cn-btn cn-btn--outline cn-btn--sm cmp__squad sq-open"
             type="button"
-            aria-label={`Apri il pannello Squad${waiting > 0 ? `, ${String(waiting)} richieste in attesa` : ''}`}
+            aria-label={`Open Squad${waiting > 0 ? `, ${String(waiting)} pending ${waiting === 1 ? 'request' : 'requests'}` : ''}`}
             onClick={openSquad}
           >
             <span class="cn-btn__label">SQUAD</span>
@@ -565,16 +573,16 @@ export function Composer({
           <span class="cmp__send">
             {busy ? (
               <>
-                <Progress label="IN CORSO" cells={8} />
+                <Progress label="RUNNING" cells={8} />
                 <button
                   class="cn-btn cn-btn--sm"
                   type="button"
-                  aria-label="Ferma tutto e nega le richieste in attesa"
+                  aria-label="Stop and deny pending requests"
                   onClick={() => {
                     post(node ? { type: 'stop', node: node.id } : { type: 'stop' });
                   }}
                 >
-                  <span class="cn-btn__label">FERMA</span>
+                  <span class="cn-btn__label">STOP</span>
                   <span class="cn-btn__icon">■</span>
                 </button>
               </>
@@ -583,10 +591,14 @@ export function Composer({
                 class="cn-btn--bare cn-btn cn-btn--outline cn-btn--sm"
                 type="button"
                 disabled={!canSend}
-                title={enterSends ? 'Invio · Maiusc+Invio a capo' : 'Ctrl+Invio · Invio a capo'}
+                title={
+                  enterSends
+                    ? 'Enter to send · Shift+Enter for a new line'
+                    : 'Ctrl+Enter to send · Enter for a new line'
+                }
                 onClick={send}
               >
-                <span class="cn-btn__label">INVIA</span>
+                <span class="cn-btn__label">SEND</span>
               </button>
             )}
           </span>

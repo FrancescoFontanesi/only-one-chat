@@ -73,7 +73,7 @@ function FileRef({ raw, label }: { raw: string; label: string }) {
     <button
       class="ref"
       type="button"
-      title={`Apri ${path}${range}`}
+      title={`Open ${path}${range}`}
       onClick={() => {
         post({ type: 'openFile', path, ...(lines ? { from: lines.from, to: lines.to } : {}) });
       }}

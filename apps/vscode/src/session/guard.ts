@@ -18,8 +18,7 @@ export function guardReviewerTurn(store: CheckpointStore, id: string): (() => st
   if (!before) return null;
   return () => {
     const review = store.review(before);
-    if (!review)
-      return 'Il runtime non ha potuto rileggere la cartella dopo il turno del revisore.';
+    if (!review) return 'The runtime could not read the workspace after the reviewer’s turn.';
     const restored: string[] = [];
     for (const file of review.files) {
       if (isTestFile(file.path)) continue;
@@ -28,13 +27,11 @@ export function guardReviewerTurn(store: CheckpointStore, id: string): (() => st
     }
     const lines = [
       ...(restored.length > 0
-        ? [
-            `Il revisore aveva cambiato file che non sono test; il runtime li ha rimessi com’erano: ${restored.join(', ')}.`,
-          ]
+        ? [`The runtime restored non-test files changed by the reviewer: ${restored.join(', ')}.`]
         : []),
       ...(review.uncovered.length > 0
         ? [
-            `File troppo grandi per essere rimessi com’erano, cambiati durante il turno del revisore: ${review.uncovered.join(', ')}.`,
+            `Files changed by the reviewer that were too large to restore: ${review.uncovered.join(', ')}.`,
           ]
         : []),
     ];

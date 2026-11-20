@@ -1,126 +1,134 @@
-# Sorgenti di riferimento
+# Reference sources
 
-I repository in `references/` servono **solo da studio**. Non sono codice del progetto,
-non vengono installati né eseguiti e sono esclusi da git e dal VSIX.
-Politica di riuso: [decisions/0002](decisions/0002-reuse-policy.md), cioè sola
-reimplementazione: si riprendono idee e pattern, mai codice copiato o tradotto riga per riga.
+The repositories in `references/` are **for study only**. Git and the VSIX exclude
+them, and the project does not install or execute them.
+[ADR 0002](decisions/0002-reuse-policy.md) permits independent reimplementation of
+ideas and patterns and rules out copying or translating code line by line.
 
-Recupero: `scripts/fetch-references.ps1` (pin per SHA, nessun aggiornamento automatico).
-Data del pin: 2026-10-18.
+`scripts/fetch-references.ps1` fetches commits pinned by SHA with no automatic
+updates. The pins date to 2026-10-18.
 
-| Nome                      | URL                                                   | Commit                                     | Licenza                            | Checkout           |
-| ------------------------- | ----------------------------------------------------- | ------------------------------------------ | ---------------------------------- | ------------------ |
-| usturlab                  | https://github.com/mdenesfe/usturlab                  | `2607aa8d1b0724a9083fc66b7d087522fe468ddf` | MIT, © 2026 Enes Demir             | completa, 175 file |
-| augani-agent-orchestrator | https://github.com/Augani/agent-orchestrator          | `8d9b897c49500e8e1b54ec8028352544db95618d` | MIT, © 2026 Augustus Otu           | completa, 24 file  |
-| codex-source              | https://github.com/openai/codex                       | `8d9f6466ff0294785d56f55b1fe363d132fe4133` | Apache-2.0 + NOTICE, © 2025 OpenAI | sparse, 1806 file  |
-| vscode-extension-samples  | https://github.com/microsoft/vscode-extension-samples | `65c1c44800eeac6fb065a54823ee5ae62c79540a` | MIT, © Microsoft Corporation       | sparse, 73 file    |
+| Name                      | URL                                                   | Commit                                     | License                            | Checkout            |
+| ------------------------- | ----------------------------------------------------- | ------------------------------------------ | ---------------------------------- | ------------------- |
+| usturlab                  | https://github.com/mdenesfe/usturlab                  | `2607aa8d1b0724a9083fc66b7d087522fe468ddf` | MIT, © 2026 Enes Demir             | Complete, 175 files |
+| augani-agent-orchestrator | https://github.com/Augani/agent-orchestrator          | `8d9b897c49500e8e1b54ec8028352544db95618d` | MIT, © 2026 Augustus Otu           | Complete, 24 files  |
+| codex-source              | https://github.com/openai/codex                       | `8d9f6466ff0294785d56f55b1fe363d132fe4133` | Apache-2.0 + NOTICE, © 2025 OpenAI | Sparse, 1806 files  |
+| vscode-extension-samples  | https://github.com/microsoft/vscode-extension-samples | `65c1c44800eeac6fb065a54823ee5ae62c79540a` | MIT, © Microsoft Corporation       | Sparse, 73 files    |
 
 ## usturlab
 
-Estensione VS Code multi-provider (TypeScript, pnpm, Preact, esbuild).
+A multi-provider VS Code extension built with TypeScript, pnpm, Preact, and esbuild.
 
-**Da studiare**
+**Areas to study**
 
-- Struttura dell'estensione: `packages/vscode/src/extension.ts`, `commands.ts`, `esbuild.mjs`.
-- Webview e UI: `packages/vscode/src/panel/chatViewProvider.ts`, `panel/protocol.ts`,
-  `panel/transcript.ts`, `packages/vscode/webview/` (Preact).
-- Adapter Codex e Claude: `packages/core/src/adapters/codex.ts` (JSON-RPC verso
-  app-server), `claude.ts` (stream NDJSON), `jsonRpc.ts`, `ndjson.ts`, `spawn.ts`, `acp.ts`.
-- Sessioni e streaming: `packages/core/src/session/sessionStore.ts`.
-- Autenticazione e profili: `packages/core/src/accounts/`, `packages/vscode/src/onboarding/`.
-- Quote: `packages/core/src/quota/` (`codexUsageReader.ts` legge i rollout di Codex,
-  `claudeUsagePoller.ts`), `adapters/limits.ts` (rilevamento di `rate_limit_event`).
-- Failover: `packages/core/src/orchestrator/orchestrator.ts`.
-- Permessi: `packages/core/src/adapters/permission.ts`, `packages/vscode/src/permission/`.
-- Fixture di test realistiche: `packages/core/test/fixtures/*.ndjson`.
+- Extension structure in `packages/vscode/src/extension.ts`, `commands.ts`, and
+  `esbuild.mjs`.
+- Webview and UI in `packages/vscode/src/panel/chatViewProvider.ts`, `panel/protocol.ts`,
+  `panel/transcript.ts`, and `packages/vscode/webview/` (Preact).
+- Codex and Claude adapters in `packages/core/src/adapters/codex.ts` (JSON-RPC to
+  app-server), `claude.ts` (NDJSON stream), `jsonRpc.ts`, `ndjson.ts`, `spawn.ts`, and
+  `acp.ts`.
+- Sessions and streaming in `packages/core/src/session/sessionStore.ts`.
+- Authentication and profiles in `packages/core/src/accounts/` and
+  `packages/vscode/src/onboarding/`.
+- Quotas in `packages/core/src/quota/` (`codexUsageReader.ts` reads Codex rollouts,
+  alongside `claudeUsagePoller.ts`) and `adapters/limits.ts` (detects `rate_limit_event`).
+- Failover in `packages/core/src/orchestrator/orchestrator.ts`.
+- Permissions in `packages/core/src/adapters/permission.ts` and
+  `packages/vscode/src/permission/`.
+- Realistic test fixtures in `packages/core/test/fixtures/*.ndjson`.
 
-**Rischi verificati**
+**Observed risks**
 
-- Permessi persistenti troppo generici: `PermissionMemory` usa come chiave il primo token
-  del comando oppure solo il tipo di richiesta (`adapters/permission.ts:59-73`).
-- Gestione automatica del workspace trust: `GEMINI_CLI_TRUST_WORKSPACE=true`
+- Overly broad persistent permissions. `PermissionMemory` uses the first command token
+  or just the request type as its key (`adapters/permission.ts:59-73`).
+- Automatic Workspace Trust through `GEMINI_CLI_TRUST_WORKSPACE=true`
   (`adapters/gemini.ts:63`).
-- Scrittura nel profilo del CLI (`settings.json` di Gemini) in `adapters/gemini.ts:32-52`.
-- Modalità "full" che passa `--dangerously-skip-permissions` (`adapters/claude.ts:21`).
-- Failover non transazionale: si passa al target successivo con l'output parziale in
-  memoria, senza checkpoint persistito (`orchestrator/orchestrator.ts:300-320`).
-- Router generalista (`src/router/`) e supporto a OpenRouter (API a pagamento): fuori
-  dallo scope di questo prodotto.
+- Writes to the CLI profile (Gemini's `settings.json`) in `adapters/gemini.ts:32-52`.
+- A "full" mode that passes `--dangerously-skip-permissions` (`adapters/claude.ts:21`).
+- Nontransactional failover. It advances to the next target with partial output in
+  memory and no persisted checkpoint (`orchestrator/orchestrator.ts:300-320`).
+- The general-purpose router (`src/router/`) and OpenRouter support (a paid API) are
+  outside this product's scope.
 
 ## augani-agent-orchestrator
 
-Plugin di orchestrazione per Codex (Python + skill + dashboard web).
+A Codex orchestration plugin with Python, a skill, and a web dashboard.
 
-**Da studiare**
+**Areas to study**
 
-- Task contract: `skills/orchestrate-cli-agents/references/task-contract.md` (sezioni
-  obbligatorie: Objective, Why, Scope, Files to inspect, Implementation guidance,
-  Constraints, Acceptance criteria, Validation, Final report).
-- Pianificazione e delega: `skills/orchestrate-cli-agents/SKILL.md`,
+- Task contract in `skills/orchestrate-cli-agents/references/task-contract.md`. Required
+  sections are Objective, Why, Scope, Files to inspect, Implementation guidance,
+  Constraints, Acceptance criteria, Validation, and Final report.
+- Planning and delegation in `skills/orchestrate-cli-agents/SKILL.md` and
   `references/routing-and-plans.md`.
-- Ciclo di vita dei worker, heartbeat, log, domande: `scripts/cli_agent_job.py`, con i
-  sottocomandi `launch`, `status`, `wait`, `logs`, `event`, `ask`, `questions`,
-  `answer` e `cancel` (`:3868-4240`).
-- Stato persistente e scritture atomiche: `write_json` (`cli_agent_job.py:540-551`).
-- Worktree e isolamento: `workspace_mode` (`worktree` di default, `:512-520`).
-- Review gate: `review_notes` (`:3433`).
-- Dashboard locale: `scripts/dashboard_server.py`, che ascolta su `127.0.0.1` con token
-  casuale.
+- Worker lifecycle, heartbeat, logs, and questions in `scripts/cli_agent_job.py`, with
+  subcommands `launch`, `status`, `wait`, `logs`, `event`, `ask`, `questions`, `answer`,
+  and `cancel` (`:3868-4240`).
+- Persistent state and atomic writes in `write_json` (`cli_agent_job.py:540-551`).
+- Worktrees and isolation in `workspace_mode` (defaults to `worktree`, `:512-520`).
+- Review gate in `review_notes` (`:3433`).
+- Local dashboard in `scripts/dashboard_server.py`, which listens on `127.0.0.1`
+  and uses a random token.
 
-**Rischi e limiti**
+**Risks and limitations**
 
-- Codex è cablato come coordinatore: lo stato vive in `~/.codex/agent-orchestrator`
-  (`:491-499`). Noi studiamo il comportamento senza introdurre questa dipendenza.
-- Script Python monolitico (163 KB): va estratto il modello, non il codice.
-- Contiene `cursor-guard`, con hook che negano i subagent: è specifico di Cursor.
+- The plugin hardcodes Codex as coordinator and stores state in
+  `~/.codex/agent-orchestrator` (`:491-499`). This project uses it only as a reference
+  for behavior.
+- The 163 KB Python script is monolithic. Study its design separately from its code.
+- `cursor-guard` contains Cursor-specific hooks that deny subagents.
 
 ## codex-source
 
-Sorgenti pubblici del CLI Codex (Rust). Sparse checkout di: `codex-rs/app-server`,
-`codex-rs/app-server-protocol`, `codex-rs/docs`, `codex-rs/exec`, `codex-rs/protocol`,
-`docs`, `sdk` (più i file di root, inclusi LICENSE e NOTICE).
+Public source for the Codex CLI (Rust), with a sparse checkout of
+`codex-rs/app-server`, `codex-rs/app-server-protocol`, `codex-rs/docs`, `codex-rs/exec`,
+`codex-rs/protocol`, `docs`, and `sdk`, plus root files including LICENSE and NOTICE.
 
-**Da studiare**
+**Areas to study**
 
-- `codex-rs/app-server/README.md`: protocollo JSON-RPC dell'app-server (thread, turni,
-  approvazioni, MCP, project trust, rollback).
-- `codex-rs/app-server-protocol/`: tipi del protocollo, la fonte autorevole per l'adapter.
-- `codex-rs/protocol/`: eventi core, tool call, approvazioni.
-- `codex-rs/exec/`: modalità non interattiva. `codex exec --json` è definito in
-  `codex-rs/exec/src/cli.rs:65`. `docs/exec.md` contiene solo un link alla
-  documentazione online.
-- `sdk/typescript/`: SDK ufficiale che pilota il CLI, con pattern di spawn e parsing.
-- `docs/authentication.md`, `docs/sandbox.md`, `docs/execpolicy.md`, `docs/config.md`.
+- `codex-rs/app-server/README.md` describes the app-server JSON-RPC protocol for threads,
+  turns, approvals, MCP, project trust, and rollback.
+- `codex-rs/app-server-protocol/` contains the protocol types and is the authoritative
+  source for the adapter.
+- `codex-rs/protocol/` contains core events, tool calls, and approvals.
+- `codex-rs/exec/` implements non-interactive mode. `codex-rs/exec/src/cli.rs:65` defines
+  `codex exec --json`. `docs/exec.md` links to the online documentation.
+- `sdk/typescript/` contains the official SDK that drives the CLI, including spawn and
+  parsing patterns.
+- `docs/authentication.md`, `docs/sandbox.md`, `docs/execpolicy.md`, and `docs/config.md`.
 
-**Rischi**
+**Risks**
 
-- Il protocollo dell'app-server è in evoluzione e contiene molte sezioni "experimental":
-  serve un controllo di versione all'handshake.
-- Apache-2.0: se mai si riusasse del codice, servirebbero NOTICE e l'indicazione delle
-  modifiche. La politica 0002 lo esclude.
-- Il sorgente dell'estensione VS Code ufficiale di Codex **non** è pubblico e non va
-  estratto né decompilato. È solo un riferimento di UX.
+- The app-server protocol is evolving and has many experimental sections. Check the
+  version during the handshake.
+- Apache-2.0 would require retaining NOTICE and identifying modifications if code were
+  reused. ADR 0002 rules out code reuse.
+- The proprietary Codex VS Code extension serves only as a UX reference. Its source
+  must remain unextracted and undecompiled.
 
 ## vscode-extension-samples
 
-Sparse checkout di: `helloworld-sample`, `helloworld-test-sample`,
-`helloworld-test-cli-sample`, `webview-sample`, `webview-view-sample`.
+Sparse checkout of `helloworld-sample`, `helloworld-test-sample`,
+`helloworld-test-cli-sample`, `webview-sample`, and `webview-view-sample`.
 
-**Da studiare**
+**Areas to study**
 
-- `webview-sample/`: WebviewPanel, CSP con nonce, `localResourceRoots`, serializer.
-- `webview-view-sample/`: WebviewView nella sidebar (un'alternativa al pannello editor).
-- `helloworld-test-cli-sample/`: integration test con `@vscode/test-cli`, l'approccio
-  adottato qui.
-- `helloworld-test-sample/`: runner `@vscode/test-electron` di più basso livello.
+- `webview-sample/` demonstrates WebviewPanel, CSP with a nonce, `localResourceRoots`,
+  and serialization.
+- `webview-view-sample/` demonstrates a sidebar WebviewView as an alternative to an
+  editor panel.
+- `helloworld-test-cli-sample/` demonstrates integration tests with `@vscode/test-cli`,
+  the approach used here.
+- `helloworld-test-sample/` demonstrates the lower-level `@vscode/test-electron` runner.
 
-**Licenza**: MIT a livello di repository. `webview-sample` e `webview-view-sample`
-dichiarano MIT anche nel proprio `package.json`; i tre esempi `helloworld-*` non
-dichiarano una licenza propria e ricadono sotto la licenza MIT del repository.
-Nessun esempio include un file LICENSE proprio.
+**License.** The repository uses MIT. `webview-sample` and `webview-view-sample` also
+declare MIT in their own `package.json` files. The three `helloworld-*` examples use the
+repository's MIT license without a separate declaration. None of the examples includes
+its own LICENSE file.
 
-## Altri sample potenzialmente utili (non scaricati)
+## Other potentially useful samples outside the checkout
 
-Nel repository dei sample esistono anche `chat-sample`, `chat-tutorial`,
-`custom-editor-sample`, `tree-view-sample` e `webview-codicons-sample`. Si aggiungono
-alla lista sparse in `fetch-references.ps1` quando servono.
+The samples repository also includes `chat-sample`, `chat-tutorial`,
+`custom-editor-sample`, `tree-view-sample`, and `webview-codicons-sample`. Add them to
+the sparse checkout list in `fetch-references.ps1` as needed.

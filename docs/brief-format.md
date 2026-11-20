@@ -1,90 +1,93 @@
-# Il brief
+# Brief format
 
-Stato: formato v1, deciso al passo 2 del toolkit
-([ADR 0009](decisions/0009-chatgpt-web-and-three-turn-layer.md)). Il runtime lo riconosce
-(`packages/runtime/src/brief.ts`) e in modalità `leader` lo consegna all'implementatore così com'è
-(ADR 0018, 0020). Il gateway previsto dall'ADR 0009 è stato tolto dall'ADR 0034.
+Version 1 was defined in step 2 of the toolkit
+([ADR 0009](decisions/0009-chatgpt-web-and-three-turn-layer.md)). The runtime recognizes
+the format (`packages/runtime/src/brief.ts`). In `leader` mode, the leader reads the
+brief as written and hands it off through the `delegate` tool. The pasted brief and
+copied result retain their markers. See
+[ADR 0035](decisions/0035-handoff-tools-and-english.md). ADR 0034 removed the gateway
+introduced in ADR 0009.
 
-## A cosa serve
+## Purpose
 
-- **Il brief porta le decisioni prese nella chat di ChatGPT web nell'estensione.** È di alto
-  livello: ChatGPT non vede il repository. Contiene le conclusioni con il loro perché, non il
-  ragionamento che ci ha portato.
-- **Il brief arriva all'implementatore, che lo aggancia al codice reale.** Le sue tappe diventano
-  il lavoro dell'implementatore, che è lo standard operativo. Il `track` identifica il filone; il
-  gateway che ne conservava la storia (brief, specifiche e risultati precedenti) non c'è più.
-  Nessun agente vede la conversazione di ChatGPT.
-- **Le istruzioni che lo insegnano a ChatGPT** sono in
+- **The brief brings decisions from ChatGPT web into the extension.** It stays at a high
+  level because ChatGPT cannot see the repository. It contains the conclusions and their
+  rationale.
+- **The implementer maps the brief to the actual code.** Its milestones define the
+  implementer's work, which is the standard workflow. The `track` identifies the workstream.
+  ADR 0034 removed the gateway that kept the history of briefs, specifications, and previous
+  results. The ChatGPT conversation is private to that chat.
+- **ChatGPT setup instructions** are in
   [templates/chatgpt-project-instructions.txt](templates/chatgpt-project-instructions.txt).
-  - Vanno incollate nelle istruzioni di un Progetto ChatGPT, una volta per ogni repository,
-    con l'id del progetto al posto di `{{PROJECT_ID}}`.
-  - Da verificare: il limite di lunghezza delle istruzioni di un Progetto.
+  - Paste them into a ChatGPT Project's instructions once per repository, replacing
+    `{{PROJECT_ID}}` with the project ID.
+  - The ChatGPT Project instruction length limit still needs checking.
 
-## Controlli meccanici
+## Format validation
 
-Il runtime controlla solo l'intestazione e la chiusura. Il corpo viene consegnato così com'è.
+The brief parser validates only the header and closing line. It passes the body as written.
 
-- La prima riga è `<<<OOC-BRIEF v1 project=<id> track=<slug>`, con `id` e `slug` fatti di
-  lettere minuscole, cifre e trattini. È la protezione contro le copie sbagliate o di altri
-  progetti.
-- L'ultima riga è `OOC-BRIEF>>>`. Se manca, la copia è stata troncata, per esempio da tre
-  backtick dentro il blocco.
+- The first line is `<<<OOC-BRIEF v1 project=<id> track=<slug>`. The ID and slug consist
+  of lowercase letters, digits, and hyphens. This protects against incorrect copies
+  and briefs copied from another project.
+- The last line is `OOC-BRIEF>>>`. A missing closing line signals a truncated copy, for
+  example when three backticks appeared inside the block.
 
-Il runtime non controlla le sezioni (`parseBrief` legge solo intestazione e chiusura): se ne
-manca una obbligatoria, il leader la segnala o chiede un chiarimento.
+`parseBrief` reads only the header and closing line. If a required section is missing,
+the leader flags it or asks for clarification.
 
-## Struttura
+## Structure
 
-Le sezioni vanno in quest'ordine, con i titoli in inglese. Quelle vuote si omettono. Il
-contenuto è nella lingua della conversazione, a elenchi brevi e non in prosa.
+Use these sections in order with their English headings. Omit empty sections and use
+short lists in the conversation's language.
 
-| Sezione               | Obbligatoria             | Contenuto                                                         |
-| --------------------- | ------------------------ | ----------------------------------------------------------------- |
-| `Goal`                | sì                       | cosa deve essere vero alla fine, in una o due frasi               |
-| `Context`             | se c'è qualcosa di nuovo | solo le novità rispetto all'ultimo brief o risultato, e il perché |
-| `Decisions`           | sì                       | ciò che è vincolante, una riga per ciascuna con il suo perché     |
-| `Plan`                | se ci sono più tappe     | tappe con il loro risultato e, se l'ordine conta, il motivo       |
-| `Latitude`            | se c'è margine           | dove l'agente decide da solo, riportando poi cosa ha deciso       |
-| `Constraints`         | se ce ne sono            | divieti e cosa resta fuori ambito                                 |
-| `Acceptance criteria` | sì                       | comportamenti verificabili, numerati, di alto livello             |
-| `Report`              | no                       | cosa si vuole sapere oltre al risultato standard                  |
+| Section               | Required                          | Content                                                                  |
+| --------------------- | --------------------------------- | ------------------------------------------------------------------------ |
+| `Goal`                | Yes                               | What must be true at the end, in one or two sentences                    |
+| `Context`             | If there is new information       | What changed since the last brief or result, and why                     |
+| `Decisions`           | Yes                               | Binding decisions, one line each with the rationale                      |
+| `Plan`                | For work with multiple milestones | Each milestone and its outcome, plus why the order matters if applicable |
+| `Latitude`            | Where there is discretion         | What the agent may decide and report afterward                           |
+| `Constraints`         | If any                            | Prohibited actions and work outside scope                                |
+| `Acceptance criteria` | Yes                               | Numbered, verifiable, high-level behaviors                               |
+| `Report`              | No                                | Additional information requested beyond the standard result              |
 
-## Regole di scrittura
+## Writing rules
 
-- **Una cosa per sezione.** Una decisione non sta nel piano, un vincolo non sta nel contesto.
-- **Le tappe, non i passi.** Il `Plan` dice cosa deve risultare da ogni tappa; i file e le
-  funzioni li sceglie l'implementatore, che vede il codice.
-- **Niente fatti inventati sul repository.** Ciò che non si sa va in `Latitude` o in `Context`,
-  detto come non noto.
-- **Si può rimandare a brief e risultati precedenti dello stesso filone**, non a ciò che è
-  stato detto solo in chat.
-- **Nessuna decisione ancora aperta dentro il brief.**
-- **Niente tre backtick dentro il blocco**, perché lo chiuderebbero. I frammenti di codice
-  vanno su righe rientrate di quattro spazi.
+- **Give each section one purpose.** Put decisions in `Decisions` and constraints in
+  `Constraints`.
+- **Describe milestone outcomes.** The `Plan` states what each milestone delivers.
+  The implementer can see the code and chooses the files and functions.
+- **Use verified repository facts.** Flag unknowns in `Latitude` or `Context`.
+- **Refer to earlier briefs and results from the same workstream.** Include any relevant
+  information that exists only in the chat.
+- **Resolve open decisions before writing the brief.**
+- **Indent code snippets by four spaces.** A triple-backtick fence would close the
+  surrounding block.
 
-## Esempio
+## Example
 
 ```text
 <<<OOC-BRIEF v1 project=calc track=user-functions
 
 ## Goal
-L'utente può definire funzioni proprie e usarle nelle espressioni.
+Users can define their own functions and use them in expressions.
 
 ## Decisions
-- Sintassi def nome(parametri) = espressione: coerente con l'assegnazione.
-- I parametri oscurano le variabili globali: comportamento prevedibile.
-- Niente ricorsione per ora: errore chiaro invece di un crash.
+- Use def name(parameters) = expression to match assignment syntax.
+- Parameters shadow global variables so name resolution is predictable.
+- Reject recursion for now with a clear error.
 
 ## Latitude
-- Come rappresentare le funzioni nel valutatore.
+- Choose how the evaluator represents functions.
 
 ## Constraints
-- La riga di comando non cambia.
+- Preserve the command-line interface.
 
 ## Acceptance criteria
-1. Una funzione definita si può chiamare nelle espressioni successive.
-2. Una chiamata con un numero sbagliato di argomenti dà un errore chiaro.
-3. Una funzione ricorsiva dà un errore dedicato, non un crash.
+1. A defined function can be called in later expressions.
+2. A call with the wrong number of arguments produces a clear error.
+3. A recursive function produces a dedicated error without crashing.
 
 OOC-BRIEF>>>
 ```

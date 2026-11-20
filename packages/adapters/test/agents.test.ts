@@ -376,7 +376,9 @@ describe('Codex agent session', () => {
     for (const hint of ['root_agent_usage_hint_text', 'subagent_usage_hint_text']) {
       expect(config[`features.multi_agent_v2.${hint}`]).toContain('REGOLE DEL RUNTIME');
     }
-    expect(config['features.multi_agent_v2.multi_agent_mode_hint_text']).toMatch(/esplicitamente/);
+    expect(config['features.multi_agent_v2.multi_agent_mode_hint_text']).toMatch(
+      /only if the user explicitly requests them/,
+    );
     // Ephemeral threads have no rollout to fork from (real check, second turn).
     expect(config['features.multi_agent_v2.root_agent_usage_hint_text']).toContain(
       'fork_turns: "none"',

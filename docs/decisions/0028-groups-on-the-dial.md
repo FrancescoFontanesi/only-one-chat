@@ -1,40 +1,24 @@
-# 0028. Gruppi e nodi singoli sulla ghiera, SQUAD nel composer
+# 0028. Groups and standalone nodes on the dial, Squad in the composer
 
-Stato: Accettata (iterazione 3). Sostituisce il punto 5 dell'ADR 0027 (ghiera per blocchi).
+Status: Accepted (iteration 3). Supersedes item 5 of ADR 0027 on the grouped recipient dial.
 
-## Contesto
+## Context
 
-- **Due scelte in un solo anello:** l'anello di sinistra elencava insieme i blocchi (la coppia
-  leader e implementatore, i nodi) e i ruoli, ma i nomi scelti dall'utente non stanno in tre
-  lettere come le sigle dei provider della ghiera di destra.
-- **Cosa c'è oggi:** un solo gruppo, la coppia di leader e implementatore, e i nodi isolati. I
-  gruppi liberi di nodi richiedono la delega ai nodi, che non c'è ancora.
+- **The left ring combined group and role selection.** It listed the leader–implementer pair, nodes, and individual roles. User-chosen names need more than the three letters used by provider abbreviations on the right dial.
+- **The chat currently has one group** with the leader and implementer, plus standalone nodes. Custom groups require delegation to nodes, which is deferred.
 
-## Decisione
+## Decision
 
-1. **Due scelte, due controlli.**
-   - **Il gruppo o il nodo singolo** si sceglie con un'etichetta in alto sulla ghiera di sinistra,
-     sopra il mirino del reasoning. Mostra l'alias, con ↕ se c'è altro da scegliere; il clic o la
-     rotella scorrono fra il gruppo e i nodi, questi ultimi con quelli tolti dalla lavagna in
-     fondo.
-   - **Il ruolo** si sceglie sull'anello, che ha solo i ruoli del gruppo scelto (LDR, IMP). Per un
-     nodo singolo l'anello è vuoto: ha un solo ruolo.
-   - Il resto della ghiera non cambia: nome, mirino del reasoning, modello, consegna o permessi.
-2. **Il nome:** un nodo singolo ha un alias, e senza alias il nome del suo provider. Il gruppo di
-   leader e implementatore ha un alias, e senza alias il provider del leader. Un nodo che ha
-   ancora il nome automatico lo cambia con il provider se cambia provider; un alias scelto
-   dall'utente resta.
-3. **Dove si dà l'alias:** in Squad, selezionando il leader o l'implementatore (campo "Gruppo",
-   salvato in `onlyOneChat.team.name`), o un nodo (campo "Nome"). Un campo vuoto rimette il nome
-   predefinito.
-4. **Per ora un solo gruppo:** la coppia di leader e implementatore. I gruppi liberi di nodi, con
-   un ruolo per nodo e un ciclo di delega ciascuno, arrivano con la delega ai nodi.
-5. **SQUAD sta nel composer,** al centro del riquadro fra CTX e INVIA, con il conteggio delle
-   richieste in attesa. Sui pannelli stretti segue CTX.
+1. **Separate controls for groups and roles.**
+   - Select a group or standalone node with the label at the top of the left dial, above the reasoning control. The label shows the alias and adds ↕ when other options exist. Click or scroll to cycle through the group and nodes, with removed nodes last.
+   - Select a role on the ring, which shows only the selected group's roles (LDR, IMP). A standalone node has one role, so its ring is empty.
+   - The dial retains its name, reasoning control, model, delivery, and permissions.
+2. **Names.** A standalone node defaults to its provider name. The leader–implementer group defaults to the leader's provider name. Changing a node's provider updates an automatic name and preserves a custom alias.
+3. **Set aliases in Squad.** For either the leader or implementer, edit "Group", stored in `onlyOneChat.team.name`. For a node, edit "Name". Clear the field to restore the default.
+4. **The leader and implementer remain the only group for now.** Custom node groups, each with a role per node and a delegation cycle, are deferred until node delegation.
+5. **SQUAD sits in the center of the composer**, between CTX and SEND, with the pending request count. In narrow panels it follows CTX.
 
-## Conseguenze
+## Consequences
 
-- **Meno nomi sull'anello:** le sigle LDR e IMP bastano, e l'etichetta del gruppo accetta nomi
-  fino a 40 caratteri, abbreviati con "…" dove manca spazio.
-- **La lavagna di Squad** non raggruppa ancora i riquadri: la coppia si riconosce dall'alias nel
-  campo "Gruppo".
+- LDR and IMP fit on the ring. Group labels support up to 40 characters, truncated with "…" where space is limited.
+- The Squad board shows individual cards. The "Group" alias identifies the pair.

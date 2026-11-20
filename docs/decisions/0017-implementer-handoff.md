@@ -1,38 +1,24 @@
-# 0017. Handoff dell'implementatore
+# 0017. Implementer handoff
 
-Stato: Accettata (iterazione 3).
+Status: Accepted (iteration 3).
 
-## Contesto
+## Context
 
-- **La sessione dell'implementatore si riempie** con il lavoro di una chat lunga; aprire una
-  chat nuova perde anche il leader e quello che sa.
-- **L'utente vuole una sessione nuova che riparta dalla precedente,** con lo stesso modello,
-  dalla ghiera accanto al riquadro (ADR 0016). I modelli Claude che usa hanno un loro comando di
-  handoff, ma un comando di una configurazione personale non è un'interfaccia del prodotto, e il
-  prodotto non dipende dal provider (regola 1).
-- **Cambiare modello e reasoning dell'implementatore** a chat aperta si fa già nella stessa
-  sessione (ADR 0012); il leader tiene il suo modello per tutta la chat.
+- **The implementer's session fills up** during a long chat. Starting a new chat also loses the existing leader session and its context.
+- **The user wants to start a new implementer session with the same model** and carry over the prior work from the dial beside the composer (ADR 0016). The user's Claude models have their own handoff command, but a personal command cannot serve as the product interface. The product stays provider-independent under rule 1.
+- **The implementer's model and reasoning can already change** in the same session while a chat is open (ADR 0012). The leader keeps its model for the entire chat.
 
-## Decisione
+## Decision
 
-- **HANDOFF** (`{ type: 'handoff' }` dalla webview; `ChatSession.handoff()`), solo per
-  l'implementatore, solo dopo il suo primo turno e mai mentre un messaggio è in corso:
-  1. la sessione attuale scrive un passaggio di consegne in un turno normale, visibile nel thread
-     (obiettivo, stato, file toccati, decisioni, problemi aperti, prossimi passi, comandi per
-     verificare; nessun file toccato, nessun comando);
-  2. la sessione si chiude e si dimentica: la chat non la riprende più, nemmeno se riaperta
-     (l'id salvato diventa vuoto); il contesto mostrato torna a zero;
-  3. la sessione successiva, con lo stesso provider e modello, parte con il passaggio di consegne
-     dopo le sue istruzioni.
-- **Senza un passaggio di consegne** (testo vuoto) la sessione resta quella di prima, con un
-  errore nel thread.
-- Il testo della richiesta è del prodotto, uguale per Codex e Claude.
+- **HANDOFF** (`{ type: 'handoff' }` from the webview and `ChatSession.handoff()`) applies only to the implementer, after its first turn, while no message is running.
+  1. The current session writes a handoff in a normal turn visible in the thread. It includes the objective, status, files touched, decisions, open issues, next steps, and verification commands. The handoff turn makes no edits and runs no commands.
+  2. Close the session and clear its stored ID so the chat cannot resume it, even after reopening. Reset the displayed context to zero.
+  3. The next session starts with the same provider and model, with the handoff after its instructions.
+- **If the handoff text is empty**, keep the existing session and show an error in the thread.
+- The product supplies the same request text for Codex and Claude.
 
-## Conseguenze
+## Consequences
 
-- Un handoff costa un turno dell'implementatore, sull'abbonamento dell'utente come gli altri.
-- **Il passaggio di consegne vive in memoria** fino a quando la nuova sessione si apre (al
-  messaggio successivo): se la chat si chiude prima, la nuova sessione parte da zero.
-  TODO(continuity): salvarlo con la chat, quando la continuità fra sessioni avrà il suo layer
-  (ADR 0011).
-- L'handoff del leader resta da progettare: il suo modello non cambia nella chat.
+- A handoff uses one implementer turn under the user's subscription.
+- **Keep the handoff in memory** until the next message opens the new session. If the chat closes first, the new session starts fresh. TODO(continuity): persist the handoff with the chat once there is a layer for continuity between sessions (ADR 0011).
+- The leader handoff remains to be designed. The leader model stays fixed within a chat.

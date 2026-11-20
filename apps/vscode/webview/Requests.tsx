@@ -44,13 +44,15 @@ export function PermissionSlab({
       ref={slab}
       class="cn-slab pslab"
       data-theme={theme === 'dark' ? 'light' : 'dark'}
-      aria-label="Permesso richiesto"
+      aria-label="Permission request"
     >
       <div class="pslab__m">
         <span class="cn-tag cn-tag--live">
-          ▲ PERMESSO · {who} · {item.agent}
+          ▲ PERMISSION · {who} · {item.agent}
         </span>
-        <h2 class="t-title">{file ? 'Vuole modificare un file' : 'Vuole eseguire un comando'}</h2>
+        <h2 class="t-title">
+          {file ? 'Requests permission to edit a file' : 'Requests permission to run a command'}
+        </h2>
         <code class="t-data pslab__c">
           {file ? item.summary : `$ ${item.summary.replace(/^Bash: /, '')}`}
         </code>
@@ -63,7 +65,7 @@ export function PermissionSlab({
             answer('accept');
           }}
         >
-          <span class="cn-btn__label">1 · CONSENTI</span>
+          <span class="cn-btn__label">1 · ALLOW</span>
           <span class="cn-btn__icon">→</span>
         </button>
         <button
@@ -73,7 +75,7 @@ export function PermissionSlab({
             answer('acceptForSession');
           }}
         >
-          <span class="cn-btn__label">2 · PER LA SESSIONE</span>
+          <span class="cn-btn__label">2 · ALLOW FOR SESSION</span>
         </button>
         <button
           class="cn-btn cn-btn--text"
@@ -82,12 +84,10 @@ export function PermissionSlab({
             answer('decline');
           }}
         >
-          <span class="cn-btn__label">3 · NEGA</span>
+          <span class="cn-btn__label">3 · DENY</span>
         </button>
       </div>
-      <span class="hint pslab__h">
-        PER LA SESSIONE VALE SOLO PER QUESTO STESSO COMANDO · ESC NEGA
-      </span>
+      <span class="hint pslab__h">SESSION APPROVAL APPLIES ONLY TO THIS REQUEST · ESC TO DENY</span>
     </section>
   );
 }
@@ -97,9 +97,9 @@ const OTHER = '\u0000other';
 
 /**
  * The leader's questions while its turn waits (ADR 0019), one at a time: a
- * single choice among the options, "Altro" for a free answer when the model
- * allows it, or a free answer only. Invia hands every answer back to the
- * model in the same turn; Ferma stops the turn.
+ * single choice among the options, "Other" for a free answer when the model
+ * allows it, or a free answer only. Send hands every answer back to the
+ * model in the same turn, while Stop ends the turn.
  */
 export function QuestionFrame({ item }: { item: Item<'question'> }) {
   const [step, setStep] = useState(0);
@@ -150,10 +150,10 @@ export function QuestionFrame({ item }: { item: Item<'question'> }) {
   if (!q) return null;
   const freeOpen = !q.options || picked[q.id] === OTHER;
   return (
-    <section class="cn-frame cn-frame--ink apr qst" aria-label="Domanda del leader">
+    <section class="cn-frame cn-frame--ink apr qst" aria-label="Agent question">
       <header class="cn-frame__head cn-accent">
         <span class="cn-tag">
-          <b>▲ DOMANDA</b> · {who} · {item.agent}
+          <b>▲ QUESTION</b> · {who} · {item.agent}
         </span>
         {total > 1 && (
           <span class="cn-tag">
@@ -193,8 +193,8 @@ export function QuestionFrame({ item }: { item: Item<'question'> }) {
                 }}
               >
                 <span class="qst__k">{String(q.options.length + 1)}</span>
-                <span class="qst__l">Altro…</span>
-                <span class="qst__d">Rispondi con parole tue</span>
+                <span class="qst__l">Other…</span>
+                <span class="qst__d">Answer in your own words</span>
               </button>
             )}
           </div>
@@ -205,7 +205,7 @@ export function QuestionFrame({ item }: { item: Item<'question'> }) {
               {q.secret ? (
                 <input
                   type="password"
-                  aria-label="Risposta"
+                  aria-label="Answer"
                   value={free[q.id] ?? ''}
                   onInput={(event) => {
                     setFree({ ...free, [q.id]: (event.target as HTMLInputElement).value });
@@ -213,7 +213,7 @@ export function QuestionFrame({ item }: { item: Item<'question'> }) {
                 />
               ) : (
                 <textarea
-                  aria-label="Risposta"
+                  aria-label="Answer"
                   rows={2}
                   value={free[q.id] ?? ''}
                   onInput={(event) => {
@@ -226,17 +226,17 @@ export function QuestionFrame({ item }: { item: Item<'question'> }) {
         )}
       </div>
       <footer class="cn-frame__foot">
-        <span class="hint">IL TURNO ASPETTA LA TUA RISPOSTA</span>
+        <span class="hint">WAITING FOR YOUR ANSWER</span>
         <div class="ctl__g">
           <button
             class="cn-btn cn-btn--text"
             type="button"
-            title="Ferma il turno: la domanda resta senza risposta"
+            title="Stop the turn and leave the question unanswered"
             onClick={() => {
               post({ type: 'stop' });
             }}
           >
-            <span class="cn-btn__label">FERMA</span>
+            <span class="cn-btn__label">STOP</span>
           </button>
           {step > 0 && (
             <button
@@ -246,7 +246,7 @@ export function QuestionFrame({ item }: { item: Item<'question'> }) {
                 setStep(step - 1);
               }}
             >
-              <span class="cn-btn__label">INDIETRO</span>
+              <span class="cn-btn__label">BACK</span>
             </button>
           )}
           <button
@@ -255,7 +255,7 @@ export function QuestionFrame({ item }: { item: Item<'question'> }) {
             disabled={last ? !ready : answerOf(q) === ''}
             onClick={forward}
           >
-            <span class="cn-btn__label">{last ? 'INVIA' : 'AVANTI'}</span>
+            <span class="cn-btn__label">{last ? 'SEND' : 'NEXT'}</span>
             <span class="cn-btn__icon">→</span>
           </button>
         </div>
@@ -280,19 +280,19 @@ export function ApprovalFrame({ item, number }: { item: Item<'approval'>; number
     );
   };
   return (
-    <section class="cn-frame cn-frame--ink apr" aria-label="Delega da inviare">
+    <section class="cn-frame cn-frame--ink apr" aria-label="Delegation awaiting delivery">
       <header class="cn-frame__head cn-accent">
         <span class="cn-tag">
-          <b>→ D{number}</b> DELEGA · {item.from} → {item.to}
+          <b>→ D{number}</b> DELEGATION · {item.from} → {item.to}
         </span>
-        <span class="cn-tag">CONSEGNA MANUALE</span>
+        <span class="cn-tag">MANUAL DELIVERY</span>
       </header>
       <div class="cn-frame__body">
         <div class="ctl">
           <label class="cn-tag" for="brief">
-            BRIEF · MODIFICABILE
+            EDITABLE BRIEF
           </label>
-          {edited && <span class="cn-tag cn-tag--ink">MODIFICATO DA TE</span>}
+          {edited && <span class="cn-tag cn-tag--ink">EDITED</span>}
         </div>
         <div class="box box--mono">
           <div class="box__row">
@@ -307,13 +307,13 @@ export function ApprovalFrame({ item, number }: { item: Item<'approval'>; number
         </div>
         {item.missing && item.missing.length > 0 && (
           <p class="apr__miss">
-            ▲ {item.missing.length === 1 ? 'Percorso non trovato' : 'Percorsi non trovati'}:{' '}
-            {item.missing.join(', ')} · un file da creare non esiste ancora
+            ▲ {item.missing.length === 1 ? 'Path not found' : 'Paths not found'}:{' '}
+            {item.missing.join(', ')} · Files to be created may be missing.
           </p>
         )}
       </div>
       <footer class="cn-frame__foot">
-        <span class="hint">LA CHAT ASPETTA: INVIA O ANNULLA</span>
+        <span class="hint">SEND OR CANCEL TO RESUME THE CHAT</span>
         <div class="ctl__g">
           <button
             class="cn-btn cn-btn--text"
@@ -322,7 +322,7 @@ export function ApprovalFrame({ item, number }: { item: Item<'approval'>; number
               decide('cancel');
             }}
           >
-            <span class="cn-btn__label">ANNULLA</span>
+            <span class="cn-btn__label">CANCEL</span>
           </button>
           {edited ? (
             <>
@@ -333,7 +333,7 @@ export function ApprovalFrame({ item, number }: { item: Item<'approval'>; number
                   decide('approve');
                 }}
               >
-                <span class="cn-btn__label">INVIA ORIGINALE</span>
+                <span class="cn-btn__label">SEND ORIGINAL</span>
               </button>
               <button
                 class="cn-btn cn-btn--sm"
@@ -342,7 +342,7 @@ export function ApprovalFrame({ item, number }: { item: Item<'approval'>; number
                   decide('edit');
                 }}
               >
-                <span class="cn-btn__label">INVIA MODIFICATO</span>
+                <span class="cn-btn__label">SEND EDITED</span>
                 <span class="cn-btn__icon">→</span>
               </button>
             </>
@@ -354,7 +354,7 @@ export function ApprovalFrame({ item, number }: { item: Item<'approval'>; number
                 decide('approve');
               }}
             >
-              <span class="cn-btn__label">INVIA</span>
+              <span class="cn-btn__label">SEND</span>
               <span class="cn-btn__icon">→</span>
             </button>
           )}

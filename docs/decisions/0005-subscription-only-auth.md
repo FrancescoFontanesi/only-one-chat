@@ -1,30 +1,20 @@
-# 0005. Solo abbonamenti: gate di autenticazione e profilo Codex dedicato
+# 0005. Subscription-only authentication and a dedicated Codex profile
 
-- Stato: Sostituita da [0006](0006-personal-cli-profiles.md) (2026-10-25)
+- Status: Superseded by [0006](0006-personal-cli-profiles.md) (2026-10-25)
 
-## Contesto
+## Context
 
-Il prodotto deve usare esclusivamente gli abbonamenti personali, tramite il login
-ufficiale. Una macchina di sviluppo può avere API key nell'ambiente, proxy (es. Headroom)
-nel `config.toml` personale, oppure provider personalizzati. Dettagli in
-[../codex-auth.md](../codex-auth.md).
+The product must use personal subscriptions exclusively through official sign-in. A development machine can have API keys in its environment, proxies such as Headroom in the user's `config.toml`, or custom providers. See [../codex-auth.md](../codex-auth.md).
 
-## Decisione
+## Decision
 
-1. **Fail-closed**: è autorizzato solo un account `chatgpt` su un provider con
-   `requiresOpenaiAuth: true`. Ogni altro caso è un rifiuto o `login_required`, mai un
-   fallback.
-2. **Il gate sta nel client**: le richieste diverse dalla lettura dell'account non
-   vengono inviate finché l'account non è verificato e non stale.
-3. **Profilo dedicato tramite `CODEX_HOME`**, e non tramite `--profile` o modifiche al
-   `config.toml` personale. Le scelte critiche sono fissate con override `-c`.
-4. **Ambiente in allow-list** invece che in deny-list: una variabile nuova che attiva
-   una chiave o un proxy resta esclusa senza bisogno di conoscerla.
-5. **Le notifiche possono solo declassare**: un'autorizzazione nasce solo da una
-   `account/read` completata senza cambi concorrenti.
+1. **Fail closed.** Authorize only a `chatgpt` account with a provider that declares `requiresOpenaiAuth: true`. All other cases produce a refusal or `login_required`.
+2. **Enforce the authentication gate in the client.** While account verification is pending or stale, the client sends only account-read requests.
+3. **Set up a dedicated profile through `CODEX_HOME`.** This avoids using `--profile` or modifying the user's `config.toml`. Pin security-critical settings through `-c` overrides.
+4. **Allowlist environment variables.** A new variable that enables a key or proxy stays excluded automatically.
+5. **Use notifications only to downgrade authorization.** Authorization requires a successful `account/read` with no intervening change.
 
-## Conseguenze
+## Consequences
 
-- Il primo uso richiede un login ChatGPT nel profilo dedicato, anche se l'utente ha già
-  fatto il login nel profilo personale.
-- Proxy aziendali e configurazioni gestite di sistema restano limiti noti.
+- On first use, the user signs in to ChatGPT in the dedicated profile, even if the personal profile is already signed in.
+- Corporate proxies and managed system configuration remain known limitations.

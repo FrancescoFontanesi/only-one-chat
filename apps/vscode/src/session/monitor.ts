@@ -19,20 +19,20 @@ const MAX_EVENTS = 200;
 
 const ROLE: Record<TurnRole, string> = {
   leader: 'Leader',
-  implementer: 'Implementatore',
-  reviewer: 'Revisore',
+  implementer: 'Implementer',
+  reviewer: 'Reviewer',
 };
 
 const PERMIT: Record<string, string> = {
-  accept: 'consentito',
-  acceptForSession: 'consentito per la sessione',
-  decline: 'negato',
+  accept: 'allowed',
+  acceptForSession: 'allowed for the session',
+  decline: 'denied',
 };
 
 const APPROVAL: Record<string, string> = {
-  approve: 'approvato',
-  edit: 'approvato con modifiche',
-  cancel: 'annullato',
+  approve: 'approved',
+  edit: 'approved with edits',
+  cancel: 'canceled',
 };
 
 function oneLine(value: string, max = 90): string {
@@ -96,8 +96,8 @@ export class MonitorStore {
     switch (update.type) {
       case 'user': {
         const direct = update.to ? update.to === 'implementer' : /^@impl\b/i.test(update.text);
-        const to = direct ? 'Implementatore' : 'Leader';
-        this.log('info', `Tu → ${to}: ${oneLine(update.text.replace(/^@impl\b\s*/i, ''))}`);
+        const to = direct ? 'Implementer' : 'Leader';
+        this.log('info', `You → ${to}: ${oneLine(update.text.replace(/^@impl\b\s*/i, ''))}`);
         break;
       }
       case 'turn': {
@@ -107,7 +107,7 @@ export class MonitorStore {
           if (agent.turns.has(update.id)) break;
           agent.turns.add(update.id);
           agent.activity = null;
-          this.log('info', `${ROLE[update.role]} lavora · ${update.agent}`);
+          this.log('info', `${ROLE[update.role]} working · ${update.agent}`);
         } else {
           if (!agent.turns.delete(update.id)) break;
           agent.activity = null;
@@ -115,11 +115,11 @@ export class MonitorStore {
           if (update.status === 'done') {
             const usage = update.usage;
             const detail = usage
-              ? ` · contesto ${kilo(usage.context)} · ${(usage.durationMs / 1000).toFixed(1)} s`
+              ? ` · context ${kilo(usage.context)} · ${(usage.durationMs / 1000).toFixed(1)} s`
               : '';
-            this.log('info', `${ROLE[update.role]} ha finito${detail}`);
+            this.log('info', `${ROLE[update.role]} finished${detail}`);
           } else {
-            this.log('warn', `${ROLE[update.role]}: turno interrotto o non riuscito`);
+            this.log('warn', `${ROLE[update.role]}: turn stopped or failed`);
           }
         }
         break;
@@ -136,7 +136,7 @@ export class MonitorStore {
         const known = subagents.has(update.id);
         if (update.status === 'running') {
           subagents.set(update.id, update.label);
-          if (!known) this.log('info', `${ROLE[role]} ↳ sotto-agente ${oneLine(update.label, 60)}`);
+          if (!known) this.log('info', `${ROLE[role]} ↳ subagent ${oneLine(update.label, 60)}`);
         } else if (known) {
           subagents.delete(update.id);
         }
@@ -147,36 +147,36 @@ export class MonitorStore {
         this.waiting.set(update.id, role);
         this.log(
           'warn',
-          `In attesa di te: ${update.kind === 'delegation' ? 'delega' : 'rapporto'} ${update.from} → ${update.to}`,
+          `Waiting for you: ${update.kind === 'delegation' ? 'delegation' : 'report'} ${update.from} → ${update.to}`,
         );
         break;
       }
       case 'approval_closed':
         if (this.waiting.delete(update.id)) {
-          this.log('info', `Messaggio fra agenti ${APPROVAL[update.action] ?? update.action}`);
+          this.log('info', `Agent handoff ${APPROVAL[update.action] ?? update.action}`);
         }
         break;
       case 'permission':
         this.waiting.set(update.id, update.role);
-        this.log('warn', `${ROLE[update.role]} chiede il permesso: ${oneLine(update.summary)}`);
+        this.log('warn', `${ROLE[update.role]} requests permission: ${oneLine(update.summary)}`);
         break;
       case 'permission_closed':
         if (this.waiting.delete(update.id)) {
-          this.log('info', `Permesso ${PERMIT[update.decision] ?? update.decision}`);
+          this.log('info', `Permission ${PERMIT[update.decision] ?? update.decision}`);
         }
         break;
       case 'question':
         this.waiting.set(update.id, update.role);
         this.log(
           'warn',
-          `${ROLE[update.role]} ti fa una domanda: ${oneLine(update.questions[0]?.question ?? '')}`,
+          `${ROLE[update.role]} asks: ${oneLine(update.questions[0]?.question ?? '')}`,
         );
         break;
       case 'question_closed':
         if (this.waiting.delete(update.id)) {
           this.log(
             'info',
-            update.outcome === 'answered' ? 'Domanda: hai risposto' : 'Domanda senza risposta',
+            update.outcome === 'answered' ? 'Question answered' : 'Question unanswered',
           );
         }
         break;
@@ -184,12 +184,12 @@ export class MonitorStore {
         this.log(update.level, oneLine(update.text.split('\n')[0] ?? ''));
         break;
       case 'changes':
-        this.log('info', `Modifiche da rivedere: ${String(update.files.length)} file`);
+        this.log('info', `Changes to review: ${String(update.files.length)} files`);
         break;
       case 'change_decided':
         this.log(
           'info',
-          `${update.path} ${update.decision === 'accepted' ? 'accettato' : 'rimesso com’era'}`,
+          `${update.path} ${update.decision === 'accepted' ? 'accepted' : 'reverted'}`,
         );
         break;
       case 'chunk':

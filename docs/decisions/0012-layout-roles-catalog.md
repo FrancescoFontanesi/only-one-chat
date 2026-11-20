@@ -1,77 +1,53 @@
-# 0012. Disposizione della chat, viste laterali, catalogo dei modelli
+# 0012. Chat layout, sidebar views, and model catalog
 
-Stato: Accettata (iterazione 3). Sostituisce la parte "Viste" dell'ADR 0011 e i selettori di
-reasoning nell'intestazione.
+Status: Accepted (iteration 3). Supersedes the Views section of ADR 0011 and the reasoning selectors in the header.
 
-## Contesto
+## Context
 
-- **L'intestazione della chat aveva tutto:** ruoli, reasoning, cartella, approvazioni, storico.
-  Le estensioni di Codex e Claude invece mettono in alto solo il titolo della conversazione, la
-  nuova chat e lo storico, e in basso il riquadro di scrittura con i suoi comandi.
-- **I modelli erano stringhe fisse** nelle impostazioni, senza sapere quali offre ogni CLI né
-  quali livelli di reasoning supporta ciascun modello (Sol arriva a `ultra`, Haiku 4.5 non ne ha).
-- **Il pannello dell'utilizzo** aveva una scheda per subscription, con note e contatori della
-  chat: troppo per un'occhiata.
-- **Mancava un riscontro in tempo reale** di chi sta lavorando e di cosa passa fra gli agenti.
+- **The chat header held every control**, including roles, reasoning, folder, approvals, and history. In the Codex and Claude extensions, the header contains the conversation title, new-chat control, and history. The composer and its controls sit at the bottom.
+- **Models were fixed setting strings.** The extension had no catalog of the models each CLI offered or the reasoning levels each model supported. Sol supports up to `ultra`, and Haiku 4.5 exposes no reasoning levels.
+- **The usage panel** used one card per subscription with notes and per-chat counters, which made it hard to scan.
+- **The interface lacked live feedback** on who was working and what agents were exchanging.
 
-## Decisione
+## Decision
 
 ### Chat
 
-- **In alto:** il titolo della conversazione, lo stato, STORICO (l'elenco delle chat della
-  cartella) e + NUOVA.
-- **In basso:** il riquadro di scrittura e, sotto il divisore, le impostazioni del messaggio:
-  - destinatario, LEADER o IMPLEMENTATORE (equivale a `@impl`);
-  - la via chiesta al leader: decide lui, delega, fai tu, chiedi prima (equivalgono a `/delega`,
-    `/fai`, `/chiedi`, che restano validi se scritti);
-  - come passano i messaggi fra gli agenti: approvo io, automatiche;
-  - il modello di chi riceve, INVIA e FERMA.
-- **Invio** invia, **Maiusc+Invio** va a capo, come nelle estensioni ufficiali.
+- **At the top**, show the conversation title, status, HISTORY (the folder's chats), and + NEW.
+- **At the bottom**, place the composer above a divider and the message controls below it.
+  - Recipient, LEADER or IMPLEMENTER (equivalent to `@impl`).
+  - The leader's route, with choices to let the leader decide, delegate, implement directly, or ask first. The corresponding typed commands `/delega`, `/fai`, and `/chiedi` remain valid.
+  - Whether messages between agents require user approval or pass automatically.
+  - The recipient's model, SEND, and STOP.
+- **Enter** sends and **Shift+Enter** inserts a newline, as in the official extensions.
 
-### Viste laterali, nel contenitore Only One Chat
+### Sidebar views in the Only One Chat container
 
-- **Ruoli:** per ogni ruolo il modello, scelto fra quelli che i CLI offrono, raggruppati per
-  provider; il reasoning fra quelli del modello; i permessi. I ruoli sono estendibili (revisore,
-  redattore) senza cambiare la struttura.
-- **Attività:** ogni ruolo con modello, stato (lavora, aspetta te, fermo), l'ultima attività e i
-  sotto-agenti attivi; sotto, il registro degli eventi, il più recente in alto. Per ora è
-  semplice: serve a capire cosa succede. Altre funzioni si decideranno.
-- **Utilizzo:** una tabella, provider, 5h, 1w, con barre. Ora e note nei tooltip.
+- **Roles** shows the model for each role, grouped by provider and selected from models the CLIs offer. It also shows the model's reasoning levels and permissions. Roles such as reviewer and writer fit the same structure.
+- **Activity** shows each role with its model, status (working, waiting for you, or idle), last activity, and active subagents. The event log below shows the most recent event first. This view starts with basic activity tracking. Further functions can be decided later.
+- **Usage** shows a table with provider, 5h, and 1w columns and usage bars. The read time and notes appear in tooltips.
 
-### Catalogo dei modelli
+### Model catalog
 
-- **Letto dai CLI, senza turni e senza quota:**
-  - Codex: `model/list` sull'app-server, tutte le pagine, solo i modelli non nascosti.
-  - Claude Code: la richiesta di controllo `initialize` dello stream-json, con `-p` e nessun
-    messaggio utente, poi stdin si chiude. Verificato su 2.1.308: risponde con i modelli e i
-    livelli di effort, ed esce con codice 0 senza fare un turno.
-- **Solo i campi dei modelli.** La stessa risposta di Claude contiene dati dell'account, che non
-  si leggono né si conservano (security.md, T13).
-- **Claude parte in una cartella temporanea**, lontano dalle impostazioni del progetto.
-- **Una lettura per finestra**, poi su richiesta (pulsante della vista Ruoli).
+- **Read the catalog from the CLIs without running turns or consuming quota.**
+  - Codex uses all pages of App Server's `model/list` and includes only visible models.
+  - Claude Code uses the stream-json `initialize` control request with `-p` and no user message, then closes stdin. Claude Code 2.1.308 was verified to return models and effort levels and exit with code 0 without running a turn.
+- **Keep model fields only.** The Claude response also includes account data, which is neither read nor retained (security.md, T13).
+- **Launch Claude in a temporary directory** away from the project settings.
+- **Read once per window**, then on demand with the button in Roles.
 
-### Ruoli durante la chat
+### Roles during a chat
 
-- **Le impostazioni restano la fonte:** la vista Ruoli le scrive dove sono definite (cartella o
-  utente), e la chat aperta le riceve.
-- **Stesso provider, dal turno successivo del ruolo, nella stessa sessione:**
-  - modello e reasoning: Codex li accetta per turno (`turn/start`), e per Claude ogni turno è un
-    processo con `--model` e `--effort`;
-  - permessi: la sessione del CLI si riapre con le nuove regole (`thread/resume`, `--resume`), con
-    il suo contesto.
-- **Il modello del leader resta quello di inizio chat** (decisione dell'utente, 2026-11-02):
-  senza un handoff del leader, che dipende dal layer di memoria, la sua conversazione non cambia
-  modello. Reasoning e permessi restano modificabili; il nuovo modello vale dalla chat
-  successiva.
-- **Un altro provider vale dalla chat successiva.** Una chat tiene i provider con cui è nata,
-  anche riaperta dallo storico. Spostare il lavoro su un altro provider a chat avviata è un
-  handoff: richiede un contesto condiviso (punto da cui riprendere, storico del progetto), che
-  l'utente sta progettando a parte. Da decidere insieme.
+- **Settings remain the source of truth.** The Roles view writes them to their existing scope (folder or user), and the open chat receives the updates.
+- **With the same provider, apply changes in the role's next turn within the same session.**
+  - For model and reasoning, Codex accepts per-turn changes (`turn/start`), while each Claude turn is a process with `--model` and `--effort`.
+  - For permissions, reopen the CLI session with the new rules and the same context (`thread/resume`, `--resume`).
+- **The leader keeps the model selected when the chat starts** (user decision, 2026-11-02). Changing the leader model within a conversation requires a handoff and a memory layer. Reasoning and permissions can still change. The new model applies to the next chat.
+- **Provider changes apply to the next chat.** A chat retains its original providers when reopened from history. Changing providers mid-chat requires a handoff with shared context, including where to resume and project history. The user is designing that context separately, and the handoff still needs a joint decision.
 
-## Conseguenze
+## Consequences
 
-- **Adapter:** `listCodexModels`, `listClaudeModels`, `setModel` sulle sessioni Codex e Claude.
-- **I CLI finti** rispondono a `model/list` e a `initialize`.
-- **La cronologia** salva i ruoli di ogni chat.
-- **I contatori per chat** escono dalla vista Utilizzo; il consumo di ogni turno resta nella sua
-  scheda.
+- **Adapters** expose `listCodexModels`, `listClaudeModels`, and `setModel` on Codex and Claude sessions as applicable.
+- **Fake CLIs** respond to `model/list` and `initialize`.
+- **History** saves the roles for each chat.
+- **Usage** drops per-chat counters. Each turn card still shows that turn's usage.

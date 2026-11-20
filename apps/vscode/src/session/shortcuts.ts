@@ -42,33 +42,33 @@ export function shortcutFlags(changes: readonly TextChange[]): string[] {
   const flags: string[] = [];
   for (const { path, before, after } of changes) {
     const test = TEST_FILE.test(path);
-    if (test && before !== null && after === null) flags.push(`test eliminato: ${path}`);
+    if (test && before !== null && after === null) flags.push(`test removed: ${path}`);
     // A new test file has nothing to be weakened from.
     if (test && before !== null && after !== null) {
       const cases = [count(before, CASES), count(after, CASES)] as const;
       if (cases[1] < cases[0]) {
-        flags.push(`${path}: casi di test da ${String(cases[0])} a ${String(cases[1])}`);
+        flags.push(`${path}: test cases reduced from ${String(cases[0])} to ${String(cases[1])}`);
       }
       const checks = [count(before, ASSERTIONS), count(after, ASSERTIONS)] as const;
       if (checks[1] < checks[0]) {
-        flags.push(`${path}: asserzioni da ${String(checks[0])} a ${String(checks[1])}`);
+        flags.push(`${path}: assertions reduced from ${String(checks[0])} to ${String(checks[1])}`);
       }
     }
     if (test) {
       const skipped = count(after, SKIPS) - count(before, SKIPS);
       if (skipped > 0) {
-        flags.push(`${path}: test saltati o isolati (skip, only) aggiunti: ${String(skipped)}`);
+        flags.push(`${path}: new skipped or isolated tests (skip, only): ${String(skipped)}`);
       }
     }
     if (after !== null) {
       const off = count(after, SWITCHED_OFF) - count(before, SWITCHED_OFF);
       if (off > 0) {
-        flags.push(`${path}: controlli disattivati o tipi forzati aggiunti: ${String(off)}`);
+        flags.push(`${path}: new check suppressions or type overrides: ${String(off)}`);
       }
     }
-    if (LOCKFILE.test(path)) flags.push(`lockfile cambiato: ${path}`);
+    if (LOCKFILE.test(path)) flags.push(`lockfile changed: ${path}`);
     else if (CHECK_CONFIG.test(path)) {
-      flags.push(`configurazione dei controlli cambiata: ${path}`);
+      flags.push(`check configuration changed: ${path}`);
     }
   }
   return flags;
@@ -82,8 +82,10 @@ export function shortcutFacts(
 ): string {
   const flags = shortcutFlags(changes);
   return [
-    'Controlli sul diff, fatti dal runtime (segnalazioni da verificare, non prove):',
-    ...(flags.length > 0 ? flags.map((flag) => `- ${flag}`) : ['- nessuna segnalazione']),
-    ...(uncovered.length > 0 ? [`Non controllati, troppo grandi: ${uncovered.join(', ')}`] : []),
+    'Runtime diff checks (flags for review):',
+    ...(flags.length > 0 ? flags.map((flag) => `- ${flag}`) : ['- no flags']),
+    ...(uncovered.length > 0
+      ? [`Skipped because they were too large: ${uncovered.join(', ')}`]
+      : []),
   ].join('\n');
 }

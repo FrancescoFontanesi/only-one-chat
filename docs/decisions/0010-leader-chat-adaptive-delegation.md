@@ -1,90 +1,48 @@
-# 0010. La chat del leader come nucleo: delega adattiva fra subscription
+# 0010. Leader chat and adaptive delegation across subscriptions
 
-Stato: Accettata (iterazione 3). Sostituisce in parte l'[ADR 0009](0009-chatgpt-web-and-three-turn-layer.md):
-la web app non è più il flusso principale. Del 0009 restano validi il ponte con ChatGPT
-attraverso gli appunti, la cattura al focus e il formato del brief.
+Status: Accepted (iteration 3). Partially supersedes [ADR 0009](0009-chatgpt-web-and-three-turn-layer.md). The leader chat replaces ChatGPT on the web as the main workflow. The clipboard bridge, focus-triggered capture, and brief format still apply.
 
-## Contesto
+## Context
 
-- **L'ADR 0009 aveva messo al centro ChatGPT web**, seguito da uno strato fisso di tre turni.
-  Il concetto originale del prodotto (R1, R2) è diverso: **una chat sola, con un leader
-  scelto dall'utente, che ragiona e delega**. L'utente vuole anche lavorare senza la web app,
-  e chiedere modifiche piccole senza un brief strutturato.
-- **Le prove** su `calc-functions` e `calc-session` usavano un run per sistema a effort low.
-  - **Il gateway pieno raddoppia il lavoro.** Esplora il codice, riscrive la specifica e
-    rilegge il codice. Su un brief già deciso costa più del modello da solo e non migliora il
-    codice.
-  - **Il leader leggero costa circa 9 volte meno.** Inoltra il brief con le sole note e giudica
-    sui fatti del runner. Con Sonnet come implementatore consuma meno di ciascun modello da
-    solo, su entrambe le subscription.
-  - **Su una sessione di quattro messaggi il contesto del leader resta stabile**, fra 25k e 29k
-    di contesto per turno. Il modello da solo rilegge invece un contesto che cresce. Il leader
-    Sol con Sonnet ha usato il 37% del contesto di Sol da solo, più $0.36 di Sonnet contro i
-    $0.67 di Opus da solo.
-  - **Il turno più caro del leader è stato una richiesta libera**: ha esplorato il codice prima
-    di delegare.
-  - **Sol come implementatore costa quanto Sol che fa tutto da solo.** Conta più chi implementa
-    che chi guida.
-  - **La verifica del leader sui soli fatti è utile ma non basta.** Ha trovato un difetto che
-    nessun test copriva e ne ha mancato un altro.
+- **ADR 0009 centered ChatGPT on the web** and used a fixed three-turn sequence. The original product requirements (R1 and R2) call for **one chat with a user-selected leader who reasons and delegates**. The user also wants to work without the web app and ask for small changes without writing a structured brief.
+- **The `calc-functions` and `calc-session` tests** used one run per system at low effort.
+  - **The full gateway duplicates work.** It explores the code, rewrites the specification, and rereads the code. Given a settled brief, it costs more than a standalone model and produces no improvement in the code.
+  - **The lightweight leader costs roughly one-ninth as much as the full gateway.** It forwards the brief with notes and evaluates the runner's facts. With Sonnet implementing, it consumes less on both subscriptions than the corresponding standalone models.
+  - **Leader context stays stable over four messages**, at 25k to 29k per turn. A standalone model rereads a growing context. Sol as leader with Sonnet used 37% of the context of Sol alone, plus $0.36 in nominal Sonnet costs compared with $0.67 for Opus alone.
+  - **The most expensive leader turn was an open-ended request.** The leader explored the code before delegating.
+  - **Sol costs as much as an implementer as it does working alone.** The implementer choice has more impact than the leader choice.
+  - **Reviewing the facts alone caught some defects.** The leader found a defect that no test covered and missed another.
 
-## Decisione
+## Decision
 
-1. **Il nucleo è la chat del leader.**
-   - Il leader è un modello scelto in configurazione (per esempio Sol, oppure Opus), con una
-     sessione che dura tutta la conversazione.
-   - ChatGPT web è una fonte opzionale di brief, attraverso il ponte dell'ADR 0009.
-2. **Il leader è l'interlocutore con cui si ragiona**, come la web app, ma è anche un agente
-   capace di scrivere. L'implementatore è un modello esterno, su un'altra subscription, e il
-   leader lo sa: non è un suo sotto-agente. Per ogni richiesta il leader sceglie la via e la
-   dichiara nella prima riga della risposta ("Via: rispondo | chiedo | faccio io | delego —
-   perché"):
-   - **rispondo**: domande e ragionamento; per leggere il codice usa i sotto-agenti, che gli
-     restituiscono una sintesi;
-   - **chiedo**: manca una decisione che cambia il risultato;
-   - **faccio io**: modifiche piccole e concentrate (uno o due file, poche decine di righe,
-     comportamento deciso). Le scrive lui, perché un brief costerebbe più della modifica. I
-     sotto-agenti non scrivono mai;
-   - **delego**: modifiche più grandi, oppure quando l'utente lo chiede ("genera il prompt",
-     "delega"). Il leader organizza il lavoro, spiega all'utente cosa delega e perché, e scrive
-     il brief. Non esplora il codice a fondo per prepararlo: lo fa l'implementatore;
-   - **brief dalla web app**, riconosciuto dal suo marcatore: non lo rigenera. Il runtime lo
-     inoltra così com'è, e il leader aggiunge solo note, cioè aggiunte o correzioni mirate che
-     valgono sul testo del brief.
-   - **Dopo una delega**, e solo allora, il leader riceve il rapporto strutturato
-     dell'implementatore con i fatti del runner, e riferisce all'utente: se è andato tutto bene,
-     cosa non torna, cosa converrebbe modificare. Così il rapporto entra nella conversazione, e
-     l'utente può ragionarci con il leader: le correzioni piccole le fa il leader, per quelle
-     grandi parte una nuova delega.
-   - **Reasoning.** Il livello di reasoning di ogni ruolo lo sceglie l'utente; l'estensione non
-     lo forza. La guida d'uso consiglia i livelli per i vari casi.
-3. **Il contesto del leader è la risorsa da proteggere.**
-   - Gli tornano solo il rapporto dell'implementatore e i fatti del runner (file cambiati, test
-     rieseguiti, test falliti per nome).
-   - Mai trascrizioni o file interi.
-   - Giudica sui fatti; apre un file solo se un fatto contraddice il rapporto.
-4. **Il brief è il contratto unico.** Lo scrive ChatGPT oppure il leader, e il formato è lo
-   stesso ([brief-format.md](../brief-format.md)).
-5. **L'implementatore predefinito è il modello più economico che basta.** Nelle prove è Sonnet
-   a low, in una sessione nuova per ogni delega. I ruoli restano configurazione (regola 1).
-6. **Integrazione con i CLI**, verificata in queste prove:
-   - **Claude.** I sotto-agenti girano in primo piano
-     (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, solo sul processo figlio), altrimenti in un
-     turno ripreso il risultato si perde. Uso e costo, cumulativi con `--resume`, si riportano
-     per differenza fra un turno e il precedente.
-   - **Codex.** Le prove girano senza gli hook del profilo dell'utente
-     (`features.hooks = false`, solo per il thread), perché graft scrive nella cartella di
-     lavoro.
+1. **Center the product on the leader chat.**
+   - The configured model, such as Sol or Opus, keeps one session for the whole conversation.
+   - ChatGPT on the web supplies optional briefs through the bridge in ADR 0009.
+2. **The user reasons with the leader, which can also write code.** The implementer is an external model on a separate subscription. The leader recognizes it as external, outside its native subagent hierarchy. For each request, the leader selects a route and declares its reason in the first line using the historical format `Via: rispondo | chiedo | faccio io | delego — perché`.
+   - **Answer** (`rispondo`) for questions and reasoning. Subagents read the code and return summaries.
+   - **Ask** (`chiedo`) when a decision is missing and changes the outcome.
+   - **Implement directly** (`faccio io`) for small, focused edits affecting one or two files and a few dozen lines, with the behavior already decided. The leader makes the change when writing a brief would cost more. Subagents remain read-only.
+   - **Delegate** (`delego`) for larger changes or when the user asks to generate a prompt or delegate. The leader organizes the work, explains what it is passing on and why, and writes the brief. The implementer does the detailed code exploration.
+   - **For a brief from the web app**, the runtime recognizes its marker and forwards it verbatim. The leader adds targeted notes that supplement or correct the brief.
+   - **Only after delegation**, the leader receives the implementer's structured report and the runner's facts, then tells the user what worked, what needs attention, and what to change. The report becomes part of the conversation. The leader handles small corrections directly and delegates larger ones again.
+   - **Reasoning.** The user chooses the reasoning level per role. The user guide recommends levels for different situations.
+3. **Protect the leader's context.**
+   - Return only the implementer's report and the runner's facts, including changed files, rerun tests, and failed test names.
+   - Keep transcripts and full files out of that context.
+   - Evaluate the facts and open a file only if a fact contradicts the report.
+4. **Use the brief as the sole contract.** ChatGPT and the leader use the same format. [brief-format.md](../brief-format.md)
+5. **Default to the cheapest suitable implementer.** In the tests this was Sonnet at low effort, with a fresh session per delegation. Roles remain configurable under rule 1.
+6. **CLI integration verified during the tests.**
+   - **Claude.** Run subagents in the foreground by setting `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` only on the child process. Background results are lost on a resumed turn. Usage and cost with `--resume` are cumulative, so report the difference from the previous turn.
+   - **Codex.** Disable the user's profile hooks for the test thread with `features.hooks = false` because Graft writes into the working directory.
 
-## Conseguenze
+## Consequences
 
-- **R1 e R2 tornano centrali.** La sezione "Flusso principale" di
-  [requirements.md](../requirements.md) rimanda a questo ADR.
-- **Il runtime** ha il modo `leader`, con la sessione del leader conservata fra le richieste. I
-  modi `gateway` (pieno e leggero) restavano per gli esperimenti; li toglie l'ADR 0034.
-- **Nella sandbox anche il leader scrive** (ADR 0008), per le modifiche piccole.
-- **Aperto:**
-  - quanto bene il leader sceglie fra fare da sé e delegare, da misurare su richieste piccole;
-  - una verifica breve e indipendente sul diff, fatta da un modello dell'altra subscription;
-  - il failover del leader quando la sua quota finisce (R8);
-  - l'interfaccia, che è il prossimo passo.
+- **R1 and R2 are central again.** The Main flow section links to this ADR. [requirements.md](../requirements.md)
+- **The runtime's `leader` mode** preserves the leader session across requests. The full and lightweight `gateway` modes remained for experiments until ADR 0034 removed them.
+- **In sandbox mode, the leader can write small changes** under ADR 0008.
+- **Open work**
+  - Measure how well the leader chooses between implementing and delegating small requests.
+  - Add a short, independent diff review by a model on the other subscription.
+  - Handle leader failover when its quota runs out (R8).
+  - Build the user interface next.

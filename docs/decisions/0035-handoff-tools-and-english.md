@@ -1,274 +1,134 @@
-# 0035. Le consegne fra i ruoli come strumenti, e il sistema in inglese
+# 0035. Structured handoff tools and English across the project
 
-Stato: Accettata (2026-11-18), dopo la prova di fattibilità (in fondo). Sostituirà i marcatori
-di testo degli ADR 0018, 0029 e 0031 fra agenti dell'estensione.
+Status: Accepted (2026-11-18) after the feasibility trial below. Replaces text markers between extension agents in ADRs 0018, 0029, and 0031.
 
-## Contesto
+## Context
 
-- **Le consegne fra i ruoli sono blocchi di testo:** `<<<DELEGA`, `<<<RAPPORTO`, `<<<RILIEVI`,
-  `<<<REVISIONE`, e dentro parole che il runtime cerca con regex (`completato`, `bloccato`,
-  `approvato`, `con riserve`, `verificato`, `parziale`).
-- **Si rompono:** in una prova un modello ha scritto i marcatori nella lingua sbagliata; altre
-  volte un plurale o un sinonimo ("verificati", "parziale") ha ingannato il contratto. Ogni
-  correzione allarga le regex, e tradurre il sistema in inglese le romperebbe tutte insieme.
-- **I tre CLI hanno già un canale strutturato:** gli strumenti MCP, con argomenti validati da uno
-  schema JSON. E il punto dove agganciarlo c'è già: Claude Code parte con `--strict-mcp-config`,
-  Codex accetta la `config` per thread in `thread/start`, ACP ha `mcpServers` in `session/new`.
-- **I loro flussi riportano già le chiamate con gli argomenti** (Codex `mcpToolCall`, Claude
-  `tool_use`, ACP `tool_call`): il runtime può leggerle dall'adapter, senza un canale fra il
-  server e l'estensione.
+- **Role handoffs were text blocks.** The runtime matched historical markers (`<<<DELEGA`, `<<<RAPPORTO`, `<<<RILIEVI`, `<<<REVISIONE`) and values (`completato`, `bloccato`, `approvato`, `con riserve`, `verificato`, `parziale`) with regular expressions.
+- **Small changes in wording broke the parser.** One trial used markers in the wrong language. Other turns used plurals or synonyms such as `verificati` and `parziale`, which the contract checks misread. Each patch broadened the regular expressions, and translating the system would have invalidated them together.
+- **All three CLIs already support structured MCP tools** with JSON Schema arguments. Claude Code starts with `--strict-mcp-config`, Codex accepts per-thread `config` in `thread/start`, and ACP accepts `mcpServers` in `session/new`.
+- **Provider streams already carry tool calls and arguments.** Codex uses `mcpToolCall`, Claude uses `tool_use`, and ACP uses `tool_call`. The runtime reads handoffs from the adapter without a separate channel between the server and extension.
 
-## Decisione
+## Decision
 
-1. **Ogni consegna è la chiamata di uno strumento** del server MCP `ooc` dell'estensione:
-   - il leader: `delegate` (il brief all'implementatore);
-   - l'implementatore: `report` (il rapporto, con l'esito e lo stato di ogni criterio);
-   - il revisore: `findings` (i rilievi all'implementatore) e `review` (la revisione al leader,
-     con il verdetto).
+1. **Each handoff calls a tool** from the extension's `ooc` MCP server.
+   - The leader uses `delegate` to send the brief to the implementer.
+   - The implementer uses `report` to send the report, with the outcome and each criterion's status.
+   - The reviewer uses `findings` to send findings to the implementer and `review` to send the review and verdict to the leader.
 
-   Ciascun ruolo vede solo i propri strumenti.
+   Each role sees only its own tools.
 
-2. **Gli schemi tipano ciò che il runtime legge,** il resto resta testo libero:
-   - **Valori fissi in inglese:** l'esito (`done`, `partial`, `blocked`), lo stato di un criterio
-     (`verified`, `not_verified`, `not_met`), il verdetto (`approved`, `with_reservations`,
-     `rejected`) e la gravità di un rilievo.
-   - **Elenchi strutturati:** i criteri del brief e i rilievi sono array con un id, non sezioni
-     da riconoscere nel testo. I controlli del contratto (ADR 0031) diventano confronti fra campi.
-   - **Testo libero, in qualsiasi lingua:** il brief, il rapporto e il testo dei rilievi.
+2. **Schemas define the fields the runtime reads.**
+   - Fixed English values cover the outcome (`done`, `partial`, `blocked`), criterion status (`verified`, `not_verified`, `not_met`), verdict (`approved`, `with_reservations`, `rejected`), and finding severity.
+   - Brief criteria and findings are arrays of entries with IDs. ADR 0031 contract checks compare fields directly.
+   - Brief, report, and finding prose can use any language.
 
-   Gli schemi stanno nel runtime, che è la fonte di verità del protocollo fra i ruoli.
+   The runtime schemas define the role-to-role protocol.
 
-3. **Il server è senza stato e senza effetti:**
-   - valida gli argomenti con lo schema; se non sono validi risponde con l'errore, e il modello
-     corregge nello stesso turno;
-   - se sono validi risponde "ricevuto";
-   - non scrive file, non apre connessioni e non parla con l'estensione.
+3. **The server is stateless and has no side effects.** It validates arguments and returns an error the model can correct in the same turn, or acknowledges valid arguments. It writes no files, opens no connections, and has no direct link to the extension.
 
-   Il runtime prende la consegna dall'evento della chiamata nel flusso dell'adapter e ne valida
-   di nuovo gli argomenti con lo stesso schema, ignorando i campi in più: non tutti i CLI
-   riportano l'esito del server (ACP no) e alcuni aggiungono campi propri (Antigravity
-   `toolSummary`). Il server è un file autonomo del runtime
-   (`packages/runtime/src/handoff-server.ts`, solo moduli di Node), che l'estensione impacchetta
-   in `dist/handoff-server.js` e lancia con il Node di VS Code (`ELECTRON_RUN_AS_NODE`):
-   nessuna dipendenza nuova. Legge i messaggi spezzando solo su `\n`, non con `readline`, che
-   spezza anche su U+2028 e U+2029, lasciati senza escape da JSON (vedi la prova del runtime).
+   The runtime reads the handoff from the adapter's tool-call event and validates the arguments against the same schema, ignoring extra fields. ACP omits the server result and Antigravity adds `toolSummary`. The standalone server (`packages/runtime/src/handoff-server.ts`) uses only Node modules. The extension bundles it as `dist/handoff-server.js` and runs it with VS Code's Node through `ELECTRON_RUN_AS_NODE`. This adds no dependency. It splits lines on `\n` only, because Node's `readline` also splits on U+2028 and U+2029, which JSON leaves unescaped. See the runtime trial below.
 
-4. **Una consegna per turno:** vale l'ultima chiamata con argomenti validi.
-   - **Il leader senza chiamata** ha risposto da sé, come oggi senza blocco. Un turno vuoto e
-     senza chiamata non è una risposta (succede quando un comando rifiutato chiude il turno):
-     riceve un turno in più, e vale quello che arriva.
-   - **L'implementatore o il revisore senza chiamata** ricevono un turno breve che chiede di
-     chiamare lo strumento. Se manca ancora, l'implementatore ha il problema di contratto
-     `no-report` e il revisore consegna il suo testo come revisione senza verdetto: il leader lo
-     valuta come gli altri.
-5. **I permessi:**
-   - **Strumenti ammessi in automatico:** i quattro strumenti di `ooc` sono gli unici strumenti
-     MCP ammessi, e senza chiedere, perché non hanno effetti:
-     - in Claude Code con `--mcp-config` (solo `ooc`), insieme a `--strict-mcp-config` e
-       `--allowedTools`;
-     - in Codex con il server nella `config` del thread e l'approvazione accettata solo per `ooc`;
-     - in ACP con la richiesta di permesso accettata solo per `ooc`.
-   - **Il resto non cambia:** in Claude Code i connettori claude.ai e gli altri server MCP
-     restano esclusi; in Codex i server MCP dell'utente si caricano come oggi (la `config` del
-     thread si aggiunge a `~/.codex/config.toml`, non lo sostituisce), e le loro chiamate restano
-     rifiutate. Nessuna configurazione globale dei CLI cambia.
-6. **I marcatori di testo restano solo verso l'esterno.** Il brief incollato dalla web app di
-   ChatGPT (`<<<OOC-BRIEF`) e il risultato che le torna (`<<<OOC-RESULT`) viaggiano per copia e
-   incolla, dove uno strumento non arriva. Il leader riceve il brief come testo e lo consegna con
-   `delegate`.
-7. **Il sistema passa all'inglese,** con la stessa modifica:
-   - **Il protocollo:** prompt dei ruoli, nomi e valori degli strumenti, messaggi del runtime.
-   - **Quello che l'utente legge:** interfaccia della webview, messaggi dell'estensione e
-     impostazioni di `package.json`.
-   - **I documenti:** README, docs, ADR e AGENTS.md.
-   - **I test** che leggono quei testi.
+4. **Apply the last valid handoff in each turn.**
+   - A leader turn without a tool call can still answer directly. An empty turn with no call gets one more turn, whose result is used. A denied command can cause this condition.
+   - An implementer or reviewer turn without a valid handoff gets a short follow-up requesting the appropriate tool. If the handoff is still missing, the implementer has the `no-report` contract issue and the reviewer's text reaches the leader as a review without a verdict.
+5. **Automatically allow the four side-effect-free `ooc` tools.**
+   - Claude Code uses `--mcp-config` with only `ooc`, together with `--strict-mcp-config` and `--allowedTools`. The claude.ai connectors and other MCP servers are excluded.
+   - Codex adds the server to the thread `config` and accepts approval requests only for `ooc`. The thread configuration supplements `~/.codex/config.toml`, allowing user servers to load as before, but calls to those other servers remain denied.
+   - ACP accepts permission requests only for `ooc`.
 
-   L'italiano non resta come seconda lingua: una localizzazione (`vscode.l10n`) si aggiunge
-   dopo, se serve. I risultati delle prove restano dati locali. Questo ADR conserva gli esiti.
+   Global CLI configurations are unchanged.
 
-8. **Il bench** misura le consegne mancate o invalide per ruolo e modello, al posto dei blocchi
-   malformati.
-9. **L'ordine:**
-   1. una prova di fattibilità: il server, uno strumento, i tre adapter con i CLI finti, poi un
-      turno dal vivo per CLI (il turno dal vivo consuma quota: va approvato);
-   2. il passaggio del runtime agli strumenti, con i test;
-   3. la traduzione, delegata per aree: i prompt prima, perché cambiano con il protocollo.
+6. **Keep markers for the clipboard boundary.** Briefs from ChatGPT's web app (`<<<OOC-BRIEF`) and results sent back (`<<<OOC-RESULT`) travel through copy and paste. The leader receives the brief as text and passes it to the implementer through `delegate`.
+7. **Use English across the project.** This covers role prompts, tool names and values, runtime messages, webview and extension text, `package.json` settings, the README, documentation, ADRs, AGENTS.md, and tests that depend on those strings. Localization through `vscode.l10n` is deferred until needed. Raw trial results remain local, and this ADR records their outcomes.
+8. **The benchmark counts missing or invalid handoffs by role and model** in place of malformed blocks.
+9. **Implementation sequence.**
+   1. Prototype the server and one tool with all three fake CLIs, followed by one approved live turn per CLI.
+   2. Migrate the runtime to tools and update its tests and role prompts.
+   3. Translate the remaining UI, documentation, and tests into English.
 
-## Conseguenze
+## Consequences
 
-- **Le consegne non dipendono più dalla lingua né dalla forma del testo;** i controlli del
-  contratto diventano confronti fra campi, senza regex.
-- **Un processo in più per sessione** (il server `ooc`), leggero e senza stato.
-- **Un modello che non sa chiamare strumenti MCP** non può avere un ruolo dell'estensione: da
-  misurare con il bench sui modelli piccoli (Haiku, Luna, Flash).
-- **I risultati del bench con i marcatori** non sono confrontabili per i blocchi malformati con
-  quelli nuovi.
+- Handoff validity is independent of the language and layout of free text. The contract checks compare fields directly.
+- One lightweight stateless `ooc` server process runs per session.
+- A model must call MCP tools to serve an extension role. The benchmark can measure reliability on small models such as Haiku, Luna, and Flash.
+- Historical malformed block counts and new tool handoff counts measure different failures.
 
-## Prova di fattibilità (2026-11-18)
+## Feasibility trial (2026-11-18)
 
-Uno strumento `report` (esito `done`/`partial`/`blocked` e testo), il server `ooc` e un turno
-dal vivo per CLI, in sola lettura, con un modello piccolo a reasoning low. Il prompt chiedeva di
-chiamarlo prima con `outcome: "completato"`, cioè nella lingua sbagliata.
+Each CLI ran one read-only live turn on a small model with low reasoning where available. The trial used the `ooc` server and a `report` tool with an outcome (`done`, `partial`, or `blocked`) and text. The prompt asked the model to call the tool first with the invalid Italian value `outcome: "completato"`.
 
-- **Claude Code (Haiku):** `--mcp-config` con solo `ooc`, `--strict-mcp-config`,
-  `--allowedTools mcp__ooc__report`, `--permission-prompts none`. Il server si connette; la
-  prima chiamata torna con l'errore dello schema, la seconda (`done`) riesce, nello stesso
-  turno. Costo 0,002 $.
-- **Codex (Luna):** il server nella `config` del thread (`mcp_servers.ooc.command` e
-  `.args`, chiavi puntate) funziona anche in sandbox read-only. Ogni chiamata chiede
-  approvazione con `mcpServer/elicitation/request` (`_meta.codex_approval_kind:
-"mcp_tool_call"`); si accetta con `{action: "accept", content: {}}` solo se `serverName` è
-  `ooc`. L'item `mcpToolCall` porta `arguments` e `result`; con l'errore dello schema finisce
-  `failed`, e Luna corregge nello stesso turno.
-- **Antigravity (Gemini 3.8 Flash):** il server in `session/new` (`mcpServers`) funziona. La
-  chiamata chiede `session/request_permission` (titolo "Run mcp_ooc_report"), da accettare solo
-  per `ooc` anche in sola lettura. Il flusso ACP riporta `rawInput` con un campo
-  `toolSummary` in più, che il server non riceve, e non riporta il risultato.
-- **Alternativa per Codex, non scelta:** i "dynamic tools" di app-server (`thread/start.
-dynamicTools`, richiesta `item/tool/call`) funzionano senza processo e senza approvazione, ma
-  sono un'API sperimentale (`experimentalApi`). Si tiene MCP per avere un solo meccanismo nei
-  tre CLI; i dynamic tools restano la via di riserva se MCP in Codex cambia.
+- **Claude Code (Haiku).** `--mcp-config` with only `ooc`, `--strict-mcp-config`, `--allowedTools mcp__ooc__report`, and `--permission-prompts none`. The server connected, the first request returned a schema error, and the second with `done` succeeded in the same turn. The reported cost was $0.002.
+- **Codex (Luna).** Thread `config` with dotted keys `mcp_servers.ooc.command` and `mcp_servers.ooc.args` worked in the read-only sandbox. Each call requested approval through `mcpServer/elicitation/request` (`_meta.codex_approval_kind: "mcp_tool_call"`). The adapter answered `{action: "accept", content: {}}` only when `serverName` was `ooc`. The `mcpToolCall` item carried `arguments` and `result`. The schema failure ended the item as `failed`, and Luna corrected it in the same turn.
+- **Antigravity (Gemini 3.8 Flash).** The server registered through `mcpServers` in `session/new`. The call requested `session/request_permission` with the title "Run mcp_ooc_report". Approval was limited to `ooc` and allowed even in read-only mode. ACP reported `rawInput` with an additional `toolSummary` field absent from the server's input and omitted the result.
+- **Codex dynamic tools were considered.** App-server's `dynamicTools` on `thread/start` worked through `item/tool/call` without another process or approvals, but required `experimentalApi`. MCP provides one mechanism across all three CLIs. Dynamic tools remain a fallback if Codex's MCP behavior changes.
 
-## Prova del runtime (2026-11-18)
+## Runtime trial (2026-11-18)
 
-Scenario `calc-include` dal vivo, con la richiesta e poi "Procedi.", su tre sistemi:
+The live `calc-include` benchmark sent the task followed by the historical prompt `Procedi.` ("Proceed.") to three systems.
 
-| Sistema | Leader            | Implementatore | Revisore     | Test nascosti | Consegne                                                            |
-| ------- | ----------------- | -------------- | ------------ | ------------- | ------------------------------------------------------------------- |
-| V1      | Codex gpt-6.1-sol | Claude Sonnet  | Claude Haiku | 51/51         | `delegate` 1, `report` 2, `findings` 1, `review` 1; nessuna mancata |
-| V2      | Claude Sonnet     | Codex sol      | Gemini Flash | 51/51         | `delegate` 2, `report` 2, `review` 2; 2 mancate, recuperate         |
-| V3      | Gemini 4 Hydrogen | Claude Haiku   | Codex terra  | 33/51         | nessun `delegate`: il lavoro non parte                              |
+| System | Leader            | Implementer   | Reviewer     | Hidden tests | Handoffs                                                         |
+| ------ | ----------------- | ------------- | ------------ | ------------ | ---------------------------------------------------------------- |
+| V1     | Codex gpt-6.1-sol | Claude Sonnet | Claude Haiku | 51/51        | 1 `delegate`, 2 `report`, 1 `findings`, 1 `review`. None missed. |
+| V2     | Claude Sonnet     | Codex sol     | Gemini Flash | 51/51        | 2 `delegate`, 2 `report`, 2 `review`. Two missed and recovered.  |
+| V3     | Gemini 4 Hydrogen | Claude Haiku  | Codex terra  | 33/51        | No `delegate`. Work never started.                               |
 
-Che cosa è emerso, e che cosa è stato corretto:
+- **U+2028 and U+2029.** Node's `readline` split a Haiku `review` request on unescaped Unicode separators. The server received fragments and never responded. Claude retried every 30 minutes. The server and adapter JSONL readers (`onJsonLines`) now split on `\n` only.
+- **Antigravity command denial.** A denied command in read-only mode ended the turn without text. This caused the missed Flash reviewer handoff and the empty Hydrogen leader turn. The ACP adapter now continues the turn with a fixed notice (`REFUSED_NOTICE`), up to twice, which lets the model switch to read tools.
+- **Antigravity background work.** `invoke_subagent` and `schedule` can end a turn and cause the agent to wake later. A `delegate` call arriving after the turn is lost because ACP offers no signal that the resumed work has finished.
+- **Leader go-ahead.** V1 and V3 could wait for confirmation because the prompt requires it, as with the markers. The benchmark script added `Procedi.`.
 
-- **U+2028 e U+2029.** `readline` di Node spezza anche su questi caratteri, che JSON lascia
-  senza escape: una `review` di Haiku arrivava al server in pezzi, senza risposta, e Claude
-  ripeteva la chiamata ogni 30 minuti. Il server e i lettori JSONL degli adapter
-  (`onJsonLines`) ora spezzano solo su `\n`.
-- **Antigravity, comando rifiutato.** In sola lettura un comando rifiutato chiude il turno
-  senza testo: era la consegna mancata del revisore Flash e il turno vuoto del leader
-  Hydrogen. L'adapter ACP ora continua il turno con un avviso fisso (al massimo due volte),
-  e il modello passa agli strumenti di lettura.
-- **Antigravity, lavoro in background (aperto).** Un sotto-agente (`invoke_subagent`) o un
-  timer (`schedule`) chiudono il turno, e l'agente si risveglia da solo più tardi: la
-  chiamata a `delegate` arriva dopo la fine del turno e l'adapter la perde. ACP non segnala
-  la fine del lavoro risvegliato.
-- **Il leader non delega senza il via** (V1 e V3): segue la regola del prompt, come con i
-  marcatori. Il copione del bench aggiunge "Procedi.".
+### Historical benchmark results (2026-11-18)
 
-## Stato dell’implementazione (2026-11-20)
+| File (`calc-include-…`)                  | Outcome                                                                                 |
+| ---------------------------------------- | --------------------------------------------------------------------------------------- |
+| `V1-…T21-02`, `V1-…T21-15`               | 33/51. With one scripted message, the leader proposed work and waited for confirmation. |
+| `V1-…T21-17`                             | 51/51. The run was stopped when U+2028 blocked the reviewer before the fix.             |
+| `V1-…T22-51`                             | 51/51. Full cycle with one `findings` round. Reference run for V1.                      |
+| `V2-…T21-04`, `V2-…T23-06`               | 51/51. Flash missed its first handoff and recovered on the follow-up turn.              |
+| `V3-…T21-11`, `V3-…T21-14`, `V3-…T23-05` | 33/51. Hydrogen never called `delegate` within a turn.                                  |
 
-### Dove siamo
+The ACP command-denial fix landed after these runs. A `fake-agy` test and a direct live probe covered the fix. The full benchmark was never rerun against it.
 
-- **Passo 1 (pulizia, ADR 0034):** fatto, commit `4cc3684`.
-- **Passo 2 (runtime sugli strumenti, prompt in inglese):** verificato e committato
-  (`567de01`). `pnpm check` ha passato 574 test (3 saltati) e `pnpm test:e2e` ne ha passati 7.
-- **Antigravity come leader:** supporto rinviato (opzione B). Le impostazioni indicano il limite.
-  Antigravity resta selezionabile come revisore e come nodo.
-- **Passo 3 (traduzione in inglese di UI, docs, ADR, AGENTS.md e test):** da fare in un
-  commit dedicato. Va delegato per aree, come dice il punto 9.
+## Antigravity leader limitation
 
-### Dove sta il codice del passo 2
+Direct ACP probes used `agy acp` with `gemini-4-hydrogen-medium` in a read-only session.
 
-- **Runtime:**
-  - `packages/runtime/src/handoff-server.ts` (il server) e `handoff-main.ts` (l'entry);
-  - `handoff.ts`: schemi, `handoffTools`, `readHandoff` e il rendering in Markdown;
-  - `loop.ts`: turni di correzione, compreso il turno vuoto del leader
-    (`EMPTY_LEADER_TURN_PROMPT` in `prompts.ts`);
-  - `contract.ts`: confronti fra campi.
-  - `delegation.ts` e `review.ts` sono stati rimossi.
-- **Adapter:**
-  - `claude/turn.ts`: `--mcp-config` in linea, `--strict-mcp-config`, `--allowedTools`;
-  - `codex/agent.ts`: config del thread e approvazione solo per `ooc`;
-  - `acp/agent.ts`: `mcpServers`, permesso solo per `ooc`, continuazione dopo un comando
-    rifiutato (`REFUSED_NOTICE`, al massimo 2 volte);
-  - `lines.ts`: `onJsonLines`, che spezza le righe solo su `\n`.
-- **Fake:** `fake-claude.mjs`, `fake-app-server.mjs` e `fake-agy.mjs` accettano
-  `[handoff <tool> <json>]`. In `fake-agy` la parola `MUTO` riproduce il turno vuoto di
-  Antigravity dopo un rifiuto.
-- **Estensione:** il target esbuild `dist/handoff-server.js`, lanciato con
-  `ELECTRON_RUN_AS_NODE`; le schede REPORT, REVIEW e FINDINGS nella webview.
-- **Bench:** metrica `handoffs` nel report. Lo scenario `calc-include` e i suoi sistemi
-  V1, V2 e V3 erano dati di prova locali. Il copione inviava la richiesta, poi «Procedi.».
+1. `invoke_subagent` appears as a `tool_call` and changes immediately to `completed` because launch is asynchronous. The model often then returns `end_turn` with text such as "I'm exploring…".
+2. When the subagent finishes, the agent wakes without a new `session/prompt`. Reads, `mcp_ooc_delegate`, and the final message arrive as `session/update` and `session/request_permission`. The `agy` changelog describes this behavior as intentional.
+3. No notification marks the end of resumed work. The last notification is `usage_update`, which also arrives during a turn.
+4. Asking the model to wait for subagents was insufficient. It scheduled a timer (`schedule`, `DurationSeconds: 15`), ended the turn, and woke when the timer fired.
+5. The model sometimes called `manage_subagents` with `kill_all`, read the files itself, and called `delegate` in the same turn. Across four probes, three `delegate` calls arrived after `end_turn`.
+6. `agy acp` offers no switch to disable subagents or background work. `--settings` is only available in `-p` mode.
 
-### Risultati storici del benchmark (2026-11-18)
+`createAcpAgentFactory` closes the turn when `session/prompt` resolves. `onUpdate` discards updates with no active turn (`if (!turn) return`), and `permission` cancels a permission request with `picked(null)`. The late handoff is lost. This also happened with text-marker handoffs.
 
-| File (`calc-include-…`)                  | Esito                                                                         |
-| ---------------------------------------- | ----------------------------------------------------------------------------- |
-| `V1-…T21-02`, `V1-…T21-15`               | 33/51, copione a un messaggio: il leader propone e aspetta il via             |
-| `V1-…T21-17`                             | 51/51, ma il revisore bloccato da U+2028 (prima della correzione), interrotto |
-| `V1-…T22-51`                             | 51/51, catena completa con un giro di `findings`: il riferimento per V1       |
-| `V2-…T21-04`, `V2-…T23-06`               | 51/51: Flash manca la prima consegna, il turno di correzione la recupera      |
-| `V3-…T21-11`, `V3-…T21-14`, `V3-…T23-05` | 33/51: Hydrogen non chiama mai `delegate` dentro un turno                     |
+The team considered three options.
 
-La correzione per il comando rifiutato in ACP è arrivata dopo queste corse: è verificata con
-`fake-agy` e con una sonda dal vivo, non con una corsa completa del bench.
+- **A. Keep the turn open for background work.** After `end_turn`, keep listening when `invoke_subagent` or `schedule` started and `manage_subagents` did not stop it with `kill` or `kill_all`. Collect the resumed work in the same turn and close after a quiet period, capped at roughly ten minutes. This would estimate completion from silence and need a `fake-agy` test that simulates the wake-up.
+- **B. Temporarily exclude Antigravity from the leader role.** Implemented. Settings explain the limitation. Antigravity remains available as a reviewer and node. It worked as a reviewer after the follow-up turn. There was no live implementer trial.
+- **C. Commit the runtime migration and handle the limitation separately.** The runtime migration landed first, followed by option B. Option A can be revisited if leader support reopens.
 
-### Limite del ruolo di leader in Antigravity
+## Implementation status
 
-**Cosa fa Antigravity.** Verificato con sonde ACP dirette su `agy acp`, modello
-`gemini-4-hydrogen-medium`, sessione in sola lettura:
+- ADR 0034 cleanup landed in `4cc3684` before the implementation sequence.
+- Feasibility was established by the November 18 trial. The runtime migration and English role prompts landed in `567de01`. Verification at that step was 574 tests passed and 3 skipped in `pnpm check`, plus 7 passed in `pnpm test:e2e`.
+- Step 3 is complete. The UI, extension messages and settings, README, documentation, ADRs, AGENTS.md, and affected tests now use English. Historical test inputs, protocol literals, and benchmark labels in this record retain their original spelling where needed.
 
-1. La chiamata `invoke_subagent` arriva come `tool_call` e passa subito a `completed`: il
-   lancio è asincrono. Il modello spesso chiude il turno subito dopo, con `end_turn` e un
-   testo del tipo "Sto esplorando…".
-2. Quando il sotto-agente finisce, l'agente si risveglia da solo, senza un nuovo
-   `session/prompt`. Arrivano come semplici notifiche `session/update` e
-   `session/request_permission`:
-   - le sue letture;
-   - la chiamata `mcp_ooc_delegate`;
-   - il messaggio finale.
+- Project licensing is deferred. The manifests and development VSIX omit a project license.
+  Third-party asset notices stay with the assets. See [ADR 0002](0002-reuse-policy.md).
 
-   Il changelog di `agy` lo descrive come comportamento voluto.
+## Implementation references
 
-3. Nessun messaggio segnala la fine del lavoro risvegliato. L'ultima notifica è un
-   `usage_update`, che però arriva anche a metà turno.
-4. Un prompt che chiede di aspettare i sotto-agenti non basta. Il modello imposta un timer
-   (strumento `schedule`, `DurationSeconds: 15`), chiude di nuovo il turno e si risveglia
-   allo scadere.
-5. A volte il modello non aspetta: chiude i sotto-agenti (`manage_subagents` con
-   `kill_all`), legge da sé e chiama `delegate` dentro il turno. Il comportamento non è
-   costante: su quattro sonde, tre volte `delegate` è arrivato dopo `end_turn`.
-6. `agy acp` non ha opzioni per disattivare i sotto-agenti o il background, e nemmeno
-   `--settings`, che esiste solo nella modalità `-p`.
+- In the runtime, `packages/runtime/src/handoff-server.ts` and `handoff-main.ts` provide the server and entry point. `handoff.ts` contains schemas, `handoffTools`, `readHandoff`, and Markdown rendering. `contract.ts` compares fields, and `loop.ts` handles follow-up turns, including `EMPTY_LEADER_TURN_PROMPT` in `prompts.ts`. The old `delegation.ts` and `review.ts` parsers were removed.
+- In the adapters, `claude/turn.ts` sets Claude MCP flags, `codex/agent.ts` sets thread configuration and `ooc` approval, `acp/agent.ts` registers `mcpServers` and handles `ooc` permission and refusal continuations, and `lines.ts` defines `onJsonLines`.
+- The test fixtures `fake-claude.mjs`, `fake-app-server.mjs`, and `fake-agy.mjs` recognize `[handoff <tool> <json>]`. The historical `fake-agy` cue `MUTO` simulated a refusal followed by an empty turn.
+- The extension uses esbuild to bundle `dist/handoff-server.js` for `ELECTRON_RUN_AS_NODE`. The webview has REPORT, REVIEW, and FINDINGS cards.
+- The benchmark report contains the `handoffs` metric. `calc-include` and systems V1, V2, and V3 were local trial data. The historical Markdown result headings were `Test nascosti` ("Hidden tests") and `Consegne (strumenti ooc)` ("Handoffs (ooc tools)"). The complete local log was in `%LOCALAPPDATA%/only-one-chat/logs/bench-<runId>.jsonl`. Tool calls appear as `activity` events of type `mcp_tool` or `tool` and text as `message` events.
 
-**L'effetto.** `createAcpAgentFactory` chiude il turno quando `session/prompt` risponde.
-Gli aggiornamenti che arrivano dopo, senza un turno in corso, sono ignorati
-(`onUpdate`: `if (!turn) return`), e un permesso senza turno è annullato
-(`permission`: `picked(null)`). La consegna va persa.
+## Verification and reproduction
 
-**Le opzioni discusse.**
-
-- **A. Turno aperto finché c'è lavoro in background.**
-  - Cosa fa: dopo `end_turn`, se nel turno sono partiti `invoke_subagent` o `schedule` non
-    chiusi da `manage_subagents` `kill`/`kill_all`, l'adapter resta in ascolto e raccoglie il
-    lavoro risvegliato nello stesso turno. Lo chiude dopo un periodo di silenzio, con un
-    tetto di circa 10 minuti.
-  - Limite: è una stima, non un segnale del CLI. Va scritta nell'ADR e coperta da un
-    test con `fake-agy`, che dovrà simulare il risveglio.
-- **B. Antigravity escluso dal ruolo di leader per ora (scelta adottata),** con un avviso nelle impostazioni.
-  Come revisore ha funzionato grazie al turno di correzione; come implementatore non è
-  stato provato dal vivo.
-- **C. Commit del passo 2 adesso,** e il problema come passo separato.
-
-Dopo il commit del passo 2 (C), si adotta B. L'adapter ACP perdeva gli aggiornamenti tardivi
-anche quando le consegne usavano i marcatori di testo. L'opzione A resta da valutare se si
-riapre il supporto ad Antigravity come leader.
-
-### Come verificare e riprodurre
-
-- **Controlli:** `pnpm check` e `pnpm test:e2e` funzionano senza `sandbox/`.
-- **Benchmark dal vivo:** `pnpm bench --system V1 --scenario calc-include` richiede una
-  copia privata dello scenario. Consuma quota e va approvata dall'utente.
-  - Il riepilogo è nel `.md` del risultato: righe "Test nascosti" e "Consegne (strumenti
-    ooc)".
-  - Il log completo è in `%LOCALAPPDATA%/only-one-chat/logs/bench-<runId>.jsonl`: eventi
-    `activity` di tipo `mcp_tool`/`tool` per le chiamate, `message` per i testi.
-- **Una sonda ACP:** uno script Node che avvia `agy acp` e manda `initialize`,
-  `session/new` con `mcpServers: [{ name: 'ooc', … }]`, `session/set_model` e
-  `session/prompt`. Accetta solo i permessi con titolo `Run mcp_ooc_*` e registra ogni
-  notifica con un orario, anche dopo la risposta a `session/prompt`, per uno o due minuti.
-  Gli script usati il 2026-11-18 stavano in una cartella temporanea e non vanno cercati.
-- **Server di handoff da sorgente:** `node --import <URL file:// di dev/ts-resolve.mjs>
-packages/runtime/src/handoff-main.ts`, con gli strumenti in `OOC_HANDOFF_TOOLS` (JSON).
-  Su Windows gli import ESM vanno scritti come URL (`file:///F:/Only%20One%20Chat/...`).
+- `pnpm check` and `pnpm test:e2e` run without `sandbox/`.
+- `pnpm bench --system V1 --scenario calc-include` requires a private copy of the scenario and user approval because it consumes quota.
+- The ACP probes sent `initialize`, `session/new` with `mcpServers: [{ name: 'ooc', … }]`, `session/set_model`, and `session/prompt`. They accepted only permission requests with titles matching `Run mcp_ooc_*` and logged notifications with timestamps for one to two minutes, including after the reply to `session/prompt`.
+- The handoff server can run from source with `node --import <file:// URL for dev/ts-resolve.mjs> packages/runtime/src/handoff-main.ts` and tools in the `OOC_HANDOFF_TOOLS` JSON environment variable. Windows ESM import specifiers use file URLs, for example `file:///F:/Only%20One%20Chat/...`.

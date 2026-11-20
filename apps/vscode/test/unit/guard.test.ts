@@ -35,7 +35,7 @@ describe('guardReviewerTurn', () => {
     writeFileSync(join(cwd, 'main.py'), 'def f():\n    return 2\n');
     writeFileSync(join(cwd, 'scratch.txt'), 'appunti');
     expect(undo?.()).toBe(
-      'Il revisore aveva cambiato file che non sono test; il runtime li ha rimessi com’erano: main.py, scratch.txt.',
+      'The runtime restored non-test files changed by the reviewer: main.py, scratch.txt.',
     );
     expect(readFileSync(join(cwd, 'main.py'), 'utf8')).toBe('def f():\n    return 1\n');
     expect(existsSync(join(cwd, 'scratch.txt'))).toBe(false);

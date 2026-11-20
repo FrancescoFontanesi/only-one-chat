@@ -13,7 +13,7 @@ import {
 
 describe('the chat thread as the Chat board reads it (ADR 0016)', () => {
   it('numbers delegations; a report, the facts and the changes after one take its number', () => {
-    const facts = 'File cambiati dall’inizio della richiesta:\n- modified calc.py';
+    const facts = 'Files changed since the request began:\n- modified calc.py';
     const items: ThreadItem[] = [
       { kind: 'user', id: 'u1', text: 'uno' },
       { kind: 'approval', id: 'a1', approval: 'delegation', from: 'L', to: 'I', text: 'brief' },
@@ -55,28 +55,44 @@ describe('the chat thread as the Chat board reads it (ADR 0016)', () => {
       ['GREP', 'TODO'],
       ['READ', 'src/b.ts'],
     ]);
-    expect(opsSummary(ops)).toBe('1 comando · 2 letture · 1 modifica · 1 ricerca');
+    expect(opsSummary(ops)).toBe('1 command · 2 reads · 1 edit · 1 search');
   });
 
-  it('reads the facts the extension wrote back into their parts', () => {
-    const facts = readFacts(
-      [
-        'File cambiati dall’inizio della richiesta:',
-        '- modified src/a.ts',
-        '- added src/a.test.ts',
-        '',
-        'Verifica eseguita dal runtime: npm test → exit 1',
-        'Test falliti:',
-        '- FAIL: rifiuta email senza dominio',
-        'Ultime righe dell’output:',
-        'Tests: 1 failed',
-      ].join('\n'),
-    );
-    expect(facts).toEqual({
+  it.each([
+    {
+      title: 'Files changed since the request began:',
+      shortTitle: 'Files changed:',
+      verification: 'Verification run by the runtime: ',
+      failed: 'Failed tests:',
+      output: 'Last lines of output:',
+    },
+    {
+      title: 'File cambiati dall’inizio della richiesta:',
+      shortTitle: 'File cambiati:',
+      verification: 'Verifica eseguita dal runtime: ',
+      failed: 'Test falliti:',
+      output: 'Ultime righe dell’output:',
+    },
+  ])('reads facts and verification saved under $title', (heading) => {
+    const text = [
+      heading.title,
+      '- modified src/a.ts',
+      '- added src/a.test.ts',
+      '',
+      `${heading.verification}npm test → exit 1`,
+      heading.failed,
+      '- FAIL: rifiuta email senza dominio',
+      heading.output,
+      'Tests: 1 failed',
+      'Failed tests:',
+    ].join('\n');
+    expect(isFacts(text)).toBe(true);
+    expect(isFacts(`${heading.shortTitle}\n- modified src/a.ts`)).toBe(true);
+    expect(readFacts(text)).toEqual({
       files: ['modified src/a.ts', 'added src/a.test.ts'],
-      verify: 'npm test · uscita 1',
+      verify: 'npm test · exit 1',
       failed: ['FAIL: rifiuta email senza dominio'],
-      output: 'Tests: 1 failed',
+      output: 'Tests: 1 failed\nFailed tests:',
     });
   });
 

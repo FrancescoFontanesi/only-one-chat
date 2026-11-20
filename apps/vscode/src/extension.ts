@@ -54,7 +54,7 @@ export function activate(context: vscode.ExtensionContext): OnlyOneChatExports {
     codex: async (cwd) => listCodexSkills({ ...(await cliLaunch(context, 'codex')), cwd }),
     claude: async (cwd) => listClaudeSkills({ ...(await cliLaunch(context, 'claude')), cwd }),
     // TODO(nodes): Antigravity's skills are not read; a node takes none (ADR 0023).
-    antigravity: () => Promise.reject(new Error('Le skill di Antigravity non sono lette.')),
+    antigravity: () => Promise.reject(new Error('Antigravity skills are unavailable.')),
   });
   const roles = new RoleSettings(catalog);
   const usageReader = new UsageReader(context, usage, () =>

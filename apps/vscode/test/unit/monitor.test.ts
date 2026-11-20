@@ -70,12 +70,12 @@ describe('activity view (ADR 0012)', () => {
     state = store.snapshot();
     expect(state.agents[0]).toMatchObject({ status: 'idle', activity: null, subagents: [] });
     expect(state.events.map((e) => e.text)).toEqual([
-      'Leader ha finito · contesto 25k · 4.2 s',
-      'Permesso negato',
-      'Leader chiede il permesso: git push',
-      'Leader ↳ sotto-agente explorer',
-      'Leader lavora · Codex (gpt-6.1-sol)',
-      'Tu → Leader: aggiungi round',
+      'Leader finished · context 25k · 4.2 s',
+      'Permission denied',
+      'Leader requests permission: git push',
+      'Leader ↳ subagent explorer',
+      'Leader working · Codex (gpt-6.1-sol)',
+      'You → Leader: aggiungi round',
     ]);
   });
 
@@ -83,7 +83,7 @@ describe('activity view (ADR 0012)', () => {
     const store = new MonitorStore();
     store.setRoles(ROLES);
     store.apply({ type: 'user', id: 'u-1', text: '@impl aggiungi round' });
-    expect(store.snapshot().events[0]?.text).toBe('Tu → Implementatore: aggiungi round');
+    expect(store.snapshot().events[0]?.text).toBe('You → Implementer: aggiungi round');
     store.reset();
     expect(store.snapshot().events).toEqual([]);
   });

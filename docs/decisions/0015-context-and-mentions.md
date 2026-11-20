@@ -1,51 +1,34 @@
-# 0015. Indicatore di contesto e file indicati con `@`
+# 0015. Context indicator and file mentions with `@`
 
-Stato: Accettata (iterazione 3).
+Status: Accepted (iteration 3).
 
-## Contesto
+## Context
 
-- **L'utente non vedeva quanto è pieno il contesto** della sessione a cui scrive: serve a
-  decidere quando aprire una chat nuova, e servirà alla continuità fra sessioni (ADR 0011, da
-  progettare con il layer di memoria dell'utente).
-- **Per indicare un file** bisognava scriverne il percorso a mano; l'ADR 0011 ha deciso che gli
-  allegati passano come percorsi, così il contesto del leader non si riempie.
+- **The user could not see how full the recipient session's context was.** The indicator helps decide when to open a new chat and will support continuity between sessions. That design is still open and will involve the user's memory layer (ADR 0011).
+- **Users had to type file paths manually.** ADR 0011 decided to pass attachments as paths to preserve the leader's context.
 
-## Decisione
+## Decision
 
-### Indicatore di contesto
+### Context indicator
 
-- **Cosa misura:** i token dell'ultima richiesta della sessione principale al modello, cioè la
-  conversazione com'è adesso, rispetto alla finestra del modello.
-  - Codex: `thread/tokenUsage/updated` del thread principale, campo `last` (`totalTokens`) e
-    `modelContextWindow`. I sotto-agenti hanno thread propri e non contano.
-  - Claude: l'`usage` dell'ultimo messaggio dell'assistente nella conversazione principale
-    (input, scritture e letture di cache, output); la finestra dal campo `contextWindow` del
-    modello in `modelUsage` del risultato.
-- **Non è il consumo del turno:** quello somma ogni richiesta del turno, e resta nella scheda
-  del turno.
-- **Dove si vede:** sotto il riquadro di scrittura, per il destinatario scelto
-  (`CONTESTO 25k / 258k · 10%`), e nella vista Attività per ogni ruolo. Si salva con la chat.
+- **Measure the token count of the main session's latest request to the model** against the model's context window. This represents the conversation in its current state.
+  - Codex uses `thread/tokenUsage/updated` for the main thread, specifically `last` (`totalTokens`) and `modelContextWindow`. Subagents have separate threads and are excluded.
+  - Claude uses `usage` from the last assistant message in the main conversation, including input, cache writes and reads, and output. The result's `modelUsage` gives the model's `contextWindow`.
+- **Turn usage stays in the turn card** and sums all requests in that turn.
+- **Show context under the composer for the selected recipient** (`CONTEXT 25k / 258k · 10%`) and in Activity for each role. Save it with the chat.
 
-### File indicati con `@`
+### File mentions with `@`
 
-- **Nel riquadro:** dopo `@` compare l'elenco dei file e delle cartelle della cartella di lavoro
-  (le stesse esclusioni dei checkpoint, al massimo 5000 file), filtrato mentre si scrive;
-  frecce e Invio o Tab per scegliere, Esc per chiudere. L'elenco si rilegge a ogni `@`.
-- **Dall'editor:** "Only One Chat: Add File or Selection to Chat" (Ctrl+Alt+K, anche nel menu
-  contestuale) inserisce `@file`, oppure `@file#L10-20` per la selezione.
-- **All'invio** l'host cerca le menzioni nel testo e aggiunge, dopo il testo, un blocco
-  "Allegati" per gli agenti:
-  - file e cartelle come percorsi relativi, che gli agenti leggono da sé (anche con i
-    sotto-agenti);
-  - un intervallo di righe è copiato nel messaggio solo fino a 80 righe e 8000 caratteri; oltre,
-    resta il riferimento;
-  - si tengono solo percorsi che esistono e restano nella cartella (percorso reale), al massimo
-    20 per messaggio; il resto, `@impl` in testa e gli indirizzi email compresi, resta testo.
-- **Nel thread** il messaggio mostra il testo dell'utente e l'elenco degli allegati.
-- **Immagini:** non ora (ADR 0013).
+- **In the composer**, typing `@` opens a list of files and directories in the working folder. It uses the same exclusions as checkpoints, up to 5,000 files, and filters as the user types. Arrow keys navigate, Enter or Tab selects, and Esc closes the list. The file list reloads each time the user types `@`.
+- **From the editor**, "Only One Chat: Add File or Selection to Chat" (Ctrl+Alt+K, also available in the context menu) inserts `@file` or `@file#L10-20` for a selection.
+- **On send**, the host looks for mentions in the text and appends an attachments block for agents.
+  - Files and directories appear as relative paths. Agents read them directly or use subagents.
+  - A line range is copied into the message only if it has at most 80 lines and 8,000 characters. Longer ranges stay as references.
+  - Keep at most 20 paths per message. Each must exist and resolve inside the working folder. Other text, including a leading `@impl` and email addresses, stays as written.
+- **In the thread**, the message shows the user's text and an attachment list.
+- **Images are deferred** (ADR 0013).
 
-## Conseguenze
+## Consequences
 
-- **Adapter:** `context` nel risultato del turno, per Codex e Claude; il runtime lo inoltra con
-  il messaggio.
-- **La continuità fra sessioni** potrà usare questa misura come soglia, quando sarà progettata.
+- **Codex and Claude adapters** return `context` in the turn result, and the runtime forwards it with the message.
+- **Session continuity** may use this measure as a threshold once that feature is designed.

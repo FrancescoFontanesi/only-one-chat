@@ -67,14 +67,14 @@ export function readOp(line: string): Op {
 }
 
 const GROUP_LABEL: Record<Op['group'], [string, string]> = {
-  lette: ['lettura', 'letture'],
-  modifiche: ['modifica', 'modifiche'],
-  comandi: ['comando', 'comandi'],
-  ricerche: ['ricerca', 'ricerche'],
-  altre: ['altra', 'altre'],
+  lette: ['read', 'reads'],
+  modifiche: ['edit', 'edits'],
+  comandi: ['command', 'commands'],
+  ricerche: ['search', 'searches'],
+  altre: ['other action', 'other actions'],
 };
 
-/** "2 letture · 1 modifica · 1 comando" */
+/** "2 reads · 1 edit · 1 command" */
 export function opsSummary(ops: readonly Op[]): string {
   const counts = new Map<Op['group'], number>();
   for (const op of ops) counts.set(op.group, (counts.get(op.group) ?? 0) + 1);
@@ -83,11 +83,10 @@ export function opsSummary(ops: readonly Op[]): string {
     .join(' · ');
 }
 
-/** The facts the extension writes after a delegation, or the files a message changed. */
+/** Recognize the facts the extension writes, including notices from older chats. */
 export function isFacts(text: string): boolean {
-  return (
-    text.startsWith('File cambiati dall’inizio della richiesta:') ||
-    text.startsWith('File cambiati:')
+  return /^(?:Files changed(?: since the request began)?|File cambiati(?: dall’inizio della richiesta)?):/.test(
+    text,
   );
 }
 
@@ -107,14 +106,19 @@ export function readFacts(text: string): Facts {
   let section: 'files' | 'failed' | 'output' | null = 'files';
   const output: string[] = [];
   for (const line of lines.slice(1)) {
-    if (line.startsWith('Verifica eseguita dal runtime: ')) {
-      verify = line
-        .slice('Verifica eseguita dal runtime: '.length)
-        .replace(' → exit ', ' · uscita ');
+    if (section === 'output') {
+      output.push(line);
+      continue;
+    }
+    const heading = /^(?:Verification run by the runtime|Verifica eseguita dal runtime): /.exec(
+      line,
+    );
+    if (heading) {
+      verify = line.slice(heading[0].length).replace(' → exit ', ' · exit ');
       section = null;
-    } else if (line === 'Test falliti:') section = 'failed';
-    else if (line === 'Ultime righe dell’output:') section = 'output';
-    else if (section === 'output') output.push(line);
+    } else if (line === 'Failed tests:' || line === 'Test falliti:') section = 'failed';
+    else if (line === 'Last lines of output:' || line === 'Ultime righe dell’output:')
+      section = 'output';
     else if (line.startsWith('- ') && section === 'files') files.push(line.slice(2));
     else if (line.startsWith('- ') && section === 'failed') failed.push(line.slice(2));
   }

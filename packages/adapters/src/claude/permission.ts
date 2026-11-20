@@ -124,11 +124,12 @@ export async function startPermissionBridge(
       ask({ tool, input, summary: summarizeToolCall(tool, input) })
         .then((decision) => {
           if (decision === 'acceptForSession') allowed.add(key);
-          if (decision === 'decline') answer('deny', 'Negato dall’utente in Only One Chat.');
+          if (decision === 'decline')
+            answer('deny', 'The user denied this request in Only One Chat.');
           else answer('allow');
         })
         .catch(() => {
-          answer('deny', 'Nessuna risposta dall’utente.');
+          answer('deny', 'The user did not respond.');
         });
     });
     socket.on('error', () => undefined);

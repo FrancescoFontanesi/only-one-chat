@@ -13,7 +13,7 @@
 // directory instead). --fake drives the fake CLIs: no model turns, no quota.
 //
 // Claude reports its quota only when a turn starts, so a run brackets the
-// system with two probes: a minimal Haiku turn (no tools, "Rispondi solo OK")
+// system with two probes: a minimal Haiku turn (no tools, "Reply only with OK")
 // before and after, whose rate_limit_event arrives before its own inference.
 // Their tokens and cost are recorded apart, never in the system's totals; the
 // difference includes the first probe's own small consumption.
@@ -154,24 +154,24 @@ function handoffMetrics(turns: readonly TurnRecord[], invalid: number) {
 
 /** A session system: one model, one long chat, every message of the script in it. */
 const SESSION_AGENT_INSTRUCTIONS = [
-  "Sei un agente di Only One Chat: conversi con l'utente in questa chat e lavori sul progetto nella",
-  'cartella corrente; crea e modifica file solo lì. Per una richiesta di modifica: implementa, scrivi',
-  'test automatici, eseguili insieme a quelli esistenti e correggi finché passano; poi rispondi in',
-  'breve con cosa hai fatto, le decisioni prese e i problemi. Per una domanda rispondi senza',
-  'modificare nulla. Se manca una decisione che cambia il risultato, chiedila.',
+  'You are an Only One Chat agent. Talk with the user in this chat and work on the project in',
+  'the current folder. Create and edit files only there. For a change request, implement it,',
+  'write automated tests, and run them with the existing tests. Fix failures until they pass.',
+  'Briefly describe your work, decisions, and issues. Answer questions without editing files.',
+  'Ask the user for any missing decision that would change the result.',
 ].join('\n');
 
 /** A single system's only turn: implement, test and report. */
 const SINGLE_AGENT_INSTRUCTIONS = [
-  "Sei un agente di Only One Chat. Implementa la richiesta dell'utente nella cartella corrente:",
-  'crea e modifica file solo lì, scrivi i test, eseguili e correggi finché passano. Alla fine',
-  'rispondi solo con questo rapporto:',
+  'You are an Only One Chat agent. Implement the user’s request in the current folder.',
+  'Create and edit files only there, write tests, and fix failures until the tests pass.',
+  'Respond only with the following report:',
   '## File',
-  '<elenco dei file creati o modificati>',
+  '<files created or changed>',
   '## Test',
-  '<comando eseguito, test passati e falliti>',
-  '## Problemi',
-  '<problemi rimasti, oppure "Nessuno">',
+  '<command run and tests passed or failed>',
+  '## Issues',
+  '<remaining issues, or "None">',
 ].join('\n');
 
 const REPO = join(import.meta.dirname, '..');
@@ -273,8 +273,8 @@ async function verifiedFacts(
 ): Promise<string> {
   const changed = changes(baseline, snapshot(runDir));
   const lines = [
-    'File cambiati rispetto al progetto di partenza:',
-    ...(changed.length > 0 ? changed.map((change) => `- ${change}`) : ['- nessuno']),
+    'Files changed from the starting project:',
+    ...(changed.length > 0 ? changed.map((change) => `- ${change}`) : ['- none']),
   ];
   if (verify) {
     const run = await runCommand(verify, runDir);
@@ -284,10 +284,10 @@ async function verifiedFacts(
     const failed = output.split('\n').filter((line) => /^(FAIL|ERROR): /.test(line));
     lines.push(
       '',
-      `Verifica eseguita dal runtime: ${verify.join(' ')} → exit ${String(run.code)}${run.timedOut ? ' (timeout)' : ''}`,
-      ...(failed.length > 0 ? ['Test falliti:', ...failed.map((line) => `- ${line}`)] : []),
-      'Ultime righe dell’output:',
-      tail || '(nessun output)',
+      `Verification run by the runtime: ${verify.join(' ')} → exit ${String(run.code)}${run.timedOut ? ' (timeout)' : ''}`,
+      ...(failed.length > 0 ? ['Failed tests:', ...failed.map((line) => `- ${line}`)] : []),
+      'Last lines of output:',
+      tail || '(no output)',
     );
   }
   return lines.join('\n');
@@ -317,7 +317,7 @@ function sumTokens(turns: readonly TurnRecord[]): Record<string, TokenUsage> {
 }
 
 function quotaText(quota: QuotaSnapshot | null | undefined): string {
-  if (!quota) return 'non riportata';
+  if (!quota) return 'not reported';
   return quota.windows.map((w) => `${w.name} ${String(w.usedPercent)}%`).join(', ');
 }
 
@@ -489,7 +489,7 @@ async function main(): Promise<void> {
       const result = await startClaudeTurn({
         executable: claudeExecutable,
         cwd: runDir,
-        prompt: 'Rispondi solo OK',
+        prompt: 'Reply only with OK',
         model: 'haiku',
         effort: 'low',
       }).done;
@@ -872,7 +872,7 @@ async function main(): Promise<void> {
           changed: changes(before, snapshot(dir)).map((change) =>
             isTestFile(change.slice(change.indexOf(' ') + 1))
               ? change
-              : `${change} (non è un test)`,
+              : `${change} (non-test file)`,
           ),
           approved,
           text: review ? renderReview(review) : findings ? renderFindings(findings) : turn.text,
@@ -893,7 +893,7 @@ async function main(): Promise<void> {
       }
     }
   } else if (shadowConfigs.length > 0) {
-    process.stdout.write('\nNessuna revisione nel run: i revisori ombra non sono partiti.\n');
+    process.stdout.write('\nNo review occurred in this run. Shadow reviewers did not start.\n');
   }
 
   const hidden: HiddenResults = await runHiddenTests(suite, runDir, {
@@ -937,25 +937,25 @@ async function main(): Promise<void> {
   const md = [
     `# ${runId}`,
     '',
-    `${system.title}${fake ? ' (fake: nessun turno reale)' : ''}`,
+    `${system.title}${fake ? ' (fake CLIs)' : ''}`,
     '',
-    `- Esito: ${JSON.stringify(outcome.status)}`,
-    `- Test nascosti: ${String(hidden.passed)}/${String(hidden.total)}`,
-    `- Tempo totale: ${(wallMs / 1000).toFixed(1)} s`,
-    `- Quota Codex: prima ${quotaText(codexBefore)}; dopo ${quotaText(codexAfter)}`,
-    `- Quota Claude (sonde): prima ${quotaText(claudeBefore?.quota)}; dopo ${quotaText(claudeAfter?.quota)}`,
-    `- Costo nominale Claude: $${costUsd.toFixed(4)}`,
-    `- Consegne (strumenti ooc): ${
+    `- Outcome: ${JSON.stringify(outcome.status)}`,
+    `- Hidden tests: ${String(hidden.passed)}/${String(hidden.total)}`,
+    `- Total time: ${(wallMs / 1000).toFixed(1)} s`,
+    `- Codex quota: before ${quotaText(codexBefore)}, after ${quotaText(codexAfter)}`,
+    `- Claude quota (probes): before ${quotaText(claudeBefore?.quota)}, after ${quotaText(claudeAfter?.quota)}`,
+    `- Claude nominal cost: $${costUsd.toFixed(4)}`,
+    `- Handoffs (ooc tools): ${
       Object.entries(result.handoffs.byAgent)
         .map(
           ([who, row]) =>
-            `${who}: ${String(row.turns)} turni, ${JSON.stringify(row.made)}, mancate ${String(row.missing)}`,
+            `${who}: ${String(row.turns)} turns, ${JSON.stringify(row.made)}, missing ${String(row.missing)}`,
         )
-        .join('; ') || 'nessuna'
-    }; delegate non valide ${String(result.handoffs.invalidDelegations)}`,
-    `- File: ${files.map((f) => `${f.path} (${String(f.lines)})`).join(', ') || 'nessuno'}`,
+        .join('; ') || 'none'
+    }; invalid delegation calls ${String(result.handoffs.invalidDelegations)}`,
+    `- Files: ${files.map((f) => `${f.path} (${String(f.lines)})`).join(', ') || 'none'}`,
     '',
-    '| Messaggio | Turno | Etichetta | Tempo | Contesto letto | Output | Quota vista |',
+    '| Message | Turn | Label | Time | Context read | Output | Quota observed |',
     '| --- | --- | --- | --- | --- | --- | --- |',
     ...turns.map((t) => {
       // Context read in the turn: every model's input, cached or not, cache writes included.
@@ -965,22 +965,22 @@ async function main(): Promise<void> {
       return `| ${t.message ?? ''} | ${t.role} | ${t.label} | ${((t.usage?.durationMs ?? 0) / 1000).toFixed(1)} s | ${String(read)} | ${String(out)} | ${quotaText(t.quota)} |`;
     }),
     '',
-    '| Modello | Input | Cache letta | Cache scritta | Output | di cui ragionamento |',
+    '| Model | Input | Cache read | Cache write | Output | Reasoning |',
     '| --- | --- | --- | --- | --- | --- |',
     ...Object.entries(tokens).map(
       ([model, t]) =>
         `| ${model} | ${String(t.input)} | ${String(t.cachedInput)} | ${String(t.cacheWrite)} | ${String(t.output)} | ${String(t.reasoning)} |`,
     ),
     '',
-    'Test nascosti falliti:',
+    'Failed hidden tests:',
     ...hidden.cases.filter((c) => !c.passed).map((c) => `- ${c.name}: ${c.reason ?? ''}`),
     '',
     ...(resultForChat === null
       ? []
-      : ['## Risultato per la chat di ragionamento', '', '```text', resultForChat, '```', '']),
+      : ['## Result for the reasoning chat', '', '```text', resultForChat, '```', '']),
     ...(outcome.status === 'session'
       ? outcome.answers.flatMap((answer) => [
-          `## Risposta a ${answer.name} (${answer.status})`,
+          `## Answer to ${answer.name} (${answer.status})`,
           '',
           '```text',
           answer.text,
@@ -990,7 +990,7 @@ async function main(): Promise<void> {
       : []),
     ...(finalFacts === null
       ? []
-      : ['## Verifica finale del runner', '', '```text', finalFacts, '```', '']),
+      : ['## Final runner verification', '', '```text', finalFacts, '```', '']),
     ...shadows.flatMap((shadow) => {
       const models = Object.values(shadow.usage?.byModel ?? {});
       const fresh = models.reduce((s, m) => s + m.input + m.cacheWrite, 0);
@@ -998,12 +998,12 @@ async function main(): Promise<void> {
       const out = models.reduce((s, m) => s + m.output, 0);
       const { cli, model, effort } = shadow.reviewer;
       return [
-        `## Revisore ombra ${cli}:${model}:${effort}, stessa richiesta del primo turno di revisione`,
+        `## Shadow reviewer ${cli}:${model}:${effort} with the first reviewer request`,
         '',
-        `- Esito: ${shadow.kind}, verdetto ${String(shadow.verdict)}`,
-        `- Tempo: ${((shadow.durationMs ?? 0) / 1000).toFixed(1)} s; token nuovi ${String(fresh)}, in cache ${String(cached)}, output ${String(out)}; costo nominale $${(shadow.usage?.costUsd ?? 0).toFixed(4)}`,
-        `- File cambiati nella sua copia: ${shadow.changed.join(', ') || 'nessuno'}`,
-        `- Permessi chiesti e concessi: ${shadow.approved.join('; ') || 'nessuno'}`,
+        `- Outcome: ${shadow.kind}, verdict ${String(shadow.verdict)}`,
+        `- Time: ${((shadow.durationMs ?? 0) / 1000).toFixed(1)} s, fresh tokens ${String(fresh)}, cached ${String(cached)}, output ${String(out)}, nominal cost $${(shadow.usage?.costUsd ?? 0).toFixed(4)}`,
+        `- Files changed in its copy: ${shadow.changed.join(', ') || 'none'}`,
+        `- Permission requests approved: ${shadow.approved.join('; ') || 'none'}`,
         '',
         '```text',
         shadow.text,
@@ -1012,7 +1012,7 @@ async function main(): Promise<void> {
       ];
     }),
   ].join('\n');
-  // The results go into the repository: redacted like the fixtures, and kept in
+  // The results go into the ignored local sandbox folder, redacted like the fixtures, and kept in
   // the run directory instead if the scanner still finds something personal.
   const literals = new Map<string, string>();
   const addPath = (value: string, placeholder: string) => {
@@ -1039,7 +1039,7 @@ async function main(): Promise<void> {
   mkdirSync(resultsDir, { recursive: true });
   writeFileSync(join(resultsDir, `${runId}.json`), json);
   writeFileSync(join(resultsDir, `${runId}.md`), redactedMd);
-  process.stdout.write(`\n${redactedMd}\nRisultati: ${join(resultsDir, runId)}.{json,md}\n`);
+  process.stdout.write(`\n${redactedMd}\nResults: ${join(resultsDir, runId)}.{json,md}\n`);
 }
 
 main().catch((error: unknown) => {

@@ -17,11 +17,10 @@ import type { Cli, ProviderUsage } from '../webview/protocol.js';
 type Provider = Cli;
 
 const NOTES: Record<Provider, string> = {
-  codex: 'Letto da Codex senza consumare quota, ogni 2 minuti e dopo ogni turno.',
-  claude:
-    'Aggiornato a ogni turno di Claude: non si può leggere senza un turno, quindi è l’ultimo valore visto.',
+  codex: 'Read from Codex every 2 minutes and after each turn, without using quota.',
+  claude: 'Shows the latest usage reported by Claude. It updates after each turn.',
   antigravity:
-    'Letto da agy (/quota) senza consumare quota, ogni 2 minuti e dopo ogni turno di un nodo.',
+    'Read from agy (/quota) every 2 minutes and after each node turn, without using quota.',
 };
 
 const NAMES: Record<Provider, string> = {
@@ -118,11 +117,9 @@ export async function readAntigravityUsage(
     return window ? `${String(Math.round(window.usedPercent))}%` : '—';
   };
   const note = groups
-    .map(
-      (g) => `${g.name}: 5 ore ${used(g.windows, '5h')}, settimana ${used(g.windows, 'weekly')}.`,
-    )
+    .map((g) => `${g.name}: 5-hour ${used(g.windows, '5h')}, weekly ${used(g.windows, 'weekly')}.`)
     .join(' ');
-  return { quota: { windows: first.windows }, note: `Mostra ${first.name}. ${note}` };
+  return { quota: { windows: first.windows }, note: `Showing ${first.name}. ${note}` };
 }
 
 /** Codex's usage windows, read through the app-server: no model turn, no quota. */
@@ -163,9 +160,9 @@ export function usageAlerts(
       if (seen.has(key)) continue;
       seen.add(key);
       const name = NAMES[provider.provider];
-      const span = window.name === '5h' ? '5 ore' : 'settimana';
+      const span = window.name === '5h' ? '5-hour' : 'weekly';
       alerts.push(
-        `${name}: hai usato il ${String(Math.round(window.usedPercent))}% della finestra di ${span}.`,
+        `${name}: you have used ${String(Math.round(window.usedPercent))}% of your ${span} allowance.`,
       );
     }
   }

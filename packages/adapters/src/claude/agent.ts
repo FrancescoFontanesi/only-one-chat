@@ -253,7 +253,7 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
               handlers.onStep?.({
                 kind: 'message',
                 id: `m-${String(++stepCount)}`,
-                text: `La modalità auto di Claude Code non è disponibile qui (piano, modello o impostazioni): Claude lavora in modalità ${event.permissionMode} e chiede per ciò che non è consentito.`,
+                text: `Claude Code auto mode is unavailable with the current plan, model, or settings. Claude will use ${event.permissionMode} mode and ask before actions it cannot perform automatically.`,
               });
             }
           }

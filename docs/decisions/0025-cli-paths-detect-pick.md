@@ -1,35 +1,22 @@
-# 0025. Trovare gli eseguibili dei CLI dalle impostazioni
+# 0025. Finding CLI executables in settings
 
-Stato: Accettata (iterazione 3).
+Status: Accepted (iteration 3).
 
-## Contesto
+## Context
 
-- **Sezione Provider:** la pagina delle impostazioni chiedeva di scrivere a mano il percorso di
-  Codex e di Claude Code, e non aveva Antigravity.
-- **Dove stanno i CLI:** spesso non sono nel PATH, ma nelle estensioni dei provider:
-  `openai.chatgpt` porta con sé `bin/<piattaforma>/codex.exe`, `anthropic.claude-code` porta
-  `resources/native-binary/claude.exe`. Il programma d'installazione di Antigravity mette `agy`
-  in `%LOCALAPPDATA%\agy\bin`.
+- **The Providers section** required users to type the executable paths for Codex and Claude Code and omitted Antigravity.
+- **The CLIs are often installed by the provider outside PATH.** `openai.chatgpt` ships `bin/<platform>/codex.exe`, `anthropic.claude-code` ships `resources/native-binary/claude.exe`, and the Antigravity installer puts `agy` in `%LOCALAPPDATA%\agy\bin`.
 
-## Decisione
+## Decision
 
-1. **Provider accettati:** Codex, Claude Code e Antigravity, per ora solo questi tre. Il
-   protocollo rifiuta ogni altro nome.
-2. **Ogni percorso ha tre modi di essere impostato:**
-   - **RILEVA:** cerca nel PATH, poi nei posti noti dell'estensione o del programma
-     d'installazione del provider;
-   - **SELEZIONA:** apre l'esplora risorse su una cartella e cerca l'eseguibile lì e nella sua
-     `bin`;
-   - **a mano**, come prima.
-3. **Stessa ricerca dell'avvio:** si usa `resolveNativeExecutable`, la stessa usata prima di un
-   turno, quindi un lanciatore `.cmd` o `.ps1` resta rifiutato. Non si esegue nulla: un percorso
-   si scrive solo se lì c'è un eseguibile.
-4. **Dove si scrive:** nelle impostazioni dell'utente, mai in quelle di una cartella (sono
-   impostazioni con ambito `machine`).
+1. **The protocol accepts Codex, Claude Code, and Antigravity.** It rejects all other provider names.
+2. **Each path has three input methods.**
+   - **Detect** looks in PATH, then in known locations for the provider's extension or installer.
+   - **Select** opens a folder picker and searches the chosen folder and its `bin` subdirectory.
+   - Users can still enter a path manually.
+3. **Detection uses the same resolver as startup.** `resolveNativeExecutable` rejects `.cmd` and `.ps1` launchers. The check runs no programs and saves a path only when the executable exists.
+4. **These machine-scoped settings are written to user settings.**
 
-## Conseguenze
+## Consequences
 
-- **Versione dell'estensione:** VS Code dà il percorso della versione attiva di un'estensione.
-  Dopo un aggiornamento dell'estensione il percorso salvato punta alla versione vecchia, finché
-  non si preme di nuovo RILEVA o non la si rimuove; in quel caso l'avvio segnala che l'eseguibile
-  manca.
+- VS Code returns the path of the active provider extension version. After that extension updates, the saved path still points to the old version until the user selects Detect again or clears the path. If the executable is missing, startup reports it.

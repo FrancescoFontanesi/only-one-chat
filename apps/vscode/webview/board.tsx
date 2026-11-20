@@ -203,7 +203,7 @@ export function Board({
           <button
             class="cn-btn cn-btn--text"
             type="button"
-            aria-label="Riduci"
+            aria-label="Zoom out"
             onClick={() => {
               zoomBy(1 / 1.2);
             }}
@@ -216,7 +216,7 @@ export function Board({
           <button
             class="cn-btn cn-btn--text"
             type="button"
-            aria-label="Ingrandisci"
+            aria-label="Zoom in"
             onClick={() => {
               zoomBy(1.2);
             }}
@@ -231,7 +231,7 @@ export function Board({
               fitAll();
             }}
           >
-            <span class="cn-btn__label">Adatta</span>
+            <span class="cn-btn__label">Fit</span>
           </button>
         </div>
       </header>
@@ -239,7 +239,7 @@ export function Board({
         ref={port}
         class="cn-cell cn-cell--flush bd__port"
         role="group"
-        aria-label={`${label}: trascina il fondo per spostarti, rotella o + e − per lo zoom, 0 adatta`}
+        aria-label={`${label}. Drag the background to pan. Scroll or press + and − to zoom. Press 0 to fit.`}
         tabIndex={0}
         onPointerDown={onPointerDown}
         onKeyDown={onKeyDown}

@@ -90,6 +90,7 @@ export function Dock({
       <div class="dock__in">
         <aside class="dock__side" aria-label="Chat recipient">
           <RoleHud
+            handoffPending={session?.implementerHandoffPending ?? false}
             roles={roles}
             monitor={monitor}
             to={to}

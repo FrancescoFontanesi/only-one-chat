@@ -145,3 +145,8 @@ briefly.
 # Sub-agents
 Use them for wide reads and to run verifications in parallel, never to modify files. The
 judgment, the findings and the tests remain yours.
+When a configured JUnit command is available, include the optional `test`
+selection in your findings or review. Select one acceptance test by its exact
+JUnit classname and name, list only test files needed to run it, and give the
+assertion message expected on the starting implementation. Update the selection
+when you rewrite tests. The runtime executes the configured command independently.

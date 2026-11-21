@@ -6,6 +6,7 @@
 // Enums are fixed English values; every other field is free text, in any language.
 
 import type { HandoffCall, HandoffServer, HandoffSpec, HandoffTools } from './agent.js';
+import type { TestSelection } from './verification.js';
 import { validate, type Schema } from './handoff-server.js';
 
 export const REPORT_OUTCOMES = ['done', 'partial', 'blocked'] as const;
@@ -39,6 +40,7 @@ export interface Delegate {
 
 /** The implementer's report. */
 export interface Report {
+  readonly test?: TestSelection;
   readonly outcome: ReportOutcome;
   readonly summary: string;
   readonly changes: readonly { readonly path: string; readonly change: string }[];
@@ -56,6 +58,7 @@ export interface Report {
 
 /** The reviewer's findings, for the implementer. */
 export interface Findings {
+  readonly test?: TestSelection;
   readonly items: readonly {
     readonly id: string;
     readonly severity: Severity;
@@ -67,6 +70,7 @@ export interface Findings {
 
 /** The reviewer's review, for the leader. */
 export interface Review {
+  readonly test?: TestSelection;
   readonly verdict: ReviewVerdict;
   readonly summary: string;
   readonly criteria: readonly CriterionResult[];
@@ -152,6 +156,23 @@ const CRITERIA_RESULTS: Schema = list(
   { description: 'One entry for each criterion of the brief.' },
 );
 
+const TEST_SELECTION = object(
+  {
+    criterion: { ...criterionId('Criterion exercised by the selected test'), maxLength: 16 },
+    className: { ...optional('JUnit testcase classname, empty when absent.'), maxLength: 512 },
+    name: { ...required('Exact JUnit testcase name.'), maxLength: 512 },
+    files: list(
+      { ...required('Workspace-relative test file path.'), maxLength: 512 },
+      { minItems: 1, maxItems: 16 },
+    ),
+    expectedFailure: {
+      ...required('Assertion message expected on the starting implementation.'),
+      maxLength: 1024,
+    },
+  },
+  ['criterion', 'className', 'name', 'files', 'expectedFailure'],
+);
+
 const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
   delegate: object(
     {
@@ -185,6 +206,7 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
   ),
   report: object(
     {
+      test: TEST_SELECTION,
       outcome: choice(
         REPORT_OUTCOMES,
         'done: every criterion verified by a command you ran in this round and nothing blocks; partial: a criterion is missing or not verified; blocked: you stopped for a missing decision.',
@@ -230,6 +252,7 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
   ),
   findings: object(
     {
+      test: TEST_SELECTION,
       items: list(
         object(
           {
@@ -257,6 +280,7 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
   ),
   review: object(
     {
+      test: TEST_SELECTION,
       verdict: choice(
         REVIEW_VERDICTS,
         'approved: you verified every criterion yourself, no axis is doubtful or worse, no finding is open; with_reservations: no blocking finding is open but a criterion is unverified, an axis doubtful or a minor finding open; rejected: a blocking finding is open or an axis is bypassed, flaw or outdated.',

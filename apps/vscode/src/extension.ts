@@ -57,6 +57,7 @@ export function activate(context: vscode.ExtensionContext): OnlyOneChatExports {
     antigravity: () => Promise.reject(new Error('Antigravity skills are unavailable.')),
   });
   const roles = new RoleSettings(catalog);
+  const verificationProvider = new VerificationContentProvider(context);
   const usageReader = new UsageReader(context, usage, () =>
     roles.nodes().some((node) => node.cli === 'antigravity'),
   );
@@ -72,6 +73,11 @@ export function activate(context: vscode.ExtensionContext): OnlyOneChatExports {
     vscode.workspace.registerTextDocumentContentProvider(
       CHECKPOINT_SCHEME,
       new CheckpointContentProvider(context),
+    ),
+    vscode.workspace.registerTextDocumentContentProvider(VERIFICATION_SCHEME, verificationProvider),
+    vscode.languages.registerDocumentLinkProvider(
+      { scheme: VERIFICATION_SCHEME },
+      verificationProvider,
     ),
   );
   const services = {
@@ -102,3 +108,4 @@ export function activate(context: vscode.ExtensionContext): OnlyOneChatExports {
 export function deactivate(): void {
   // Nothing to release yet: all disposables are owned by the extension context.
 }
+import { VERIFICATION_SCHEME, VerificationContentProvider } from './webview/verificationContent.js';

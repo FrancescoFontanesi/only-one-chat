@@ -31,6 +31,32 @@ function record(id: string, updatedAt: number, updates: ThreadUpdate[] = []): Ch
 }
 
 describe('chat history (R5)', () => {
+  it('persists the latest evidence and drops malformed evidence on reopen', () => {
+    const history = new ChatHistory(dir);
+    const evidence = {
+      id: 'v-1',
+      origin: 'reviewer' as const,
+      status: 'passed' as const,
+      comparison: 'confirmed' as const,
+      summary: 'passed',
+      detail: 'Recorded result',
+    };
+    const active = record('chat-v', 1);
+    active.updates = [
+      { type: 'verification', evidence: { ...evidence, comparison: 'pending' } },
+      { type: 'verification', evidence },
+    ];
+    history.save(active);
+    expect(history.load(active.id)?.updates).toEqual([{ type: 'verification', evidence }]);
+    writeFileSync(
+      join(dir, 'chat-v.json'),
+      JSON.stringify({
+        ...active,
+        updates: [{ type: 'verification', evidence: { ...evidence, comparison: 'execute' } }],
+      }),
+    );
+    expect(history.load(active.id)?.updates).toEqual([]);
+  });
   it('saves a chat atomically and lists the chats, most recent first', () => {
     const history = new ChatHistory(join(dir, 'chats'));
     history.save({ ...record('chat-a', 1), sessions: { leader: 'thread-9' } });

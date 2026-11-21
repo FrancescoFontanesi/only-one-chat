@@ -46,6 +46,7 @@ import {
   type TurnUsage,
 } from '@only-one-chat/runtime';
 import { validImplementerHandoff } from './history.js';
+import { WorkspaceVerification } from './verification.js';
 import type {
   ApprovalAction,
   ApprovalMode,
@@ -232,6 +233,8 @@ export class ChatSession {
   /** Stops what is running now: a leader loop or a direct implementer turn. */
   private stopRunning: (() => Promise<void>) | undefined;
   private stopRequested = false;
+  private requestController = new AbortController();
+  private readonly verification: WorkspaceVerification;
   private running = false;
   private nextId = 1;
   private readonly tag = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -288,6 +291,15 @@ export class ChatSession {
     private readonly events: ChatEvents,
   ) {
     this.mode = config.mode;
+    this.verification = new WorkspaceVerification({
+      cwd: config.cwd,
+      command: config.verifyCommand,
+      store: config.checkpoints,
+      id: () => this.id('v'),
+      update: (evidence) => {
+        this.events.update({ type: 'verification', evidence });
+      },
+    });
     this.reviewerConfig = config.reviewer;
     this.roles = { leader: readOnly(config.leader), implementer: config.implementer };
     this.restored = config.draft;
@@ -849,6 +861,7 @@ export class ChatSession {
     work: (baseline: ReturnType<typeof snapshot>, shown: { facts: boolean }) => Promise<void>,
   ): Promise<void> {
     this.stopRequested = false;
+    this.requestController = new AbortController();
     this.running = true;
     this.events.busy(true);
     this.inRequest = checkpoint;
@@ -869,6 +882,7 @@ export class ChatSession {
       this.running = false;
       this.stopRunning = undefined;
       this.inRequest = null;
+      this.verification.reset();
       this.closeRunningTurns('failed');
       const reviewed = checkpoint ? this.review(checkpoint) : false;
       if (!shown.facts && !reviewed) {
@@ -892,8 +906,14 @@ export class ChatSession {
    */
   private async facts(baseline: ReturnType<typeof snapshot>): Promise<string> {
     const { config } = this;
-    const facts = await verifiedFacts(config.cwd, baseline, config.verifyCommand, this.ignored);
+    const facts = await verifiedFacts(config.cwd, baseline, [], this.ignored);
+    const command =
+      config.verifyCommand.length > 0
+        ? `Configured runtime verification command: ${JSON.stringify(config.verifyCommand)}. The {junit} placeholder receives an extension-owned report path.`
+        : 'No runtime verification command configured.';
     return `${facts}
+
+${command}
 
 ${this.diffChecks()}`;
   }
@@ -995,6 +1015,7 @@ ${this.diffChecks()}`;
       request: '',
       handoffServer: config.handoffServer,
       mode: 'review',
+      verification: this.verification,
       reviewOf: of,
       relay: (message) => plainRefs(message, config.cwd),
       log: this.log ?? (await openEventLog(config.logPath, config.cwd)),
@@ -1056,6 +1077,7 @@ ${this.diffChecks()}`;
   ): Promise<void> {
     const session = await this.implementer();
     const notes = this.takeNotes('implementer');
+    this.verification.begin();
     const result = await this.implementerTurn(
       session,
       [this.implementerPreface(), notes, text].filter(Boolean).join('\n\n'),
@@ -1070,7 +1092,7 @@ ${this.diffChecks()}`;
     const judged =
       this.reviewerConfig && result.report?.outcome !== 'blocked'
         ? await this.reviewWork(
-            { brief: text, report, reportCommandEvidence, direct: true },
+            { brief: text, report, reportData: result.report, reportCommandEvidence, direct: true },
             baseline,
             shown,
           )
@@ -1094,7 +1116,12 @@ ${this.diffChecks()}`;
       );
       return;
     }
-    const facts = await this.facts(baseline);
+    const comparison = await this.verification.finish(
+      result.report?.test,
+      'implementer',
+      this.requestController.signal,
+    );
+    const facts = [await this.facts(baseline), comparison.summary].join('\n\n');
     shown.facts = true;
     this.events.update({ type: 'notice', level: 'info', text: facts });
     this.keepForLeader(
@@ -1117,6 +1144,7 @@ ${this.diffChecks()}`;
     baseline: ReturnType<typeof snapshot>,
     shown: { facts: boolean },
   ): Promise<void> {
+    this.verification.beginReview();
     const work = this.lastWork;
     const judged = await this.reviewWork(
       {
@@ -1205,6 +1233,7 @@ ${this.diffChecks()}`;
         this.onEvent(event);
       },
       mode: 'leader',
+      verification: this.verification,
       leaderSession: this.leaderSession,
       workerSession: worker,
       workerPreface: () => this.implementerPreface(),
@@ -1384,6 +1413,7 @@ ${this.diffChecks()}`;
 
   async stop(): Promise<void> {
     this.stopRequested = true;
+    this.requestController.abort();
     // Whatever is still waiting for the user is declined.
     for (const id of [...this.permissions.keys()]) this.permit(id, 'decline');
     for (const id of [...this.questions.keys()]) this.decline(id, 'declined');
@@ -1540,7 +1570,7 @@ ${this.diffChecks()}`;
         update({
           type: 'notice',
           level: event.verdict === 'rejected' || event.verdict === null ? 'warn' : 'info',
-          text: `Review by ${event.reviewer}: ${verdict} · ${rounds}`,
+          text: `Review by ${event.reviewer}: ${verdict} · ${rounds}${event.verification ? ` · Runtime ${event.verification}` : ''}`,
         });
         break;
       }

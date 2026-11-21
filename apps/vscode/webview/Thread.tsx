@@ -810,6 +810,45 @@ export function Thread({
     <>
       {items.map((item) => {
         switch (item.kind) {
+          case 'verification':
+            return (
+              <section class="turn" key={item.id}>
+                <div class="who">
+                  <b>EXTENSION</b>
+                  <span>VERIFICATION</span>
+                </div>
+                <div class="tb">
+                  <span class="t-data">
+                    {item.evidence.comparison === 'pending' && item.evidence.budget !== undefined
+                      ? `Corrections ${String(item.evidence.round ?? 0)}/${String(item.evidence.budget)} · `
+                      : ''}
+                    {item.evidence.status} · Red-green{' '}
+                    {item.evidence.comparison.replaceAll('_', ' ')}
+                  </span>{' '}
+                  <button
+                    type="button"
+                    class="cn-btn cn-btn--sm"
+                    onClick={() => {
+                      post({ type: 'openVerification', id: item.id });
+                    }}
+                  >
+                    Open evidence
+                  </button>
+                  {item.evidence.selection?.files[0] && (
+                    <button
+                      type="button"
+                      class="cn-btn cn-btn--sm"
+                      onClick={() => {
+                        const path = item.evidence.selection?.files[0];
+                        if (path) post({ type: 'openFile', path });
+                      }}
+                    >
+                      Open test
+                    </button>
+                  )}
+                </div>
+              </section>
+            );
           case 'user':
             users++;
             return enter(item.id, <User key={item.id} item={item} index={users} busy={busy} />);

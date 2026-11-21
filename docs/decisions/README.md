@@ -41,3 +41,4 @@ Each decision has its own `NNNN-title.md` file with Status, Context, Decision, a
 | [0035](0035-handoff-tools-and-english.md)         | Structured handoff tools and English across the project              | Accepted                                        |
 | [0036](0036-verification-traceability.md)         | Traceability for reported verification commands                      | Accepted, implementation pending                |
 | [0037](0037-persist-implementer-handoff.md)       | Persist implementer handoffs                                         | Accepted                                        |
+| [0038](0038-verification-and-handoff.md)          | Review cycles, red-green verification, and handoff status            | Accepted                                        |

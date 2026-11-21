@@ -7,6 +7,7 @@
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PendingReport } from '@only-one-chat/runtime';
+import { isVerificationEvidence } from '../../../../packages/runtime/src/verification.js';
 import type { AgentChoice, DraftDelegation, FileNotes } from './chat.js';
 import type { Cli, ContextInfo, ThreadUpdate, TurnRole } from '../webview/protocol.js';
 
@@ -187,6 +188,11 @@ export function newChatId(now = Date.now()): string {
  * (ADR 0019) only its last version stays, where it first appeared.
  */
 export function compact(updates: readonly ThreadUpdate[]): ThreadUpdate[] {
+  const lastVerification = new Map<string, ThreadUpdate>();
+  for (const update of updates) {
+    if (update.type === 'verification') lastVerification.set(update.evidence.id, update);
+  }
+  const placedVerification = new Set<string>();
   const done = new Set(
     updates.flatMap((u) => (u.type === 'turn' && u.status !== 'running' ? [u.id] : [])),
   );
@@ -197,6 +203,11 @@ export function compact(updates: readonly ThreadUpdate[]): ThreadUpdate[] {
   const placed = new Set<string>();
   return updates
     .flatMap((u): ThreadUpdate[] => {
+      if (u.type === 'verification') {
+        if (placedVerification.has(u.evidence.id)) return [];
+        placedVerification.add(u.evidence.id);
+        return [lastVerification.get(u.evidence.id) ?? u];
+      }
       if (u.type === 'chunk' && done.has(u.turnId)) return [];
       if (u.type !== 'step' || !done.has(u.turnId)) return [u];
       const key = `${u.turnId}\n${u.step.id}`;
@@ -264,6 +275,9 @@ export class ChatHistory {
       return record.version === 1 && record.id === id
         ? {
             ...(record as ChatRecord),
+            updates: (record as ChatRecord).updates.filter(
+              (update) => update.type !== 'verification' || isVerificationEvidence(update.evidence),
+            ),
             implementerHandoff: validImplementerHandoff(record.implementerHandoff)
               ? record.implementerHandoff
               : undefined,

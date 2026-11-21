@@ -30,6 +30,7 @@ export const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_EDITS = 20_000;
 
 export interface Checkpoint {
+  readonly incomplete?: boolean;
   readonly id: string;
   readonly at: number;
   /** Relative path → content hash. */
@@ -130,10 +131,19 @@ export class CheckpointStore {
     return readFileSync(this.blobPath(id));
   }
 
+  keepArtifact(content: string): string {
+    return this.keep(Buffer.from(content, 'utf8'));
+  }
+
   /** The folder's files now: path → content, the large ones apart. Null when it cannot be read. */
-  private read(): { files: Map<string, Buffer>; large: Map<string, string> } | null {
+  private read(): {
+    files: Map<string, Buffer>;
+    large: Map<string, string>;
+    incomplete: boolean;
+  } | null {
     const files = new Map<string, Buffer>();
     const large = new Map<string, string>();
+    let incomplete = false;
     const walk = (folder: string): boolean => {
       for (const entry of readdirSync(folder, { withFileTypes: true })) {
         const full = join(folder, entry.name);
@@ -148,12 +158,12 @@ export class CheckpointStore {
           if (stat.size > MAX_FILE_BYTES)
             large.set(path, `${String(stat.size)}:${String(stat.mtimeMs)}`);
           else files.set(path, readFileSync(full));
-        }
+        } else incomplete = true;
       }
       return true;
     };
     try {
-      return walk(this.cwd) ? { files, large } : null;
+      return walk(this.cwd) ? { files, large, incomplete } : null;
     } catch {
       return null;
     }
@@ -166,7 +176,13 @@ export class CheckpointStore {
     if (!now) return null;
     const files: Record<string, string> = {};
     for (const [path, content] of now.files) files[path] = this.keep(content);
-    const checkpoint: Checkpoint = { id, at, files, large: Object.fromEntries(now.large) };
+    const checkpoint: Checkpoint = {
+      id,
+      at,
+      files,
+      large: Object.fromEntries(now.large),
+      incomplete: now.incomplete,
+    };
     mkdirSync(this.manifests, { recursive: true });
     const path = join(this.manifests, `${id}.json`);
     writeFileSync(`${path}.tmp`, JSON.stringify(checkpoint));
@@ -180,6 +196,21 @@ export class CheckpointStore {
       return JSON.parse(readFileSync(join(this.manifests, `${id}.json`), 'utf8')) as Checkpoint;
     } catch {
       return undefined;
+    }
+  }
+
+  /** Reconstruct recorded regular files in a fresh, extension-owned directory. */
+  materialize(checkpoint: Checkpoint, destination: string): void {
+    if (checkpoint.incomplete || Object.keys(checkpoint.large).length > 0) {
+      throw new Error('Checkpoint has unrecorded files or symbolic links');
+    }
+    for (const [path, id] of Object.entries(checkpoint.files)) {
+      const target = resolve(destination, path);
+      const rel = relative(destination, target);
+      if (!rel || rel.startsWith('..') || isAbsolute(rel))
+        throw new Error('Invalid checkpoint path');
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, this.content(id));
     }
   }
 

@@ -147,3 +147,4 @@ export {
   type ClaudeTurnOptions,
   type ClaudeTurnResult,
 } from './claude/turn.js';
+export { terminateTree, OWN_PROCESS_GROUP } from './process-tree.js';

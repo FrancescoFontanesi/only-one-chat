@@ -305,7 +305,7 @@
           },
           "default": [],
           "scope": "machine",
-          "description": "Run again by the extension after each delegation, e.g. [\"python\", \"-m\", \"unittest\"]."
+          "description": "Run independently by the extension after work and review. Use {junit} as a command argument placeholder for an extension-owned JUnit XML report path. Without JUnit, exit code and output remain available and a nonzero exit is inconclusive."
         },
         "onlyOneChat.fake": {
           "type": "boolean",
@@ -400,7 +400,8 @@
     "@only-one-chat/adapters": "workspace:*",
     "@only-one-chat/runtime": "workspace:*",
     "katex": "0.19.1",
-    "preact": "10.29.8"
+    "preact": "10.29.8",
+    "sax": "1.6.1"
   },
   "devDependencies": {
     "@types/mocha": "10.0.10",

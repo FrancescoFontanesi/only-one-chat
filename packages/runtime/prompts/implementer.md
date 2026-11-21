@@ -113,3 +113,7 @@ the test added) | `disputed` (the passage of the brief or the output obtained) |
 
 # Sub-agents
 Use them for wide reads that would consume a lot of context, never to modify files.
+When a configured JUnit command is available,
+include the optional `test` selection in your report. Identify the criterion,
+exact JUnit classname and name, test files, and expected baseline assertion.
+The reviewer can select or rewrite a test during its normal review.

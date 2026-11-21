@@ -353,6 +353,7 @@ export function RoleHud({
   mode,
   setMode,
   busy,
+  handoffPending,
 }: {
   roles: RolesState | undefined;
   monitor: MonitorState;
@@ -368,6 +369,7 @@ export function RoleHud({
   setMode: (mode: ApprovalMode) => void;
   /** A message of who is shown is running: no handoff now. */
   busy: boolean;
+  handoffPending?: boolean;
 }) {
   // Two choices (ADR 0028). The label at the top picks the group or the node alone: the pair of
   // the leader and the implementer, then each node (those off the board, read only, last). The
@@ -601,19 +603,21 @@ export function RoleHud({
             <button
               class="cn-btn cn-btn--outline cn-btn--sm hud__handoff"
               type="button"
-              disabled={busy || !started}
+              disabled={busy || !started || handoffPending}
               title={
-                !started
-                  ? 'The implementer will start a new session when the chat begins'
-                  : busy
-                    ? 'Handoff is available after the current turn'
-                    : 'Start a new session with the same model and a handoff from this one'
+                handoffPending
+                  ? 'The next work request will use the saved handoff'
+                  : !started
+                    ? 'The implementer will start a new session when the chat begins'
+                    : busy
+                      ? 'Handoff is available after the current turn'
+                      : 'Start a new session with the same model and a handoff from this one'
               }
               onClick={() => {
                 post({ type: 'handoff' });
               }}
             >
-              <span class="cn-btn__label">Handoff</span>
+              <span class="cn-btn__label">{handoffPending ? 'Handoff pending' : 'Handoff'}</span>
               <span class="cn-btn__icon" aria-hidden="true">
                 →
               </span>

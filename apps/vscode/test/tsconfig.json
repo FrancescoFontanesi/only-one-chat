@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["node", "mocha"]
   },
-  "include": ["suite", "unit"]
+  "include": ["suite", "unit", "../src/sax.d.ts"]
 }

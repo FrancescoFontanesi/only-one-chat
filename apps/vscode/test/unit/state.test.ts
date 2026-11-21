@@ -7,6 +7,22 @@ function apply(updates: ThreadUpdate[]): ThreadItem[] {
 }
 
 describe('the webview thread', () => {
+  it('updates one compact verification entry throughout a task', () => {
+    const evidence = {
+      id: 'v-1',
+      origin: 'reviewer' as const,
+      status: 'passed' as const,
+      comparison: 'pending' as const,
+      summary: 'passed',
+      detail: 'native editor details',
+    };
+    const items = apply([
+      { type: 'verification', evidence },
+      { type: 'verification', evidence: { ...evidence, comparison: 'confirmed' } },
+    ]);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: 'verification', evidence: { comparison: 'confirmed' } });
+  });
   it('streams a turn, then completes it with label and usage', () => {
     const items = apply([
       { type: 'user', id: 'u-1', text: 'ciao' },

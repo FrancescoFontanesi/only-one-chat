@@ -189,6 +189,43 @@ sub-agents, permissions and unsaved files, the composer, notifications, the CLIs
 - **Not covered:** files over 2 MB, the excluded folders (`.git`, `node_modules`, …), and what a
   command does outside the folder.
 
+## Runtime verification
+
+Set `onlyOneChat.verifyCommand` once in VS Code's user settings. For a project
+using Vitest, the following command produces JUnit evidence in extension-owned
+temporary storage.
+
+```json
+{
+  "onlyOneChat.verifyCommand": [
+    "node",
+    "node_modules/vitest/vitest.mjs",
+    "run",
+    "--reporter=junit",
+    "--outputFile={junit}"
+  ]
+}
+```
+
+The extension replaces `{junit}` with the report path and executes arguments
+without a shell. Use the project's equivalent JUnit reporter for other runners.
+The implementer or reviewer identifies one acceptance test in its normal report.
+After review, the runtime runs the retained tests and compares the selected final
+test with the starting code. Test failures can use the remaining correction
+budget. Setup errors and missing reports are shown as inconclusive.
+
+The chat shows a compact outcome. **Open evidence** opens a read-only VS Code
+document with the verdict, test selection, command evidence, and links to recorded
+JUnit reports. **Open test** opens the selected test through native file navigation.
+Node dependencies are copied with bounded setup and workspace links remapped to
+the isolated code. Dependencies outside the captured workspace, setup beyond
+30 seconds or 512 MiB, and incomplete checkpoints make comparison unavailable.
+An explicit review of older work without its original baseline also reports the
+comparison as unavailable. Package or dependency manifest changes also make the baseline comparison
+unavailable because the original installed toolchain is not recorded.
+Ordinary commands without `{junit}` retain their exit code and output, with
+nonzero exits classified as inconclusive.
+
 ## Chats are kept
 
 - **Each chat of the folder is saved** in the extension's workspace storage, together with the

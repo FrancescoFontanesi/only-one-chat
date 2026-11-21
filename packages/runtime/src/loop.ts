@@ -33,6 +33,7 @@ import type {
 import { extractResult, parseBrief, type Brief } from './brief.js';
 import { CommandEvidence, reportWithoutCommandReferences } from './command-evidence.js';
 import type { EventLog } from './event-log.js';
+import type { TestSelection, VerificationResult, WorkVerification } from './verification.js';
 import { checkReport, checkReview, contractFacts } from './contract.js';
 import {
   handoffTools,
@@ -54,6 +55,7 @@ import {
   REVIEWER_ROLE_INSTRUCTIONS,
   agentSessionOptions,
   findingsPrompt,
+  frameWorkerAnswer,
   fixPrompt,
   leaderResultPrompt,
   leaderReviewPrompt,
@@ -184,6 +186,7 @@ export type ThreadEvent =
   | {
       /** A review ended (ADR 0029): who reviewed, the verdict, the rounds of findings it took. */
       readonly type: 'reviewed';
+      readonly verification?: VerificationResult['status'];
       readonly reviewer: string;
       readonly implementer: string;
       readonly verdict: ReviewVerdict | null;
@@ -232,6 +235,7 @@ export type LoopOutcome =
   | { readonly status: 'failed'; readonly error: string };
 
 export interface LoopOptions {
+  readonly verification?: WorkVerification;
   readonly request: string;
   readonly worker: AgentFactory;
   /** How the CLIs launch the handoff server (ADR 0035), for the sessions the loop creates. */
@@ -675,6 +679,7 @@ export function runLoop(options: LoopOptions): Loop {
    * user wrote directly to the implementer has no report to require.
    */
   async function implement(worker: AgentSession, prompt: string): Promise<Work> {
+    options.verification?.begin();
     const commands = new CommandEvidence();
     const withPreface = (text: string) =>
       [options.workerPreface?.(), text].filter(Boolean).join('\n\n');
@@ -710,13 +715,15 @@ export function runLoop(options: LoopOptions): Loop {
     const commands = new CommandEvidence();
     const guarded = async (text: string) => {
       const undo = options.guardReviewer?.() ?? null;
-      const result = await turn(reviewer, 'reviewer', text, undefined, commands);
-      const put = undo ? undo() : '';
-      if (put !== '') {
-        await emit({ type: 'contract', role: 'reviewer', message: put });
-        restored = restored === '' ? put : `${restored}\n${put}`;
+      try {
+        return await turn(reviewer, 'reviewer', text, undefined, commands);
+      } finally {
+        const put = undo ? undo() : '';
+        if (put !== '') {
+          await emit({ type: 'contract', role: 'reviewer', message: put });
+          restored = restored === '' ? put : `${restored}\n${put}`;
+        }
       }
-      return result;
     };
     let result = await guarded(prompt);
     let text = result.text;
@@ -777,17 +784,51 @@ export function runLoop(options: LoopOptions): Loop {
       options.reviewerNote,
       of,
     );
+    let selection: TestSelection | undefined;
     for (let round = 0; ; round++) {
+      options.verification?.progress?.(round, rounds);
       const sent = await intercept(
         { kind: 'review', from: worker.name, to: reviewer.name, text: prompt, exchange },
         true,
       );
       const answer = await reviewerTurn(reviewer, sent ?? prompt, rounds - round);
+      selection = answer.review?.test ?? answer.findings?.test ?? selection;
+      let verified = await options.verification?.check(
+        selection,
+        'reviewer',
+        controller.signal,
+        answer.review?.verdict,
+      );
+      let completion: { summary: string; result: typeof verified } | undefined;
+      if (round >= rounds || (answer.findings === null && verified?.status !== 'failed')) {
+        completion = await options.verification?.finish(selection, 'reviewer', controller.signal);
+        verified = completion?.result ?? verified;
+      }
+      const verificationFailed = verified?.status === 'failed';
+      const runtimeNote = verified ? `Runtime verification: ${verified.status}` : '';
       const withRestored = (text: string) =>
         answer.restored === '' ? text : `${text}\n\n${answer.restored}`;
-      if (answer.review === null && answer.findings !== null && round < rounds) {
+      if (
+        ((answer.review === null && answer.findings !== null) || verificationFailed) &&
+        round < rounds
+      ) {
         const findings = withRestored(
-          findingsPrompt(reviewer.name, renderFindings(answer.findings)),
+          findingsPrompt(
+            reviewer.name,
+            [
+              answer.findings ? renderFindings(answer.findings) : '',
+              verificationFailed
+                ? frameWorkerAnswer(
+                    [runtimeNote, verified?.detail ?? verified?.summary]
+                      .filter(Boolean)
+                      .join('\n')
+                      .replace(/\r\n?|[\u2028\u2029]/g, '\n'),
+                  )
+                : '',
+            ]
+              .filter(Boolean)
+              .join('\n\n'),
+          ),
         );
         const passed = await intercept(
           { kind: 'review', from: reviewer.name, to: worker.name, text: findings, exchange },
@@ -803,21 +844,32 @@ export function runLoop(options: LoopOptions): Loop {
       const checked = answer.review ? checkReview(brief, answer.review) : null;
       const note = checked ? contractFacts('Checks on the review', checked.issues) : '';
       if (note !== '') await emit({ type: 'contract', role: 'reviewer', message: note });
+      const finalVerification = completion?.summary;
       await emit({
         type: 'reviewed',
         reviewer: reviewer.name,
         implementer: worker.name,
-        verdict: checked ? checked.verdict : null,
+        verdict: verificationFailed ? 'with_reservations' : checked ? checked.verdict : null,
         rounds: round,
+        ...(verified ? { verification: verified.status } : {}),
       });
       const text = answer.handoff?.text ?? (answer.text.trim() || EMPTY_REVIEW);
       const review = withRestored(note === '' ? text : `${text}\n\n${note}`);
       const reviewEvidence = answer.handoff?.commandEvidence;
       return {
         reviewer: reviewer.name,
-        review,
+        review: [
+          review,
+          runtimeNote,
+          verificationFailed
+            ? 'Unresolved: runtime verification failed and no correction rounds remain.'
+            : '',
+          finalVerification,
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
         work,
-        facts: [facts, reviewEvidence].filter(Boolean).join('\n\n'),
+        facts: [facts, reviewEvidence, finalVerification].filter(Boolean).join('\n\n'),
       };
     }
   }
@@ -951,7 +1003,12 @@ export function runLoop(options: LoopOptions): Loop {
         options.reviewer && work.data?.outcome !== 'blocked'
           ? await reviewed(worker, relay(approved), work, exchange)
           : undefined;
-      const facts = judged?.facts ?? (await factsFor(relay(approved), work));
+      const comparison = !judged
+        ? await options.verification?.finish(work.data?.test, 'implementer', controller.signal)
+        : undefined;
+      const facts =
+        judged?.facts ??
+        [await factsFor(relay(approved), work), comparison?.summary].filter(Boolean).join('\n\n');
       const finalWork = judged?.work ?? work;
       if (options.review === 'deferred') {
         return {

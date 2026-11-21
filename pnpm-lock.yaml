@@ -47,6 +47,9 @@ importers:
       preact:
         specifier: 10.29.8
         version: 10.29.8
+      sax:
+        specifier: 1.6.1
+        version: 1.6.1
     devDependencies:
       '@types/mocha':
         specifier: 10.0.10

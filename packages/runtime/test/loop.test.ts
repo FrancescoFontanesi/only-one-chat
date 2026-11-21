@@ -1269,6 +1269,112 @@ describe('handoffs in the thread and in the contract (ADR 0035)', () => {
 });
 
 describe('leader mode with a reviewer (ADR 0029, 0035)', () => {
+  it('restores guarded files when review is interrupted', async () => {
+    const codex = fakeAgent('Codex', [delegates()]);
+    const claude = fakeAgent('Claude', [reports()]);
+    const gemini = fakeAgent('Gemini', [{ hang: true }]);
+    const started = gemini.turnStarted();
+    let restored = false;
+    const { running } = await reviewedLoop(codex, claude, gemini, {
+      guardReviewer: () => () => {
+        restored = true;
+        return 'Reviewer files restored';
+      },
+    });
+    await started;
+    await running.stop();
+    expect((await running.done).status).toBe('stopped');
+    expect(restored).toBe(true);
+  });
+  it('routes a failure discovered by the final check through the remaining correction budget', async () => {
+    const codex = fakeAgent('Codex', [delegates(), { answer: 'Seen.' }]);
+    const claude = fakeAgent('Claude', [reports(), reports()]);
+    const gemini = fakeAgent('Gemini', [reviews(), reviews()]);
+    let finishes = 0;
+    const { running } = await reviewedLoop(codex, claude, gemini, {
+      reviewRounds: 1,
+      verification: {
+        begin() {},
+        check: () => Promise.resolve({ status: 'passed', summary: 'earlier success' }),
+        finish: () =>
+          Promise.resolve({
+            summary: 'final evidence',
+            result:
+              ++finishes === 1
+                ? { status: 'failed', summary: 'new test failure' }
+                : { status: 'passed', summary: 'corrected' },
+          }),
+      },
+    });
+    await running.done;
+    expect(claude.prompts).toHaveLength(2);
+    expect(claude.prompts[1]).toContain('new test failure');
+    expect(finishes).toBe(2);
+  });
+  it('uses the existing correction budget when runtime tests contradict reviewer approval', async () => {
+    const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed.' }]);
+    const claude = fakeAgent('Claude', [reports(), reports()]);
+    const gemini = fakeAgent('Gemini', [reviews(), reviews()]);
+    let checks = 0;
+    let finished = 0;
+    const { running } = await reviewedLoop(codex, claude, gemini, {
+      reviewRounds: 1,
+      verification: {
+        begin() {},
+        check: () =>
+          Promise.resolve(
+            ++checks === 1
+              ? { status: 'failed', summary: 'RUNTIME-TEST failed' }
+              : { status: 'passed', summary: 'passed' },
+          ),
+        finish: () => {
+          finished++;
+          return Promise.resolve({
+            summary: 'Runtime final passed',
+            result: { status: 'passed', summary: 'passed' },
+          });
+        },
+      },
+    });
+    await running.done;
+    expect(claude.prompts).toHaveLength(2);
+    expect(claude.prompts[1]).toContain('RUNTIME-TEST failed');
+    expect(gemini.prompts).toHaveLength(2);
+    expect(finished).toBe(1);
+    expect(codex.prompts[1]).toContain('Runtime final passed');
+  });
+
+  it.each(['failed', 'inconclusive'] as const)(
+    'delivers %s runtime evidence when no correction is available',
+    async (status) => {
+      const codex = fakeAgent('Codex', [delegates(), { answer: 'Seen.' }]);
+      const claude = fakeAgent('Claude', [reports()]);
+      const gemini = fakeAgent('Gemini', [reviews()]);
+      const { running, harness } = await reviewedLoop(codex, claude, gemini, {
+        reviewRounds: status === 'failed' ? 0 : 2,
+        verification: {
+          begin() {},
+          check: () => Promise.resolve({ status, summary: 'RUNTIME-OUTCOME' }),
+          finish: () =>
+            Promise.resolve({
+              summary: 'RUNTIME-FINAL-OUTCOME',
+              result: { status, summary: 'RUNTIME-OUTCOME' },
+            }),
+        },
+      });
+      await running.done;
+      expect(claude.prompts).toHaveLength(1);
+      expect(gemini.prompts).toHaveLength(1);
+      expect(codex.prompts[1]).toContain(`Runtime verification: ${status}`);
+      expect(codex.prompts[1]).toContain('RUNTIME-FINAL-OUTCOME');
+      expect(harness.events).toContainEqual(
+        expect.objectContaining({
+          type: 'reviewed',
+          verdict: status === 'failed' ? 'with_reservations' : 'approved',
+        }),
+      );
+    },
+  );
   const facts = () =>
     Promise.resolve('Files changed since the start of the request:\n- modified calc.py');
 

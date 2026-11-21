@@ -19,6 +19,11 @@ interface SubagentRow {
 
 export type ThreadItem =
   | {
+      readonly kind: 'verification';
+      readonly id: string;
+      readonly evidence: Extract<ThreadUpdate, { type: 'verification' }>['evidence'];
+    }
+  | {
       readonly kind: 'user';
       readonly id: string;
       readonly text: string;
@@ -101,6 +106,16 @@ const MAX_ACTIVITY = 200;
 let noticeId = 0;
 
 export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate): ThreadItem[] {
+  if (update.type === 'verification') {
+    const next: ThreadItem = {
+      kind: 'verification',
+      id: update.evidence.id,
+      evidence: update.evidence,
+    };
+    return items.some((item) => item.kind === 'verification' && item.id === next.id)
+      ? items.map((item) => (item.kind === 'verification' && item.id === next.id ? next : item))
+      : [...items, next];
+  }
   const mapTurn = (
     id: string,
     change: (turn: Extract<ThreadItem, { kind: 'turn' }>) => ThreadItem,

@@ -127,6 +127,7 @@ export interface SettingsState {
 
 /** The chat as the panel shows it in its header and composer. */
 export interface SessionInfo {
+  readonly implementerHandoffPending?: boolean;
   /** Folder the agents work in; null without an open folder. */
   readonly workspace: string | null;
   readonly trusted: boolean;
@@ -253,6 +254,7 @@ export interface TurnHandoff {
 
 /** One entry of the chat thread, or a change to one. */
 export type ThreadUpdate =
+  | { readonly type: 'verification'; readonly evidence: VerificationEvidence }
   | {
       readonly type: 'user';
       readonly id: string;
@@ -441,6 +443,7 @@ export type ApprovalAction = 'approve' | 'edit' | 'cancel';
 export type PermitDecision = 'accept' | 'acceptForSession' | 'decline';
 
 export type WebviewToHostMessage =
+  | { readonly type: 'openVerification'; readonly id: string }
   | { readonly type: 'ready' }
   | { readonly type: 'ping'; readonly id: number }
   | {
@@ -719,6 +722,8 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
       const id = msg['id'];
       return typeof id === 'string' && ID_PATTERN.test(id) ? { type: 'openChat', id } : undefined;
     }
+    case 'openVerification':
+      return isId(msg['id']) ? { type: 'openVerification', id: msg['id'] } : undefined;
     case 'deleteChat': {
       const id = msg['id'];
       return isId(id) ? { type: 'deleteChat', id } : undefined;
@@ -894,3 +899,4 @@ export function parseHostMessage(value: unknown): HostToWebviewMessage | undefin
       return undefined;
   }
 }
+import type { VerificationEvidence } from '../../../../packages/runtime/src/verification.js';

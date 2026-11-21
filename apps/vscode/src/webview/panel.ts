@@ -14,6 +14,7 @@ import { ignoredPaths } from '../session/ignore.js';
 import { expandMentions, insideFolder, withRefs } from '../session/mentions.js';
 import { ChatHistory, forReplay, newChatId, type ChatRecord } from '../session/history.js';
 import { checkpointsRoot } from './checkpointContent.js';
+import { refreshVerification, verificationUri } from './verificationContent.js';
 import {
   openFile,
   restoreCheckpoint,
@@ -338,6 +339,7 @@ export class OnlyOneChatPanel {
   private sessionInfo(): SessionInfo {
     const roles = this.chatRoles() ?? this.rolesFor(this.record);
     return {
+      implementerHandoffPending: this.record.implementerHandoff !== undefined,
       workspace: workspaceFolder(),
       trusted: vscode.workspace.isTrusted,
       leader: this.services.roles.info(roles.leader),
@@ -592,6 +594,20 @@ export class OnlyOneChatPanel {
           this.notice('warn', text);
         });
         break;
+      case 'openVerification': {
+        const evidence = this.record.updates.findLast(
+          (item) => item.type === 'verification' && item.evidence.id === message.id,
+        );
+        if (evidence?.type !== 'verification') throw new Error('Verification evidence unavailable');
+        const document = await vscode.workspace.openTextDocument(
+          verificationUri(this.record.id, message.id),
+        );
+        await vscode.window.showTextDocument(document, {
+          preview: true,
+          viewColumn: vscode.ViewColumn.Beside,
+        });
+        break;
+      }
       case 'permit':
         this.chat?.permit(message.id, message.decision);
         for (const node of this.nodes.values()) node.permit(message.id, message.decision);
@@ -867,6 +883,7 @@ export class OnlyOneChatPanel {
           // The paths its text names, for the thread's links (ADR 0018).
           const update = withRefs(raw, cwd);
           this.remember(update);
+          if (update.type === 'verification') refreshVerification(record.id, update.evidence.id);
           this.services.monitor.apply(update);
           if (update.type === 'question') {
             this.notifyIfAway('waiting', 'The leader has a question for you.');
@@ -888,6 +905,7 @@ export class OnlyOneChatPanel {
         },
         saveImplementerHandoff: (id, brief) => {
           this.history.saveImplementerHandoff(record, id, brief);
+          if (record === this.record) void this.postSession();
         },
         context: (role, context) => {
           record.context = { ...record.context, [role]: context };

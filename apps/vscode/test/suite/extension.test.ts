@@ -2,7 +2,14 @@
 // by @vscode/test-cli (see .vscode-test.mjs). No account or network AI access.
 
 import * as assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import * as vscode from 'vscode';
+import { ChatHistory } from '../../src/session/history.js';
+import { VerificationContentProvider } from '../../src/webview/verificationContent.js';
+import { CheckpointStore } from '../../src/session/checkpoints.js';
+import { checkpointsRoot, CheckpointContentProvider } from '../../src/webview/checkpointContent.js';
 import type { OnlyOneChatExports } from '../../src/extension.js';
 
 const EXTENSION_ID = 'francesco-fontanesi.only-one-chat';
@@ -25,6 +32,71 @@ function panelTabs(): vscode.Tab[] {
 }
 
 describe('Only One Chat extension', () => {
+  it('opens persisted verification evidence in a native read-only document', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ooc-evidence-'));
+    const context = { storageUri: vscode.Uri.file(root) } as vscode.ExtensionContext;
+    const history = new ChatHistory(join(root, 'chats'));
+    const reports = new CheckpointStore(checkpointsRoot(context, 'chat-evidence'), root);
+    const report = '<testsuite><testcase name="synthetic"/></testsuite>';
+    const reportHash = reports.keepArtifact(report);
+    history.save({
+      version: 1,
+      id: 'chat-evidence',
+      title: 'Evidence',
+      createdAt: 1,
+      updatedAt: 1,
+      sessions: {},
+      updates: [
+        {
+          type: 'verification',
+          evidence: {
+            id: 'v-1',
+            reportHash,
+            origin: 'reviewer',
+            status: 'passed',
+            comparison: 'confirmed',
+            reviewVerdict: 'approved',
+            summary: 'Final verification passed',
+            detail: 'Synthetic recorded output',
+          },
+        },
+      ],
+    });
+    const scheme = 'ooc-test-evidence';
+    const provider = new VerificationContentProvider(context);
+    const registration = vscode.workspace.registerTextDocumentContentProvider(scheme, provider);
+    try {
+      const document = await vscode.workspace.openTextDocument(
+        vscode.Uri.from({
+          scheme,
+          path: '/chat-evidence/v-1/verification.txt',
+        }),
+      );
+      assert.match(document.getText(), /Red-green: confirmed/);
+      assert.match(document.getText(), /Reviewer verdict: approved/);
+      assert.notEqual(vscode.workspace.fs.isWritableFileSystem(scheme), true);
+      const links = provider.provideDocumentLinks(document);
+      assert.equal(links.length, 1);
+      assert.ok(links[0]?.target);
+      assert.equal(
+        new CheckpointContentProvider(context).provideTextDocumentContent(links[0].target),
+        report,
+      );
+      assert.throws(
+        () =>
+          provider.provideTextDocumentContent(
+            vscode.Uri.from({
+              scheme,
+              path: '/outside/v-1/secret.txt',
+            }),
+          ),
+        /Invalid verification reference/,
+      );
+    } finally {
+      registration.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   it('activates and registers its commands', async () => {
     await activate();
     const commands = await vscode.commands.getCommands(true);

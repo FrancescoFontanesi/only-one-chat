@@ -90,6 +90,8 @@ export type TurnStep =
   | {
       readonly kind: 'command';
       readonly id: string;
+      /** Calls of one model message share it (parallel calls). */
+      readonly batch?: string;
       readonly command: string;
       /** Original command when the adapter can identify a provider-added wrapper. */
       readonly commandInput?: string;
@@ -104,6 +106,8 @@ export type TurnStep =
   | {
       readonly kind: 'file';
       readonly id: string;
+      /** Calls of one model message share it (parallel calls). */
+      readonly batch?: string;
       readonly status: StepStatus;
       readonly changes: readonly FileStepChange[];
     }
@@ -119,6 +123,8 @@ export type TurnStep =
   | {
       readonly kind: 'tool';
       readonly id: string;
+      /** Calls of one model message share it (parallel calls). */
+      readonly batch?: string;
       readonly name: string;
       readonly detail: string;
       readonly status: StepStatus;

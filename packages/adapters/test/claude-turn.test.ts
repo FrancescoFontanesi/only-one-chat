@@ -203,6 +203,14 @@ describe('a turn', () => {
     );
   });
 
+  it('gives each tool_use the id of its assistant message', async () => {
+    const { options: turn, events } = options();
+    await startClaudeTurn({ ...turn, prompt: '[bash-evidence] x' }).done;
+    const uses = events.filter((e) => e.type === 'tool_use');
+    expect(uses).toHaveLength(3);
+    expect(uses.every((e) => e.messageId === 'msg-bash')).toBe(true);
+  });
+
   it('runs in the workspace directory', async () => {
     await startClaudeTurn(options().options).done;
     const turnRun = fakeLog().find((entry) => entry.argv?.includes('-p'));

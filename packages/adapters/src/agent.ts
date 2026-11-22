@@ -77,6 +77,8 @@ export type AgentTurnStep =
   | {
       readonly kind: 'command';
       readonly id: string;
+      /** Calls of one model message share it (parallel calls). */
+      readonly batch?: string;
       readonly command: string;
       /** Original command when the adapter can identify a provider-added wrapper. */
       readonly commandInput?: string;
@@ -91,6 +93,8 @@ export type AgentTurnStep =
   | {
       readonly kind: 'file';
       readonly id: string;
+      /** Calls of one model message share it (parallel calls). */
+      readonly batch?: string;
       readonly status: AgentStepStatus;
       readonly changes: readonly AgentFileChange[];
     }
@@ -106,6 +110,8 @@ export type AgentTurnStep =
   | {
       readonly kind: 'tool';
       readonly id: string;
+      /** Calls of one model message share it (parallel calls). */
+      readonly batch?: string;
       readonly name: string;
       readonly detail: string;
       readonly status: AgentStepStatus;

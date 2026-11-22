@@ -234,7 +234,10 @@ export function createClaudeAgentFactory(config: ClaudeAgentConfig): AgentFactor
               kind: 'tool',
               detail: toolActivity(event.name, event.input),
             });
-            const step = claudeToolStep(event.id, event.name, event.input);
+            const step: AgentTurnStep = {
+              ...claudeToolStep(event.id, event.name, event.input),
+              ...(event.messageId ? { batch: event.messageId } : {}),
+            };
             toolSteps.set(event.id, step);
             if (step.kind === 'command') bashSteps.set(event.id, step);
             handlers.onStep?.(step);

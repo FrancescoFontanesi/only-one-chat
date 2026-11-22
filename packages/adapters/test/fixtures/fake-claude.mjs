@@ -201,7 +201,10 @@ async function replay(prompt) {
         ]) {
           send({
             type: 'assistant',
-            message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] },
+            message: {
+              id: 'msg-bash',
+              content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }],
+            },
           });
           send({
             type: 'user',

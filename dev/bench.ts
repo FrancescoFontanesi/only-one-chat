@@ -560,12 +560,18 @@ async function main(): Promise<void> {
   };
   /**
    * Tool calls per role in sequential steps (ADR 0044), from the adapters' tool
-   * steps: a step is the calls started before any result came back, so a
-   * parallel batch is one step whatever its timing. Steps measure exploration.
+   * steps: a step is a distinct `batch` (the calls of one model message, when
+   * the adapter gives it), else the calls started before any result came back. Steps measure exploration.
    */
   const toolSteps: Record<
     string,
-    { calls: number; steps: number; seen: Set<string>; resultSince: boolean }
+    {
+      calls: number;
+      steps: number;
+      seen: Set<string>;
+      resultSince: boolean;
+      batch?: string | undefined;
+    }
   > = {};
   const onEvent = (event: ThreadEvent): void => {
     if (event.type === 'text' || event.type === 'subagent_text') return;
@@ -580,7 +586,9 @@ async function main(): Promise<void> {
       if (!row.seen.has(id)) {
         row.seen.add(id);
         row.calls += 1;
-        if (row.resultSince) row.steps += 1;
+        const batch = (event.step as { batch?: string }).batch;
+        if (batch !== undefined ? batch !== row.batch : row.resultSince) row.steps += 1;
+        row.batch = batch;
         row.resultSince = false;
       }
       if (status !== 'running') row.resultSince = true;

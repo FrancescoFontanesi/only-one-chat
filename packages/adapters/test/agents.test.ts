@@ -538,6 +538,19 @@ describe('Claude agent session', () => {
       .flatMap((entry) => (entry.argv?.includes('-p') ? [entry.argv] : []));
   }
 
+  it('gives the steps of one model message the same batch (parallel calls)', async () => {
+    const session = await claude(['--echo']);
+    sessions.push(session);
+    const steps: AgentTurnStep[] = [];
+    await session.runTurn('[bash-evidence] prova', {
+      ...handlers().value,
+      onStep: (step) => steps.push(step),
+    }).done;
+    const commands = steps.filter((s) => s.kind === 'command');
+    expect(commands.map((s) => s.id)).toContain('bash-pass');
+    expect(commands.every((s) => 'batch' in s && s.batch === 'msg-bash')).toBe(true);
+  });
+
   it('streams the answer, passes the role instructions and resumes its session', async () => {
     const session = await claude();
     sessions.push(session);

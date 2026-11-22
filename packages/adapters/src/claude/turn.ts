@@ -142,6 +142,8 @@ export type ClaudeEvent =
       readonly input: unknown;
       readonly parentToolUseId: string | null;
       readonly model: string | null;
+      /** The assistant message's id: parallel calls of one model message share it. */
+      readonly messageId?: string;
     }
   /** A tool's result, in a `user` message: ends an Agent tool call (a sub-agent). */
   | {
@@ -687,6 +689,8 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
               count('cache_read_input_tokens') +
               count('output_tokens');
           }
+          const rawMessageId = message['message']['id'];
+          const messageId = typeof rawMessageId === 'string' ? rawMessageId : undefined;
           const messageModel = message['message']['model'];
           const blockModel = typeof messageModel === 'string' ? messageModel : null;
           const content = message['message']['content'];
@@ -724,6 +728,7 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
                 input: block['input'],
                 parentToolUseId,
                 model: blockModel,
+                ...(messageId ? { messageId } : {}),
               });
             }
           }

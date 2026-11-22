@@ -127,8 +127,10 @@ leader Codex `gpt-6.1-terra` low):
     files;
   - so the call count rises by one while the work is shorter.
 
-  The bench report now records the steps per role: calls less than 1.5 s apart
-  count as one step.
+  The steps in the table group calls less than 1.5 s apart. The bench report
+  now counts them structurally, per role, from the adapters' tool steps: the
+  calls started before any result came back are one step, whatever their
+  timing.
 
 - **Not shown: a benefit on constraints hidden in the documentation.** Without
   references the implementer read `docs/` within its first two calls in every

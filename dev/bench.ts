@@ -559,18 +559,31 @@ async function main(): Promise<void> {
     void log.append(type, fields);
   };
   /**
-   * Tool calls per role in sequential steps (ADR 0044): calls under 1.5 s apart
-   * are one parallel batch. Steps, not raw calls, measure exploration.
+   * Tool calls per role in sequential steps (ADR 0044), from the adapters' tool
+   * steps: a step is the calls started before any result came back, so a
+   * parallel batch is one step whatever its timing. Steps measure exploration.
    */
-  const toolSteps: Record<string, { calls: number; steps: number; last: number }> = {};
+  const toolSteps: Record<
+    string,
+    { calls: number; steps: number; seen: Set<string>; resultSince: boolean }
+  > = {};
   const onEvent = (event: ThreadEvent): void => {
     if (event.type === 'text' || event.type === 'subagent_text') return;
-    if (event.type === 'activity' && event.kind === 'tool') {
-      const now = Date.now();
-      const row = (toolSteps[event.role] ??= { calls: 0, steps: 0, last: -Infinity });
-      row.calls += 1;
-      if (now - row.last > 1500) row.steps += 1;
-      row.last = now;
+    if (event.type === 'step' && ['command', 'file', 'tool'].includes(event.step.kind)) {
+      const { id, status } = event.step as { id: string; status: string };
+      const row = (toolSteps[event.role] ??= {
+        calls: 0,
+        steps: 0,
+        seen: new Set(),
+        resultSince: true,
+      });
+      if (!row.seen.has(id)) {
+        row.seen.add(id);
+        row.calls += 1;
+        if (row.resultSince) row.steps += 1;
+        row.resultSince = false;
+      }
+      if (status !== 'running') row.resultSince = true;
     }
     if (event.type === 'message') {
       turns.push({
@@ -691,6 +704,9 @@ async function main(): Promise<void> {
               onApprovalRequest: () => Promise.resolve('decline'),
               onActivity: (activity) => {
                 record({ type: 'activity', role: 'worker', ...activity });
+              },
+              onStep: (step) => {
+                onEvent({ type: 'step', role: 'worker', step });
               },
             }).done;
             const report = readHandoff(result.handoffs, 'report').value;

@@ -37,6 +37,7 @@ import {
   type Report,
   type Review,
   type ThreadEvent,
+  type TaskProgress,
 } from '../src/index.js';
 import {
   SERVER,
@@ -1269,6 +1270,98 @@ describe('handoffs in the thread and in the contract (ADR 0035)', () => {
 });
 
 describe('leader mode with a reviewer (ADR 0029, 0035)', () => {
+  it('resumes a saved report at review with its original exhausted correction budget', async () => {
+    const codex = fakeAgent('Codex', [{ answer: 'Seen.' }]);
+    const claude = fakeAgent('Claude', []);
+    const gemini = fakeAgent('Gemini', [raisesFindings]);
+    const progress: TaskProgress = {
+      brief: BRIEF,
+      direct: false,
+      step: 'review',
+      inFlight: false,
+      limit: 1,
+      used: 1,
+      work: { text: REPORT, data: reportArgs() as unknown as Report },
+    };
+    const saved: TaskProgress[] = [];
+    const { running } = await reviewedLoop(codex, claude, gemini, {
+      reviewRounds: 3,
+      task: {
+        resume: progress,
+        save: (next) => {
+          saved.push(next);
+        },
+      },
+    });
+    await running.done;
+    expect(claude.prompts).toHaveLength(0);
+    expect(gemini.prompts).toHaveLength(1);
+    expect(gemini.prompts[0]).toContain('No correction rounds left');
+    expect(saved.at(-1)).toMatchObject({ step: 'delivery', limit: 1, used: 1 });
+  });
+
+  it('stops before dispatch when intent persistence fails and before review when outcome persistence fails', async () => {
+    for (const failOutcome of [false, true]) {
+      const codex = fakeAgent('Codex', [delegates()]);
+      const claude = fakeAgent('Claude', [reports()]);
+      const gemini = fakeAgent('Gemini', [reviews()]);
+      let committed: TaskProgress | undefined;
+      const { running } = await reviewedLoop(codex, claude, gemini, {
+        task: {
+          save(next) {
+            if ((!failOutcome && next.inFlight) || (failOutcome && next.work))
+              throw new Error('synthetic storage failure');
+            committed = next;
+          },
+        },
+      });
+      expect((await running.done).status).toBe('failed');
+      expect(claude.prompts).toHaveLength(failOutcome ? 1 : 0);
+      expect(gemini.prompts).toHaveLength(0);
+      if (failOutcome) expect(committed).toMatchObject({ step: 'implementation', inFlight: true });
+    }
+  });
+
+  it('resumes a saved reviewer answer directly at runtime verification', async () => {
+    const codex = fakeAgent('Codex', [{ answer: 'Seen.' }]);
+    const claude = fakeAgent('Claude', []);
+    const gemini = fakeAgent('Gemini', []);
+    let checks = 0;
+    const { running } = await reviewedLoop(codex, claude, gemini, {
+      task: {
+        resume: {
+          brief: BRIEF,
+          direct: false,
+          step: 'verification',
+          inFlight: false,
+          limit: 2,
+          used: 1,
+          work: { text: REPORT, data: reportArgs() as unknown as Report },
+          answer: {
+            text: REVIEW,
+            review: reviewArgs() as unknown as Review,
+            findings: null,
+            restored: '',
+            handoff: undefined,
+          },
+        },
+        save() {},
+      },
+      verification: {
+        begin() {},
+        check: () => {
+          checks++;
+          return Promise.resolve({ status: 'passed', summary: 'passed' });
+        },
+        finish: () =>
+          Promise.resolve({ summary: 'verified', result: { status: 'passed', summary: 'passed' } }),
+      },
+    });
+    expect((await running.done).status).toBe('completed');
+    expect(checks).toBe(1);
+    expect(claude.prompts).toHaveLength(0);
+    expect(gemini.prompts).toHaveLength(0);
+  });
   it('restores guarded files when review is interrupted', async () => {
     const codex = fakeAgent('Codex', [delegates()]);
     const claude = fakeAgent('Claude', [reports()]);

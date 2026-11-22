@@ -392,6 +392,50 @@ export function App() {
               )}
               {shown.length === 0 && <Empty session={session} node={node} />}
               <Thread key={node?.id ?? 'chat'} items={shown} numbers={numbers} session={session} />
+              {!node && session?.task && (
+                <div class="turn">
+                  <div class="tb">
+                    <span class="t-data">
+                      Task {session.task.status.replaceAll('_', ' ')} · {session.task.step} ·
+                      Corrections {session.task.used}/{session.task.limit}
+                    </span>{' '}
+                    <button
+                      type="button"
+                      class="cn-btn cn-btn--sm"
+                      onClick={() => {
+                        post({ type: 'openTask' });
+                      }}
+                    >
+                      Details
+                    </button>
+                    {!session.busy &&
+                      !['completed', 'cancelled', 'running'].includes(session.task.status) && (
+                        <>
+                          {session.task.status !== 'invalid' && (
+                            <button
+                              type="button"
+                              class="cn-btn cn-btn--sm"
+                              onClick={() => {
+                                post({ type: 'resumeTask' });
+                              }}
+                            >
+                              Resume
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            class="cn-btn cn-btn--sm"
+                            onClick={() => {
+                              post({ type: 'cancelTask' });
+                            }}
+                          >
+                            Cancel task
+                          </button>
+                        </>
+                      )}
+                  </div>
+                </div>
+              )}
               <div ref={end} />
             </div>
           </div>

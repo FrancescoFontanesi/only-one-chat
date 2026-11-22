@@ -42,6 +42,13 @@ export interface WorkVerification {
   ): Promise<{ summary: string; result: VerificationResult }>;
 }
 
+export interface VerificationCheckpoint {
+  readonly id: string;
+  readonly baseline: string | null;
+  readonly round: number;
+  readonly budget: number;
+}
+
 /** Stored evidence is untrusted input when a chat is reopened. */
 export function isVerificationEvidence(value: unknown): value is VerificationEvidence {
   if (!value || typeof value !== 'object') return false;

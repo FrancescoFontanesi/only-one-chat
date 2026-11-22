@@ -9,9 +9,13 @@ import { join } from 'node:path';
 import type { PendingReport } from '@only-one-chat/runtime';
 import { isVerificationEvidence } from '../../../../packages/runtime/src/verification.js';
 import type { AgentChoice, DraftDelegation, FileNotes } from './chat.js';
+import { readSavedTask, type SavedTask } from './task.js';
 import type { Cli, ContextInfo, ThreadUpdate, TurnRole } from '../webview/protocol.js';
 
 export interface ChatRecord {
+  task?: SavedTask | null | undefined;
+  taskInvalid?: boolean;
+  lastCompletedTask?: SavedTask | undefined;
   readonly version: 1;
   readonly id: string;
   title: string;
@@ -73,6 +77,7 @@ function pendingReports(value: unknown): PendingReport[] {
       typeof r.request === 'string' &&
       typeof r.report === 'string' &&
       typeof r.facts === 'string' &&
+      (r.taskId === undefined || (typeof r.taskId === 'string' && ID.test(r.taskId))) &&
       (r.review === undefined || typeof r.review === 'string')
     );
   });
@@ -275,6 +280,13 @@ export class ChatHistory {
       return record.version === 1 && record.id === id
         ? {
             ...(record as ChatRecord),
+            task: readSavedTask(record.task),
+            lastCompletedTask:
+              readSavedTask(record.lastCompletedTask)?.progress.step === 'completed'
+                ? readSavedTask(record.lastCompletedTask)
+                : undefined,
+            taskInvalid:
+              record.taskInvalid === true || (record.task != null && !readSavedTask(record.task)),
             updates: (record as ChatRecord).updates.filter(
               (update) => update.type !== 'verification' || isVerificationEvidence(update.evidence),
             ),
@@ -313,6 +325,26 @@ export class ChatHistory {
   save(record: ChatRecord): void {
     this.write(record);
     for (const old of this.list().slice(MAX_CHATS)) this.remove(old.id);
+  }
+
+  /** Commit task progress and the approved draft boundary before publishing it in memory. */
+  saveTask(record: ChatRecord, task: SavedTask | null): void {
+    const lastCompletedTask =
+      record.task?.progress.step === 'completed' && record.task.id !== task?.id
+        ? record.task
+        : record.lastCompletedTask;
+    const draft =
+      task?.progress.step === 'implementation' &&
+      !task.progress.inFlight &&
+      !task.progress.work &&
+      task.progress.source === 'delegation'
+        ? null
+        : (record.draft ?? null);
+    this.write({ ...record, task, lastCompletedTask, taskInvalid: false, draft });
+    record.task = task;
+    record.draft = draft;
+    record.lastCompletedTask = lastCompletedTask;
+    record.taskInvalid = false;
   }
 
   /** Publish the pending handoff or its replacement session ID in one write. */

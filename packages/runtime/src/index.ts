@@ -41,6 +41,13 @@ export type {
 } from './agent.js';
 export { extractResult, parseBrief, resultTemplate, type Brief } from './brief.js';
 export { CommandEvidence } from './command-evidence.js';
+export {
+  readTaskProgress,
+  type TaskProgress,
+  type TaskJournal,
+  type TaskWork,
+  type TaskReview,
+} from './task.js';
 export type {
   TestSelection,
   VerificationResult,

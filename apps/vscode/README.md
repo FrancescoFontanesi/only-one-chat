@@ -228,6 +228,18 @@ nonzero exits classified as inconclusive.
 
 ## Chats are kept
 
+Unfinished work restores an interrupted task status with **Resume**, **Cancel
+task**, and **Details**. Resume checks the saved execution configuration and
+workspace checkpoint. Changed files or an uncertain turn require confirmation,
+with existing diff navigation available for inspection. The next step uses the
+committed report, findings, and remaining correction budget.
+
+Recovery rechecks changed inputs and preserves the previous report as historical
+context. An uncertain leader delivery waits for your next leader message.
+Cancellation retains produced files and recorded evidence. **Details** opens
+the saved task context in a native read-only editor. Recovery uses the same
+roles and providers, including their supported CLI session fallback.
+
 - **Each chat of the folder is saved** in the extension's workspace storage, together with the
   ids of the agents' own sessions.
 - **When you open the panel again**, the most recent chat comes back, and the leader and the

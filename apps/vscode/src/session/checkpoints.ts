@@ -193,7 +193,34 @@ export class CheckpointStore {
   load(id: string): Checkpoint | undefined {
     if (!ID.test(id)) return undefined;
     try {
-      return JSON.parse(readFileSync(join(this.manifests, `${id}.json`), 'utf8')) as Checkpoint;
+      const checkpoint = JSON.parse(
+        readFileSync(join(this.manifests, `${id}.json`), 'utf8'),
+      ) as Partial<Checkpoint> | null;
+      if (
+        !checkpoint ||
+        checkpoint.id !== id ||
+        !Number.isFinite(checkpoint.at) ||
+        !checkpoint.files ||
+        typeof checkpoint.files !== 'object' ||
+        Array.isArray(checkpoint.files) ||
+        !checkpoint.large ||
+        typeof checkpoint.large !== 'object' ||
+        Array.isArray(checkpoint.large) ||
+        (checkpoint.incomplete !== undefined && typeof checkpoint.incomplete !== 'boolean') ||
+        Object.keys(checkpoint.files).length + Object.keys(checkpoint.large).length > MAX_FILES
+      )
+        return undefined;
+      for (const [path, content] of Object.entries(checkpoint.files)) {
+        if (isAbsolute(path) || typeof content !== 'string' || !HASH.test(content))
+          return undefined;
+        this.inside(path);
+      }
+      for (const [path, signature] of Object.entries(checkpoint.large)) {
+        if (isAbsolute(path) || typeof signature !== 'string' || signature.length > 128)
+          return undefined;
+        this.inside(path);
+      }
+      return checkpoint as Checkpoint;
     } catch {
       return undefined;
     }

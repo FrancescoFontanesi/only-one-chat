@@ -75,6 +75,10 @@ export function activate(context: vscode.ExtensionContext): OnlyOneChatExports {
       new CheckpointContentProvider(context),
     ),
     vscode.workspace.registerTextDocumentContentProvider(VERIFICATION_SCHEME, verificationProvider),
+    vscode.workspace.registerTextDocumentContentProvider(
+      TASK_SCHEME,
+      new TaskContentProvider(context),
+    ),
     vscode.languages.registerDocumentLinkProvider(
       { scheme: VERIFICATION_SCHEME },
       verificationProvider,
@@ -109,3 +113,4 @@ export function deactivate(): void {
   // Nothing to release yet: all disposables are owned by the extension context.
 }
 import { VERIFICATION_SCHEME, VerificationContentProvider } from './webview/verificationContent.js';
+import { TASK_SCHEME, TaskContentProvider } from './webview/taskContent.js';

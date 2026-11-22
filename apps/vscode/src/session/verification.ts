@@ -18,6 +18,7 @@ import type {
   VerificationResult,
   WorkVerification,
 } from '@only-one-chat/runtime';
+import type { VerificationCheckpoint } from '../../../../packages/runtime/src/verification.js';
 import { CheckpointStore, type Checkpoint } from './checkpoints.js';
 import { readJUnit, MAX_REPORT_BYTES, type TestResult } from './junit.js';
 import { isTestFile } from './shortcuts.js';
@@ -172,15 +173,34 @@ export class WorkspaceVerification implements WorkVerification {
   private active = false;
   private id = '';
   private base: Checkpoint | null = null;
+  private baselineReference: string | null = null;
   private cached: { key: string; run: Run } | undefined;
   private round = 0;
   private budget = 0;
   private reviewVerdict: string | undefined;
   constructor(private readonly options: Options) {}
 
+  checkpoint(): VerificationCheckpoint | undefined {
+    return this.active
+      ? { id: this.id, baseline: this.baselineReference, round: this.round, budget: this.budget }
+      : undefined;
+  }
+
+  restore(saved: VerificationCheckpoint | undefined): void {
+    this.reset();
+    if (!saved) return;
+    this.active = true;
+    this.id = saved.id;
+    this.base = saved.baseline ? (this.options.store?.load(saved.baseline) ?? null) : null;
+    this.baselineReference = saved.baseline;
+    this.round = saved.round;
+    this.budget = saved.budget;
+  }
+
   reset(): void {
     this.active = false;
     this.base = null;
+    this.baselineReference = null;
     this.cached = undefined;
   }
 
@@ -195,6 +215,7 @@ export class WorkspaceVerification implements WorkVerification {
     this.active = true;
     this.id = this.options.id();
     this.base = this.capture(this.id);
+    this.baselineReference = this.base?.id ?? null;
     this.cached = undefined;
     this.round = 0;
     this.budget = 0;

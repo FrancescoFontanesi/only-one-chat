@@ -334,6 +334,7 @@ export function leaderReviewPrompt(reviewer: string, review: string, facts: stri
 
 /** Work the implementer did that the leader has not seen yet. */
 export interface PendingReport {
+  readonly taskId?: string;
   /**
    * `delegation`: the leader's own delegation, reviewed later; `direct`: the
    * user wrote to the implementer; `review`: the user asked the reviewer.

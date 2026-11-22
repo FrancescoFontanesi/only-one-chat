@@ -15,6 +15,8 @@ import { expandMentions, insideFolder, withRefs } from '../session/mentions.js';
 import { ChatHistory, forReplay, newChatId, type ChatRecord } from '../session/history.js';
 import { checkpointsRoot } from './checkpointContent.js';
 import { refreshVerification, verificationUri } from './verificationContent.js';
+import { taskUnfinished } from '../session/task.js';
+import { refreshTask, taskUri } from './taskContent.js';
 import {
   openFile,
   restoreCheckpoint,
@@ -198,6 +200,7 @@ export class OnlyOneChatPanel {
 
   private readonly disposables: vscode.Disposable[] = [];
   private chat: ChatSession | undefined;
+  private recoveringTask = false;
   /** The CLIs the chat could start, the reviewer's among them (ADR 0033). */
   private launched = new Set<Cli>();
   /** The nodes spoken to in the chat shown (ADR 0023), opened on their first message. */
@@ -339,6 +342,36 @@ export class OnlyOneChatPanel {
   private sessionInfo(): SessionInfo {
     const roles = this.chatRoles() ?? this.rolesFor(this.record);
     return {
+      ...(this.record.taskInvalid
+        ? {
+            task: {
+              id: 'task-invalid',
+              status: 'invalid' as const,
+              step: 'unavailable',
+              used: 0,
+              limit: 0,
+            },
+          }
+        : this.record.task
+          ? {
+              task: {
+                id: this.record.task.id,
+                status:
+                  this.record.task.progress.step === 'completed'
+                    ? ('completed' as const)
+                    : this.record.task.progress.step === 'cancelled'
+                      ? ('cancelled' as const)
+                      : this.chat?.busy
+                        ? ('running' as const)
+                        : this.record.task.progress.inFlight
+                          ? ('recovery_required' as const)
+                          : ('interrupted' as const),
+                step: this.record.task.progress.step,
+                used: this.record.task.progress.used,
+                limit: this.record.task.progress.limit,
+              },
+            }
+          : {}),
       implementerHandoffPending: this.record.implementerHandoff !== undefined,
       workspace: workspaceFolder(),
       trusted: vscode.workspace.isTrusted,
@@ -608,6 +641,69 @@ export class OnlyOneChatPanel {
         });
         break;
       }
+      case 'resumeTask': {
+        if (
+          this.recoveringTask ||
+          this.chat?.busy ||
+          !taskUnfinished(this.record.task ?? undefined)
+        )
+          break;
+        this.recoveringTask = true;
+        try {
+          if (!(await saveBeforeSend(workspaceFolder()))) break;
+          const chat = await this.ensureChat();
+          if (!chat) break;
+          const reason = chat.recoveryReason();
+          if (!chat.recoveryConfigurationMatches()) {
+            await vscode.window.showWarningMessage(
+              reason ?? 'Restore the saved task configuration before continuing.',
+              { modal: true },
+            );
+            break;
+          }
+          if (reason) {
+            const answer = await vscode.window.showWarningMessage(
+              reason,
+              { modal: true },
+              'Continue with current files',
+              'Inspect changes',
+            );
+            if (answer !== 'Continue with current files') break;
+          }
+          await chat.resumeTask(reason !== undefined);
+        } finally {
+          this.recoveringTask = false;
+        }
+        break;
+      }
+      case 'cancelTask': {
+        if (this.chat?.busy || this.recoveringTask) break;
+        if (!this.record.taskInvalid && !taskUnfinished(this.record.task ?? undefined)) break;
+        if (this.chat) this.chat.cancelTask();
+        else {
+          this.history.saveTask(
+            this.record,
+            this.record.task
+              ? {
+                  ...this.record.task,
+                  progress: { ...this.record.task.progress, step: 'cancelled', inFlight: false },
+                }
+              : null,
+          );
+          void this.postSession();
+        }
+        break;
+      }
+      case 'openTask': {
+        const id = this.record.taskInvalid ? 'task-invalid' : this.record.task?.id;
+        if (!id) break;
+        const document = await vscode.workspace.openTextDocument(taskUri(this.record.id, id));
+        await vscode.window.showTextDocument(document, {
+          preview: true,
+          viewColumn: vscode.ViewColumn.Beside,
+        });
+        break;
+      }
       case 'permit':
         this.chat?.permit(message.id, message.decision);
         for (const node of this.nodes.values()) node.permit(message.id, message.decision);
@@ -858,6 +954,9 @@ export class OnlyOneChatPanel {
         mode: this.mode,
         // A reopened chat continues the CLIs' own sessions; Codex keeps its threads.
         resume: { ...record.sessions },
+        task: record.task ?? undefined,
+        taskInvalid: record.taskInvalid === true,
+        lastCompletedTask: record.lastCompletedTask,
         implementerHandoff: record.implementerHandoff,
         unseen: record.unseen ?? [],
         ...(record.draft ? { draft: record.draft } : {}),
@@ -878,6 +977,11 @@ export class OnlyOneChatPanel {
         logPath: path.join(logDir, `chat-${stamp}.jsonl`),
       },
       {
+        saveTask: (task) => {
+          this.history.saveTask(record, task);
+          refreshTask(record.id, task?.id ?? 'task-invalid');
+          if (record === this.record) void this.postSession();
+        },
         update: (raw) => {
           if (record !== this.record) return;
           // The paths its text names, for the thread's links (ADR 0018).

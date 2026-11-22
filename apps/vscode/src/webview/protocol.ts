@@ -127,6 +127,14 @@ export interface SettingsState {
 
 /** The chat as the panel shows it in its header and composer. */
 export interface SessionInfo {
+  readonly task?: {
+    readonly id: string;
+    readonly status:
+      'running' | 'interrupted' | 'recovery_required' | 'completed' | 'cancelled' | 'invalid';
+    readonly step: string;
+    readonly used: number;
+    readonly limit: number;
+  };
   readonly implementerHandoffPending?: boolean;
   /** Folder the agents work in; null without an open folder. */
   readonly workspace: string | null;
@@ -443,6 +451,7 @@ export type ApprovalAction = 'approve' | 'edit' | 'cancel';
 export type PermitDecision = 'accept' | 'acceptForSession' | 'decline';
 
 export type WebviewToHostMessage =
+  | { readonly type: 'resumeTask' | 'cancelTask' | 'openTask' }
   | { readonly type: 'openVerification'; readonly id: string }
   | { readonly type: 'ready' }
   | { readonly type: 'ping'; readonly id: number }
@@ -736,6 +745,10 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
       return { type: 'openFolder' };
     case 'openSettings':
       return { type: 'openSettings' };
+    case 'resumeTask':
+    case 'cancelTask':
+    case 'openTask':
+      return { type: msg['type'] };
     case 'reviewFile': {
       const { id, path, action } = msg;
       // The host acts only on a file it finds in the card: the path is a key, not trusted.

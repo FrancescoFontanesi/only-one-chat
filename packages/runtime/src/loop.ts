@@ -33,6 +33,7 @@ import type {
 import { extractResult, parseBrief, type Brief } from './brief.js';
 import { CommandEvidence, reportWithoutCommandReferences } from './command-evidence.js';
 import type { EventLog } from './event-log.js';
+import type { TaskJournal, TaskProgress, TaskReview } from './task.js';
 import type { TestSelection, VerificationResult, WorkVerification } from './verification.js';
 import { checkReport, checkReview, contractFacts } from './contract.js';
 import {
@@ -235,6 +236,7 @@ export type LoopOutcome =
   | { readonly status: 'failed'; readonly error: string };
 
 export interface LoopOptions {
+  readonly task?: TaskJournal | undefined;
   readonly verification?: WorkVerification;
   readonly request: string;
   readonly worker: AgentFactory;
@@ -464,6 +466,31 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 export function runLoop(options: LoopOptions): Loop {
+  let task = options.task?.resume;
+  function saveTask(next: TaskProgress): void {
+    options.task?.save(next);
+    task = next;
+  }
+  function initialTask(brief: string, direct: boolean): TaskProgress {
+    return {
+      sourceRequest: options.request,
+      source:
+        options.mode === 'review' && options.reviewOf?.asked !== undefined
+          ? 'review'
+          : direct
+            ? 'direct'
+            : 'delegation',
+      delivery: options.mode === 'review' || options.review === 'deferred' ? 'deferred' : 'leader',
+      brief,
+      direct,
+      step: 'implementation',
+      inFlight: false,
+      limit: options.reviewer
+        ? Math.max(0, Math.min(options.reviewRounds ?? DEFAULT_REVIEW_ROUNDS, MAX_REVIEW_ROUNDS))
+        : 0,
+      used: 0,
+    };
+  }
   const controller = new AbortController();
   let stopped = false;
   const stopRequested = () => stopped;
@@ -636,6 +663,7 @@ export function runLoop(options: LoopOptions): Loop {
     checkStopped();
     await emit({ type: 'intercepted', message });
     if (options.autoApprove || pass) {
+      if (message.kind === 'delegation') approveTask(message.text);
       await emit({ type: 'decision', kind: message.kind, action: 'auto_approve' });
       return message.text;
     }
@@ -644,6 +672,8 @@ export function runLoop(options: LoopOptions): Loop {
       controller.signal,
     );
     checkStopped();
+    if (message.kind === 'delegation' && decision.action !== 'cancel')
+      approveTask(decision.action === 'edit' ? decision.text : message.text);
     await emit({
       type: 'decision',
       kind: message.kind,
@@ -655,6 +685,11 @@ export function runLoop(options: LoopOptions): Loop {
   }
 
   const reviewOnly = options.mode === 'review';
+  function approveTask(brief: string): void {
+    if (task && task.step !== 'completed' && task.step !== 'cancelled') return;
+    options.verification?.begin();
+    saveTask(initialTask(relay(brief), false));
+  }
   /** A report is held to a brief: the leader's, or the one a review is asked of (ADR 0031). */
   const held = !reviewOnly || options.reviewOf?.direct !== true;
 
@@ -680,9 +715,21 @@ export function runLoop(options: LoopOptions): Loop {
    */
   async function implement(worker: AgentSession, prompt: string): Promise<Work> {
     options.verification?.begin();
+    saveTask({
+      ...(task ?? initialTask(prompt, reviewOnly && options.reviewOf?.direct === true)),
+      step: 'implementation',
+      inFlight: true,
+    });
     const commands = new CommandEvidence();
     const withPreface = (text: string) =>
-      [options.workerPreface?.(), text].filter(Boolean).join('\n\n');
+      [
+        options.workerPreface?.(),
+        options.task?.resume
+          ? `Continue the saved task using the following recorded work data.\n${frameWorkerAnswer(text.replace(/\r\n?|[\u2028\u2029]/g, '\n'))}`
+          : text,
+      ]
+        .filter(Boolean)
+        .join('\n\n');
     let result = await turn(worker, 'worker', withPreface(prompt), undefined, commands);
     let read = readHandoff(result.handoffs, 'report');
     let text = result.text;
@@ -697,13 +744,23 @@ export function runLoop(options: LoopOptions): Loop {
       read = readHandoff(result.handoffs, 'report');
       text = [text, result.text].filter((part) => part.trim() !== '').join('\n\n');
     }
-    return read.value && result.threadHandoff
-      ? {
-          text: result.threadHandoff.text,
-          commandEvidence: result.threadHandoff.commandEvidence,
-          data: reportWithoutCommandReferences(read.value),
-        }
-      : { text, data: null };
+    const work =
+      read.value && result.threadHandoff
+        ? {
+            text: result.threadHandoff.text,
+            commandEvidence: result.threadHandoff.commandEvidence,
+            data: reportWithoutCommandReferences(read.value),
+          }
+        : { text, data: null };
+    saveTask({
+      ...(task ?? initialTask(prompt, false)),
+      work,
+      step: options.reviewer && work.data?.outcome !== 'blocked' ? 'review' : 'verification',
+      inFlight: false,
+      answer: undefined,
+      findings: undefined,
+    });
+    return work;
   }
 
   /**
@@ -760,11 +817,18 @@ export function runLoop(options: LoopOptions): Loop {
     exchange: number,
     of: { readonly direct?: boolean; readonly asked?: string } = {},
   ): Promise<{ reviewer: string; review: string; work: Work; facts: string }> {
+    if (task?.step === 'delivery' && task.work && task.result) {
+      return {
+        reviewer: 'Reviewer',
+        work: task.work,
+        facts: `Recorded evidence\n${frameWorkerAnswer(task.result.facts.replace(/\r\n?|[\u2028\u2029]/g, '\n'))}`,
+        review: task.result.review ?? '',
+      };
+    }
     if (!options.reviewer) throw new Error('reviewed() needs a reviewer');
-    const rounds = Math.max(
-      0,
-      Math.min(options.reviewRounds ?? DEFAULT_REVIEW_ROUNDS, MAX_REVIEW_ROUNDS),
-    );
+    const rounds =
+      task?.limit ??
+      Math.max(0, Math.min(options.reviewRounds ?? DEFAULT_REVIEW_ROUNDS, MAX_REVIEW_ROUNDS));
     const reviewer = await options.reviewer(
       agentSessionOptions(
         REVIEWER_ROLE_INSTRUCTIONS,
@@ -773,26 +837,58 @@ export function runLoop(options: LoopOptions): Loop {
       ),
     );
     sessions.push(reviewer);
-    let work = first;
+    let work = task?.work ?? first;
+    if (!task) saveTask({ ...initialTask(brief, of.direct === true), work, step: 'review' });
+    if (task?.step === 'implementation' && task.findings) {
+      work = await implement(worker, relay(task.findings));
+    }
     let facts = await factsFor(brief, work);
+    if (options.task?.resume?.findings)
+      facts += `\n\nSaved findings\n${frameWorkerAnswer(options.task.resume.findings.replace(/\r\n?|[\u2028\u2029]/g, '\n'))}`;
     let prompt = reviewRequestPrompt(
       worker.name,
       brief,
       work.text,
       facts,
-      rounds,
+      rounds - (task?.used ?? 0),
       options.reviewerNote,
       of,
     );
-    let selection: TestSelection | undefined;
-    for (let round = 0; ; round++) {
+    let selection: TestSelection | undefined = task?.selection;
+    for (let round = task?.used ?? 0; ; round++) {
       options.verification?.progress?.(round, rounds);
       const sent = await intercept(
         { kind: 'review', from: worker.name, to: reviewer.name, text: prompt, exchange },
         true,
       );
-      const answer = await reviewerTurn(reviewer, sent ?? prompt, rounds - round);
+      let answer: TaskReview;
+      if (task?.step === 'verification' && task.answer) {
+        answer = task.answer;
+      } else {
+        saveTask({
+          ...(task ?? initialTask(brief, of.direct === true)),
+          work,
+          step: 'review',
+          inFlight: true,
+        });
+        answer = await reviewerTurn(reviewer, sent ?? prompt, rounds - round);
+        saveTask({
+          ...(task ?? initialTask(brief, of.direct === true)),
+          work,
+          answer,
+          step: 'verification',
+          inFlight: false,
+        });
+      }
       selection = answer.review?.test ?? answer.findings?.test ?? selection;
+      saveTask({
+        ...(task ?? initialTask(brief, of.direct === true)),
+        work,
+        answer,
+        selection,
+        step: 'verification',
+        inFlight: true,
+      });
       let verified = await options.verification?.check(
         selection,
         'reviewer',
@@ -834,6 +930,14 @@ export function runLoop(options: LoopOptions): Loop {
           { kind: 'review', from: reviewer.name, to: worker.name, text: findings, exchange },
           true,
         );
+        saveTask({
+          ...(task ?? initialTask(brief, of.direct === true)),
+          step: 'implementation',
+          inFlight: false,
+          used: round + 1,
+          findings: passed ?? findings,
+          answer: undefined,
+        });
         work = await implement(worker, relay(passed ?? findings));
         facts = await factsFor(brief, work);
         prompt = reviewFollowUpPrompt(worker.name, work.text, facts, rounds - round - 1);
@@ -856,7 +960,7 @@ export function runLoop(options: LoopOptions): Loop {
       const text = answer.handoff?.text ?? (answer.text.trim() || EMPTY_REVIEW);
       const review = withRestored(note === '' ? text : `${text}\n\n${note}`);
       const reviewEvidence = answer.handoff?.commandEvidence;
-      return {
+      const outcome = {
         reviewer: reviewer.name,
         review: [
           review,
@@ -871,6 +975,14 @@ export function runLoop(options: LoopOptions): Loop {
         work,
         facts: [facts, reviewEvidence, finalVerification].filter(Boolean).join('\n\n'),
       };
+      saveTask({
+        ...(task ?? initialTask(brief, of.direct === true)),
+        work,
+        step: 'delivery',
+        inFlight: false,
+        result: { facts: outcome.facts, review: outcome.review },
+      });
+      return outcome;
     }
   }
 
@@ -880,6 +992,7 @@ export function runLoop(options: LoopOptions): Loop {
       mode: options.mode,
       autoApprove: options.autoApprove === true,
     });
+    if (options.delegation) approveTask(options.delegation);
     if (reviewOnly) {
       const of = options.reviewOf;
       const worker = options.workerSession;
@@ -903,7 +1016,7 @@ export function runLoop(options: LoopOptions): Loop {
       };
     }
     // The leader also takes free requests: only a valid brief is a structured one.
-    const parsedBrief = parseBrief(options.request);
+    const parsedBrief = parseBrief(options.task?.resume?.sourceRequest ?? options.request);
     const brief: Brief | undefined = parsedBrief.status === 'valid' ? parsedBrief.brief : undefined;
     // The leader's session outlives this request: whoever created it closes it.
     const leader = options.leaderSession;
@@ -923,7 +1036,7 @@ export function runLoop(options: LoopOptions): Loop {
     // The leader reads a web-app brief as it came, with its markers (ADR 0020).
     const first = options.preface ? `${options.preface}\n\n${options.request}` : options.request;
     /** A draft the user approved: the implementer starts from it, with no leader turn first. */
-    const draft = options.delegation;
+    const draft = options.task?.resume?.brief ?? options.delegation;
     let answered =
       draft === undefined ? await turn(leader, 'orchestrator', first, options.skill) : undefined;
     // An empty turn with no call is never an answer (a refused command can end it so): once more.
@@ -997,19 +1110,41 @@ export function runLoop(options: LoopOptions): Loop {
       if (fromDraft) await options.log.append('draft_delegation', { text: delegation });
       if (approved === undefined) return { status: 'cancelled', at: 'delegation' };
 
-      const work = await implement(worker, relay(approved));
+      const work =
+        task?.work && task.step !== 'implementation'
+          ? task.work
+          : await implement(worker, relay(task?.findings ?? approved));
+      const resumedResult = task?.step === 'delivery' ? task.result : undefined;
       // A report that stopped on a missing decision goes to the leader as it is.
       const judged =
         options.reviewer && work.data?.outcome !== 'blocked'
           ? await reviewed(worker, relay(approved), work, exchange)
           : undefined;
-      const comparison = !judged
-        ? await options.verification?.finish(work.data?.test, 'implementer', controller.signal)
-        : undefined;
+      if (!judged && !resumedResult)
+        saveTask({
+          ...(task ?? initialTask(approved, false)),
+          work,
+          step: 'verification',
+          inFlight: true,
+        });
+      const comparison =
+        !judged && !resumedResult
+          ? await options.verification?.finish(work.data?.test, 'implementer', controller.signal)
+          : undefined;
       const facts =
+        (resumedResult
+          ? `Recorded evidence\n${frameWorkerAnswer(resumedResult.facts.replace(/\r\n?|[\u2028\u2029]/g, '\n'))}`
+          : undefined) ??
         judged?.facts ??
         [await factsFor(relay(approved), work), comparison?.summary].filter(Boolean).join('\n\n');
       const finalWork = judged?.work ?? work;
+      saveTask({
+        ...(task ?? initialTask(approved, false)),
+        work: finalWork,
+        step: 'delivery',
+        inFlight: false,
+        result: { facts, review: judged?.review ?? resumedResult?.review },
+      });
       if (options.review === 'deferred') {
         return {
           status: 'delegated',
@@ -1035,7 +1170,16 @@ export function runLoop(options: LoopOptions): Loop {
           true,
         );
         if (review === undefined) return { status: 'cancelled', at: 'review' };
-        const final = (await turn(leader, 'orchestrator', relay(review))).text;
+        saveTask({ ...(task ?? initialTask(approved, false)), inFlight: true });
+        const recovery = options.task?.resume
+          ? `Saved approved task\n${frameWorkerAnswer(JSON.stringify({ brief: task?.brief, findings: task?.findings, used: task?.used, limit: task?.limit }).replace(/\r\n?|[\u2028\u2029]/g, '\n'))}\n\n`
+          : '';
+        const final = (await turn(leader, 'orchestrator', recovery + relay(review))).text;
+        saveTask({
+          ...(task ?? initialTask(approved, false)),
+          inFlight: false,
+          leaderDelivered: true,
+        });
         return { status: 'completed', conclusion: final, exchanges: exchange };
       }
       const review = await intercept(
@@ -1050,7 +1194,16 @@ export function runLoop(options: LoopOptions): Loop {
         true,
       );
       if (review === undefined) return { status: 'cancelled', at: 'review' };
-      const final = (await turn(leader, 'orchestrator', relay(review))).text;
+      saveTask({ ...(task ?? initialTask(approved, false)), inFlight: true });
+      const recovery = options.task?.resume
+        ? `Saved approved task\n${frameWorkerAnswer(JSON.stringify({ brief: task?.brief, findings: task?.findings, used: task?.used, limit: task?.limit }).replace(/\r\n?|[\u2028\u2029]/g, '\n'))}\n\n`
+        : '';
+      const final = (await turn(leader, 'orchestrator', recovery + relay(review))).text;
+      saveTask({
+        ...(task ?? initialTask(approved, false)),
+        inFlight: false,
+        leaderDelivered: true,
+      });
       const block = extractResult(final);
       return {
         status: 'result',

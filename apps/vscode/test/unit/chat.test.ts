@@ -14,6 +14,7 @@ import {
 import { CheckpointStore } from '../../src/session/checkpoints.js';
 import { ChatHistory, type ChatRecord } from '../../src/session/history.js';
 import type { ThreadUpdate } from '../../src/webview/protocol.js';
+import type { SavedTask } from '../../src/session/task.js';
 
 const FIXTURES = join(
   import.meta.dirname,
@@ -64,6 +65,7 @@ function session(
   fileNotes?: ChatConfig['fileNotes'],
   extra: Partial<ChatConfig> = {},
   saveHandoff?: (id: string, brief: string | null) => void,
+  saveTask?: (task: SavedTask | null) => void,
 ) {
   const updates: ThreadUpdate[] = [];
   const busy: boolean[] = [];
@@ -103,6 +105,7 @@ function session(
     ...extra,
   };
   const chat = new ChatSession(config, {
+    ...(saveTask ? { saveTask } : {}),
     update: (update) => updates.push(update),
     busy: (value) => busy.push(value),
     sessionId: (role, id) => sessionIds.push([role, id]),
@@ -292,6 +295,514 @@ function claudeRuns(): string[][] {
 
 const doneTurns = (updates: readonly ThreadUpdate[]) =>
   updates.flatMap((u) => (u.type === 'turn' && u.status === 'done' ? [u] : []));
+
+describe('durable task recovery (ADR 0039)', () => {
+  function durable(extra: Partial<ChatConfig>, save: (task: SavedTask | null) => void) {
+    return session(
+      'auto',
+      'always',
+      extra.resume,
+      extra.unseen ? [...extra.unseen] : undefined,
+      undefined,
+      extra.checkpoints,
+      undefined,
+      extra,
+      undefined,
+      save,
+    );
+  }
+
+  function interrupted(extra: Partial<ChatConfig>, step: SavedTask['progress']['step']) {
+    const history = new ChatHistory(join(root, 'history'));
+    const record: ChatRecord = {
+      version: 1,
+      id: 'chat-task',
+      title: 'Task',
+      createdAt: 1,
+      updatedAt: 1,
+      sessions: {},
+      updates: [],
+    };
+    const store = new CheckpointStore(join(root, 'checkpoints'), cwd);
+    let stopped = false;
+    const first = durable({ checkpoints: store, ...extra }, (task) => {
+      history.saveTask(record, task);
+      if (!stopped && task?.progress.step === step && !task.progress.inFlight) {
+        stopped = true;
+        throw new Error('Simulated restart at committed boundary');
+      }
+    });
+    const reopen = (task: SavedTask, changes: Partial<ChatConfig> = {}) =>
+      durable(
+        {
+          checkpoints: store,
+          ...extra,
+          ...changes,
+          task,
+          resume: task.sessions ?? {},
+          unseen: record.unseen ?? [],
+        },
+        (next) => {
+          history.saveTask(record, next);
+        },
+      );
+    return { first, history, record, store, reopen };
+  }
+
+  it('invalidates a saved green delivery after manual changes and verifies current files', async () => {
+    writeFileSync(join(cwd, 'input.txt'), 'ok');
+    writeFileSync(
+      join(cwd, 'verify.cjs'),
+      "const fs=require('node:fs'); const ok=fs.readFileSync('input.txt','utf8')==='ok'; fs.writeFileSync(process.argv[2], '<testsuite><testcase name=\"input\">'+(ok?'':'<failure message=\"bad input\"/>')+'</testcase></testsuite>'); process.exitCode=ok?0:1;",
+    );
+    const fixture = interrupted(
+      { verifyCommand: [process.execPath, 'verify.cjs', '{junit}'] },
+      'delivery',
+    );
+    try {
+      await fixture.first.chat.send('@impl check input');
+    } finally {
+      await fixture.first.chat.dispose();
+    }
+    const saved = fixture.history.load(fixture.record.id)?.task;
+    if (!saved) throw new Error('Expected committed delivery');
+    expect(saved.progress.result?.facts).toContain('passed');
+    writeFileSync(join(cwd, 'input.txt'), 'manual change');
+    const reopened = fixture.reopen(saved);
+    try {
+      await reopened.chat.resumeTask(true);
+    } finally {
+      await reopened.chat.dispose();
+    }
+    expect(fixture.history.load(fixture.record.id)?.task?.progress.result?.facts).toContain(
+      'failed',
+    );
+    expect(reopened.updates.findLast((update) => update.type === 'verification')).toMatchObject({
+      evidence: { status: 'failed' },
+    });
+    expect(readFileSync(join(cwd, 'input.txt'), 'utf8')).toBe('manual change');
+  }, 20000);
+
+  it('preserves a blocked report and skips review when verification is resumed', async () => {
+    const reviewer: NonNullable<ChatConfig['reviewer']> = {
+      choice: { cli: 'claude', model: 'haiku', effort: 'low', permission: 'auto' },
+      rounds: 2,
+    };
+    const fixture = interrupted({ reviewer }, 'verification');
+    const blocked = call('report', {
+      outcome: 'blocked',
+      summary: 'Need a decision',
+      changes: [],
+      criteria: [],
+    });
+    try {
+      await fixture.first.chat.send(`@impl ${blocked}`);
+    } finally {
+      await fixture.first.chat.dispose();
+    }
+    const saved = fixture.history.load(fixture.record.id)?.task;
+    if (!saved) throw new Error('Expected blocked task');
+    const reopened = fixture.reopen(saved);
+    try {
+      await reopened.chat.resumeTask();
+    } finally {
+      await reopened.chat.dispose();
+    }
+    expect(
+      claudeRuns().filter((args) => args[args.indexOf('--model') + 1] === 'haiku'),
+    ).toHaveLength(0);
+    expect(fixture.history.load(fixture.record.id)?.task?.progress.work?.data?.outcome).toBe(
+      'blocked',
+    );
+  }, 20000);
+
+  it('retains the prior structured report after an interrupted correction and rejects permission drift', async () => {
+    const reviewer: NonNullable<ChatConfig['reviewer']> = {
+      choice: { cli: 'claude', model: 'haiku', effort: 'low', permission: 'auto' },
+      rounds: 1,
+    };
+    const fixture = interrupted({ reviewer }, 'review');
+    const report = call('report', {
+      outcome: 'done',
+      summary: 'Committed report',
+      verification: `Fixture\n${REVIEW}`,
+      changes: [],
+      criteria: [],
+    });
+    try {
+      await fixture.first.chat.send(`@impl ${report}`);
+    } finally {
+      await fixture.first.chat.dispose();
+    }
+    const saved = fixture.history.load(fixture.record.id)?.task;
+    if (!saved) throw new Error('Expected task');
+    const drift = fixture.reopen(saved, { allowedCommands: ['python', 'echo'] });
+    try {
+      await expect(drift.chat.resumeTask(true)).rejects.toThrow('configuration');
+    } finally {
+      await drift.chat.dispose();
+    }
+    const uncertain: SavedTask = {
+      ...saved,
+      progress: { ...saved.progress, step: 'implementation', inFlight: true, used: 1 },
+    };
+    fixture.history.saveTask(fixture.record, uncertain);
+    const recovered = fixture.reopen(uncertain);
+    try {
+      await recovered.chat.resumeTask(true);
+    } finally {
+      await recovered.chat.dispose();
+    }
+    expect(fixture.history.load(fixture.record.id)?.task?.progress.work).toEqual(
+      saved.progress.work,
+    );
+    expect(fixture.history.load(fixture.record.id)?.task?.progress.used).toBe(1);
+  }, 20000);
+
+  it('warns about a missing original baseline and retains its reference after confirmed recovery', async () => {
+    const fixture = interrupted({}, 'verification');
+    try {
+      await fixture.first.chat.send('@impl inspect');
+    } finally {
+      await fixture.first.chat.dispose();
+    }
+    const saved = fixture.history.load(fixture.record.id)?.task;
+    const baseline = saved?.verification?.baseline;
+    if (!saved || !baseline) throw new Error('Expected baseline reference');
+    rmSync(join(root, 'checkpoints', 'checkpoints', baseline + '.json'));
+    const reopened = fixture.reopen(saved);
+    try {
+      expect(reopened.chat.recoveryReason()).toContain('original verification baseline');
+      await reopened.chat.resumeTask();
+      await reopened.chat.resumeTask(true);
+    } finally {
+      await reopened.chat.dispose();
+    }
+    expect(fixture.history.load(fixture.record.id)?.task?.verification?.baseline).toBe(baseline);
+  }, 20000);
+
+  it('does not complete the task when the leader delivery intent cannot be saved', async () => {
+    const history = new ChatHistory(join(root, 'history'));
+    const record: ChatRecord = {
+      version: 1,
+      id: 'chat-task',
+      title: 'Task',
+      createdAt: 1,
+      updatedAt: 1,
+      sessions: {},
+      updates: [],
+    };
+    const current = durable(
+      { checkpoints: new CheckpointStore(join(root, 'checkpoints'), cwd) },
+      (task) => {
+        if (task?.progress.step === 'delivery' && task.progress.inFlight)
+          throw new Error('synthetic leader intent failure');
+        history.saveTask(record, task);
+      },
+    );
+    try {
+      await current.chat.send(`[spec] Work\n${REPORT}`);
+    } finally {
+      await current.chat.dispose();
+    }
+    expect(history.load(record.id)?.task?.progress).toMatchObject({
+      step: 'delivery',
+      inFlight: false,
+    });
+    expect(doneTurns(current.updates).filter((turn) => turn.role === 'leader')).toHaveLength(1);
+  }, 20000);
+
+  it('deduplicates a deferred result when restart happens before completion is saved', async () => {
+    const history = new ChatHistory(join(root, 'history'));
+    const record: ChatRecord = {
+      version: 1,
+      id: 'chat-task',
+      title: 'Task',
+      createdAt: 1,
+      updatedAt: 1,
+      sessions: {},
+      updates: [],
+    };
+    const store = new CheckpointStore(join(root, 'checkpoints'), cwd);
+    const first = durable({ checkpoints: store, review: 'deferred' }, (task) => {
+      if (task?.progress.step === 'completed') throw new Error('Simulated exit before completion');
+      history.saveTask(record, task);
+    });
+    try {
+      await first.chat.send(`[spec] Work\n${REPORT}`);
+    } finally {
+      await first.chat.dispose();
+    }
+    const saved = history.load(record.id)?.task;
+    if (!saved) throw new Error('Expected deferred task');
+    record.unseen = [...(first.kept.at(-1) ?? [])];
+    expect(record.unseen).toHaveLength(1);
+    history.save(record);
+    const reopened = durable(
+      {
+        checkpoints: store,
+        review: 'deferred',
+        task: saved,
+        resume: saved.sessions ?? {},
+        unseen: record.unseen,
+      },
+      (task) => {
+        history.saveTask(record, task);
+      },
+    );
+    try {
+      await reopened.chat.resumeTask();
+    } finally {
+      await reopened.chat.dispose();
+    }
+    expect(reopened.kept.at(-1)).toHaveLength(1);
+    expect(history.load(record.id)?.task?.progress.step).toBe('completed');
+    expect(
+      claudeRuns().filter((args) => args[args.indexOf('--model') + 1] === 'sonnet'),
+    ).toHaveLength(1);
+  }, 20000);
+
+  it('replaces an older pending result after deferred delivery is verified against edited files', async () => {
+    writeFileSync(join(cwd, 'input.txt'), 'ok');
+    writeFileSync(
+      join(cwd, 'verify.cjs'),
+      "const fs=require('node:fs');const ok=fs.readFileSync('input.txt','utf8')==='ok';fs.writeFileSync(process.argv[2],'<testsuite><testcase name=\"input\">'+(ok?'':'<failure message=\"bad input\"/>')+'</testcase></testsuite>');process.exitCode=ok?0:1;",
+    );
+    const fixture = interrupted(
+      { review: 'deferred', verifyCommand: [process.execPath, 'verify.cjs', '{junit}'] },
+      'delivery',
+    );
+    try {
+      await fixture.first.chat.send(`[spec] Check input\n${REPORT}`);
+    } finally {
+      await fixture.first.chat.dispose();
+    }
+    const saved = fixture.history.load(fixture.record.id)?.task;
+    if (!saved?.progress.work || !saved.progress.result) throw new Error('Expected saved result');
+    fixture.record.unseen = [
+      {
+        source: 'delegation',
+        taskId: saved.id,
+        request: saved.progress.brief,
+        report: saved.progress.work.text,
+        facts: saved.progress.result.facts,
+      },
+    ];
+    fixture.history.save(fixture.record);
+    writeFileSync(join(cwd, 'input.txt'), 'changed');
+    const reopened = fixture.reopen(saved);
+    try {
+      await reopened.chat.resumeTask(true);
+    } finally {
+      await reopened.chat.dispose();
+    }
+    expect(reopened.kept.at(-1)).toHaveLength(1);
+    expect(reopened.kept.at(-1)?.[0]?.facts).toContain('failed');
+    expect(fixture.history.load(fixture.record.id)?.task?.progress.result?.facts).toContain(
+      'failed',
+    );
+  }, 20000);
+
+  it('supplies saved context when a resumed provider creates a fresh session', async () => {
+    const reviewer: NonNullable<ChatConfig['reviewer']> = {
+      choice: { cli: 'claude', model: 'haiku', effort: 'low', permission: 'auto' },
+      rounds: 1,
+    };
+    const implementer = {
+      cli: 'codex',
+      model: 'gpt-6.1-sol',
+      effort: 'low',
+      permission: 'auto',
+    } as const;
+    const fixture = interrupted({ reviewer, implementer }, 'review');
+    const report = call('report', {
+      outcome: 'done',
+      summary: 'Committed',
+      verification: `Fixture\n${REVIEW}`,
+      changes: [],
+      criteria: [],
+    });
+    try {
+      await fixture.first.chat.send(`@impl ${report}`);
+    } finally {
+      await fixture.first.chat.dispose();
+    }
+    const saved = fixture.history.load(fixture.record.id)?.task;
+    if (!saved) throw new Error('Expected task');
+    const correction: SavedTask = {
+      ...saved,
+      sessions: { ...saved.sessions, implementer: 'expired-thread' },
+      progress: {
+        ...saved.progress,
+        step: 'implementation',
+        inFlight: false,
+        used: 1,
+        findings: `Finish the saved correction\n${report}`,
+      },
+    };
+    fixture.history.saveTask(fixture.record, correction);
+    const reopened = fixture.reopen(correction);
+    try {
+      await reopened.chat.resumeTask();
+    } finally {
+      await reopened.chat.dispose();
+    }
+    expect(
+      reopened.updates.some(
+        (update) => update.type === 'notice' && update.text.includes('fresh session'),
+      ),
+    ).toBe(true);
+    const work = doneTurns(reopened.updates).find((turn) => turn.role === 'implementer');
+    expect(work?.text).toContain('Saved task recovery context');
+    expect(fixture.history.load(fixture.record.id)?.task?.progress).toMatchObject({
+      step: 'completed',
+      used: 1,
+      limit: 1,
+    });
+  }, 20000);
+
+  it('atomically replaces an approved restored draft before any model starts', async () => {
+    const history = new ChatHistory(join(root, 'history'));
+    const draft = { id: 'a-draft', from: 'leader', to: 'implementer', text: 'Approved work' };
+    const record: ChatRecord = {
+      version: 1,
+      id: 'chat-task',
+      title: 'Task',
+      createdAt: 1,
+      updatedAt: 1,
+      sessions: {},
+      updates: [],
+      draft,
+    };
+    const current = durable(
+      { checkpoints: new CheckpointStore(join(root, 'checkpoints'), cwd), draft },
+      (task) => {
+        history.saveTask(record, task);
+        throw new Error('Simulated exit immediately after approved task commit');
+      },
+    );
+    try {
+      current.chat.decide(draft.id, 'approve');
+      await expect.poll(() => history.load(record.id)?.task?.progress.step).toBe('implementation');
+    } finally {
+      await current.chat.dispose();
+    }
+    expect(history.load(record.id)?.draft).toBeNull();
+    expect(history.load(record.id)?.task?.progress.inFlight).toBe(false);
+    expect(doneTurns(current.updates)).toHaveLength(0);
+  });
+
+  it('reopens after a committed implementation and runs review once under repeated Resume', async () => {
+    const history = new ChatHistory(join(root, 'history'));
+    const record: ChatRecord = {
+      version: 1,
+      id: 'chat-task',
+      title: 'Task',
+      createdAt: 1,
+      updatedAt: 1,
+      sessions: {},
+      updates: [],
+    };
+    const store = new CheckpointStore(join(root, 'checkpoints'), cwd);
+    const reviewer: NonNullable<ChatConfig['reviewer']> = {
+      choice: { cli: 'claude', model: 'haiku', effort: 'low', permission: 'auto' },
+      rounds: 1,
+    };
+    let simulatedExit = false;
+    const first = durable({ checkpoints: store, reviewer }, (task) => {
+      history.saveTask(record, task);
+      if (!simulatedExit && task?.progress.step === 'review' && !task.progress.inFlight) {
+        simulatedExit = true;
+        throw new Error('Simulated exit after committed implementation');
+      }
+    });
+    const request = call('report', {
+      outcome: 'done',
+      summary: 'Ready',
+      verification: `Fixture\n${REVIEW}`,
+      changes: [],
+      criteria: [],
+    });
+    try {
+      await first.chat.send(`@impl ${request}`);
+    } finally {
+      await first.chat.dispose();
+    }
+    const saved = history.load(record.id)?.task;
+    expect(saved?.progress).toMatchObject({ step: 'review', inFlight: false });
+    expect(saved?.verification?.baseline).toBeTruthy();
+    if (!saved) throw new Error('Expected saved task');
+    const reserved: SavedTask = { ...saved, progress: { ...saved.progress, used: 1 } };
+    history.saveTask(record, reserved);
+    const reopened = durable(
+      {
+        checkpoints: store,
+        reviewer: { ...reviewer, rounds: 3 },
+        task: reserved,
+        resume: reserved.sessions ?? {},
+      },
+      (task) => {
+        history.saveTask(record, task);
+      },
+    );
+    try {
+      expect(reopened.chat.recoveryReason()).toBeUndefined();
+      await Promise.all(Array.from({ length: 20 }, () => reopened.chat.resumeTask()));
+    } finally {
+      await reopened.chat.dispose();
+    }
+    const runs = claudeRuns();
+    expect(runs.filter((args) => args[args.indexOf('--model') + 1] === 'sonnet')).toHaveLength(1);
+    expect(runs.filter((args) => args[args.indexOf('--model') + 1] === 'haiku')).toHaveLength(1);
+    expect(history.load(record.id)?.task?.progress).toMatchObject({
+      step: 'completed',
+      used: 1,
+      limit: 1,
+    });
+  }, 20000);
+
+  it('requires confirmation after Stop or external changes and cancellation preserves files', async () => {
+    const history = new ChatHistory(join(root, 'history'));
+    const record: ChatRecord = {
+      version: 1,
+      id: 'chat-task',
+      title: 'Task',
+      createdAt: 1,
+      updatedAt: 1,
+      sessions: {},
+      updates: [],
+    };
+    const store = new CheckpointStore(join(root, 'checkpoints'), cwd);
+    const current = durable(
+      {
+        checkpoints: store,
+        implementer: { cli: 'codex', model: 'gpt-6.1-sol', effort: 'low', permission: 'auto' },
+      },
+      (task) => {
+        history.saveTask(record, task);
+      },
+    );
+    try {
+      const pending = current.chat.send('@impl [hang]');
+      await expect
+        .poll(() =>
+          current.updates.some((update) => update.type === 'turn' && update.status === 'running'),
+        )
+        .toBe(true);
+      await current.chat.stop();
+      await pending;
+      writeFileSync(join(cwd, 'manual.txt'), 'Keep this edit');
+      expect(current.chat.recoveryReason()).toContain('Files changed');
+      await current.chat.resumeTask();
+      expect(history.load(record.id)?.task?.progress.inFlight).toBe(true);
+      current.chat.cancelTask();
+      expect(history.load(record.id)?.task?.progress.step).toBe('cancelled');
+      expect(readFileSync(join(cwd, 'manual.txt'), 'utf8')).toBe('Keep this edit');
+    } finally {
+      await current.chat.dispose();
+    }
+  }, 20000);
+});
 
 describe('chat session: roles changed during the chat (ADR 0012)', () => {
   it('gives a role another model from its next turn, in the same session', async () => {

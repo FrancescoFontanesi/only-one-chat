@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { ChatHistory } from '../../src/session/history.js';
 import { VerificationContentProvider } from '../../src/webview/verificationContent.js';
+import { TaskContentProvider, taskUri } from '../../src/webview/taskContent.js';
 import { CheckpointStore } from '../../src/session/checkpoints.js';
 import { checkpointsRoot, CheckpointContentProvider } from '../../src/webview/checkpointContent.js';
 import type { OnlyOneChatExports } from '../../src/extension.js';
@@ -32,6 +33,58 @@ function panelTabs(): vscode.Tab[] {
 }
 
 describe('Only One Chat extension', () => {
+  it('opens saved task recovery context through a native read-only document', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ooc-task-evidence-'));
+    const context = { storageUri: vscode.Uri.file(root) } as vscode.ExtensionContext;
+    const history = new ChatHistory(join(root, 'chats'));
+    history.save({
+      version: 1,
+      id: 'chat-task',
+      title: 'Task',
+      createdAt: 1,
+      updatedAt: 1,
+      sessions: {},
+      updates: [],
+      task: {
+        version: 1,
+        id: 'task-1',
+        configuration: '{}',
+        checkpoint: null,
+        progress: {
+          brief: 'Approved synthetic work',
+          direct: true,
+          step: 'review',
+          inFlight: false,
+          limit: 2,
+          used: 1,
+          work: { text: 'Latest committed report', data: null },
+          findings: 'R1 remains',
+        },
+      },
+    });
+    const provider = new TaskContentProvider(context);
+    const scheme = 'ooc-test-task';
+    const registration = vscode.workspace.registerTextDocumentContentProvider(scheme, provider);
+    try {
+      const document = await vscode.workspace.openTextDocument(
+        taskUri('chat-task', 'task-1').with({ scheme }),
+      );
+      assert.match(document.getText(), /Corrections: 1\/2/);
+      assert.match(document.getText(), /Latest committed report/);
+      assert.match(document.getText(), /R1 remains/);
+      assert.notEqual(vscode.workspace.fs.isWritableFileSystem(scheme), true);
+      assert.throws(
+        () =>
+          provider.provideTextDocumentContent(
+            vscode.Uri.from({ scheme, path: '/chat-task/../../outside.txt' }),
+          ),
+        /Invalid task reference/,
+      );
+    } finally {
+      registration.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   it('opens persisted verification evidence in a native read-only document', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ooc-evidence-'));
     const context = { storageUri: vscode.Uri.file(root) } as vscode.ExtensionContext;

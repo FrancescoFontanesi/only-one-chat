@@ -1632,6 +1632,131 @@ describe('leader mode with a reviewer (ADR 0029, 0035)', () => {
     );
   });
 
+  describe('the verdict drives the correction loop (ADR 0040)', () => {
+    const rejects = (over: Record<string, unknown> = {}) =>
+      reviews({ verdict: 'rejected', ...over });
+
+    it('asks a rejection with rounds left and no findings for them once, then runs the correction round', async () => {
+      const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed.' }]);
+      const claude = fakeAgent('Claude', [reports(), reports()]);
+      const gemini = fakeAgent('Gemini', [rejects(), raisesFindings, reviews()]);
+      const { running, harness } = await reviewedLoop(codex, claude, gemini);
+      await running.done;
+      expect(gemini.prompts).toHaveLength(3);
+      expect(gemini.prompts[1]).toContain('no blocking finding reached the implementer');
+      expect(claude.prompts[1]).toContain(`${WORKER_ANSWER_START}\n${FINDINGS}`);
+      expect(harness.events).toContainEqual(
+        expect.objectContaining({ type: 'reviewed', verdict: 'approved', rounds: 1 }),
+      );
+    });
+
+    it('sends the leader a rejection that still has no findings after the repair turn, with the issue', async () => {
+      const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed.' }]);
+      const claude = fakeAgent('Claude', [reports()]);
+      const gemini = fakeAgent('Gemini', [rejects(), rejects()]);
+      const { running, harness } = await reviewedLoop(codex, claude, gemini);
+      await running.done;
+      expect(gemini.prompts).toHaveLength(2);
+      expect(claude.prompts).toHaveLength(1);
+      expect(codex.prompts[1]).toContain('gave no findings for the implementer');
+      expect(codex.prompts[1]).toContain('names no blocking finding and no failed axis');
+      expect(harness.events).toContainEqual(
+        expect.objectContaining({ type: 'reviewed', verdict: 'rejected', rounds: 0 }),
+      );
+    });
+
+    it('asks an incoherent rejection with no rounds left once, and takes the corrected verdict', async () => {
+      const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed.' }]);
+      const claude = fakeAgent('Claude', [reports()]);
+      const gemini = fakeAgent('Gemini', [rejects(), reviews()]);
+      const { running, harness } = await reviewedLoop(codex, claude, gemini, { reviewRounds: 0 });
+      await running.done;
+      expect(gemini.prompts).toHaveLength(2);
+      expect(gemini.prompts[1]).toContain('names no blocking finding and no failed axis');
+      expect(codex.prompts[1]).not.toContain('names no blocking finding');
+      expect(harness.events).toContainEqual(
+        expect.objectContaining({ type: 'reviewed', verdict: 'approved' }),
+      );
+    });
+
+    it('runs a correction round when an approval is lowered to rejection and findings came with it', async () => {
+      const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed.' }]);
+      const claude = fakeAgent('Claude', [reports(), reports()]);
+      const gemini = fakeAgent('Gemini', [
+        {
+          answer: 'Both.',
+          handoffs: [
+            review({ axes: { honesty: 'bypassed', security: 'clean', currency: 'clean' } }),
+            findings(),
+          ],
+        },
+        reviews(),
+      ]);
+      const { running } = await reviewedLoop(codex, claude, gemini);
+      await running.done;
+      expect(gemini.prompts).toHaveLength(2);
+      expect(claude.prompts[1]).toContain(`${WORKER_ANSWER_START}\n${FINDINGS}`);
+    });
+
+    it('keeps a with_reservations review with a blocking finding open as rejected', async () => {
+      const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed.' }]);
+      const claude = fakeAgent('Claude', [reports()]);
+      const gemini = fakeAgent('Gemini', [
+        reviews({
+          verdict: 'with_reservations',
+          open_findings: [{ id: 'R1', severity: 'blocking', issue: 'ans is 0' }],
+        }),
+      ]);
+      const { running, harness } = await reviewedLoop(codex, claude, gemini, { reviewRounds: 0 });
+      await running.done;
+      expect(codex.prompts[1]).toContain(
+        'the reviewer wrote "with_reservations", the runtime keeps it as "rejected"',
+      );
+      expect(harness.events).toContainEqual(
+        expect.objectContaining({ type: 'reviewed', verdict: 'rejected' }),
+      );
+    });
+
+    it('drops the findings of a turn that also approves, and says so', async () => {
+      const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed.' }]);
+      const claude = fakeAgent('Claude', [reports()]);
+      const gemini = fakeAgent('Gemini', [{ answer: 'Both.', handoffs: [review(), findings()] }]);
+      const { running, harness } = await reviewedLoop(codex, claude, gemini);
+      await running.done;
+      expect(claude.prompts).toHaveLength(1);
+      expect(codex.prompts[1]).toContain('the findings were not used');
+      expect(harness.events).toContainEqual(
+        expect.objectContaining({ type: 'reviewed', verdict: 'approved', rounds: 0 }),
+      );
+    });
+
+    it('does not flag findings of earlier rounds in a resumed task', async () => {
+      const codex = fakeAgent('Codex', [{ answer: 'Seen.' }]);
+      const claude = fakeAgent('Claude', [reports()]);
+      const gemini = fakeAgent('Gemini', [
+        raisesFindings,
+        reviews({ closed_findings: [{ id: 'R0', note: 'fixed in round 1' }] }),
+      ]);
+      const { running } = await reviewedLoop(codex, claude, gemini, {
+        task: {
+          resume: {
+            brief: BRIEF,
+            direct: false,
+            step: 'review',
+            inFlight: false,
+            limit: 2,
+            used: 1,
+            work: { text: REPORT, data: reportArgs() as unknown as Report },
+          },
+          save() {},
+        },
+      });
+      await running.done;
+      expect(gemini.prompts).toHaveLength(2);
+      expect(codex.prompts[0]).not.toContain('did not issue');
+    });
+  });
+
   it('guards each reviewer turn, and tells the implementer and the leader what was put back', async () => {
     const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed.' }]);
     const claude = fakeAgent('Claude', [reports(), reports()]);

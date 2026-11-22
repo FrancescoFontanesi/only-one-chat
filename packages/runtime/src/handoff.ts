@@ -153,7 +153,7 @@ const CRITERIA_RESULTS: Schema = list(
     },
     ['id', 'status', 'evidence'],
   ),
-  { description: 'One entry for each criterion of the brief.' },
+  { uniqueBy: 'id', description: 'One entry for each criterion of the brief.' },
 );
 
 const TEST_SELECTION = object(
@@ -245,7 +245,10 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
           },
           ['id', 'resolution', 'note'],
         ),
-        { description: 'Only when answering the reviewer’s findings: one entry per finding.' },
+        {
+          uniqueBy: 'id',
+          description: 'Only when answering the reviewer’s findings: one entry per finding.',
+        },
       ),
     },
     ['outcome', 'summary', 'changes', 'criteria'],
@@ -273,7 +276,7 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
           },
           ['id', 'severity', 'issue', 'evidence'],
         ),
-        { minItems: 1, description: 'The findings, each with its proof.' },
+        { minItems: 1, uniqueBy: 'id', description: 'The findings, each with its proof.' },
       ),
     },
     ['items'],
@@ -299,6 +302,7 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
           ['id', 'status', 'evidence'],
         ),
         {
+          uniqueBy: 'id',
           description:
             'One entry for each criterion of the brief (number them yourself if it does not).',
         },
@@ -329,14 +333,14 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
           },
           ['id', 'severity', 'issue'],
         ),
-        { description: 'The findings still open. Empty if none.' },
+        { uniqueBy: 'id', description: 'The findings still open. Empty if none.' },
       ),
       closed_findings: list(
         object({ id: findingId, note: required('What it was and how it was closed.') }, [
           'id',
           'note',
         ]),
-        { description: 'The findings closed during the review.' },
+        { uniqueBy: 'id', description: 'The findings closed during the review.' },
       ),
       changes: optional(
         'Files changed, from the runtime’s facts, one line each with the criterion; mark those the implementer’s report does not name.',

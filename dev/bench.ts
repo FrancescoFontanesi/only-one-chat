@@ -152,6 +152,25 @@ function handoffMetrics(turns: readonly TurnRecord[], invalid: number) {
   return { invalidDelegations: invalid, byAgent };
 }
 
+/**
+ * Fault injection, to make the review loop's rarer paths run with real models:
+ * `note` goes after the session's first prompt only, unseen by the other roles.
+ * Set by OOC_BENCH_FIRST_TURN_NOTE (implementer) and OOC_BENCH_REVIEWER_FIRST_TURN_NOTE.
+ */
+function withFirstTurnNote(session: AgentSession, note: string | undefined): AgentSession {
+  if (!note) return session;
+  let turns = 0;
+  return {
+    name: session.name,
+    get id() {
+      return session.id;
+    },
+    runTurn: (prompt, handlers, turnOptions) =>
+      session.runTurn(turns++ === 0 ? `${prompt}\n\n${note}` : prompt, handlers, turnOptions),
+    close: () => session.close(),
+  };
+}
+
 /** A session system: one model, one long chat, every message of the script in it. */
 const SESSION_AGENT_INSTRUCTIONS = [
   'You are an Only One Chat agent. Talk with the user in this chat and work on the project in',
@@ -614,8 +633,12 @@ async function main(): Promise<void> {
           handoffTools('implementer', HANDOFF_SERVER),
         ),
       );
-      implementers.push(session);
-      return session;
+      const injected =
+        implementers.length === 0
+          ? withFirstTurnNote(session, env['OOC_BENCH_FIRST_TURN_NOTE'])
+          : session;
+      implementers.push(injected);
+      return injected;
     };
     try {
       for (const message of script) {
@@ -684,7 +707,10 @@ async function main(): Promise<void> {
             ? {
                 // As in the product (ADR 0029): it runs and writes tests, its code changes put back.
                 reviewer: async (sessionOptions) => {
-                  const session = await factory(reviewerConfig, true)(sessionOptions);
+                  const session = withFirstTurnNote(
+                    await factory(reviewerConfig, true)(sessionOptions),
+                    reviewerTurns === 0 ? env['OOC_BENCH_REVIEWER_FIRST_TURN_NOTE'] : undefined,
+                  );
                   const shadows = system.shadowReviewers ?? [];
                   if (shadows.length === 0) return session;
                   // The first request, before the turn: the folder is what the reviewer gets.

@@ -209,6 +209,89 @@ describe('checkReview', () => {
   });
 });
 
+describe('checkReview, coherence of every verdict (ADR 0040)', () => {
+  const blocking = [{ id: 'R1', severity: 'blocking' as const, issue: 'null byte' }];
+  const raised = { items: [{ severity: 'blocking' }] };
+
+  it('lowers with_reservations to rejected with a blocking finding open or an axis failed', () => {
+    const lowered = checkReview(
+      brief,
+      review({ verdict: 'with_reservations', open_findings: blocking }),
+    );
+    expect(lowered.verdict).toBe('rejected');
+    expect(lowered.issues.map((i) => i.code)).toEqual(['verdict-lowered']);
+    const failedAxis = review({
+      verdict: 'with_reservations',
+      axes: { honesty: 'clean', security: 'flaw', currency: 'clean' },
+    });
+    expect(checkReview(brief, failedAxis).verdict).toBe('rejected');
+    const minor = [{ id: 'R2', severity: 'minor' as const, issue: 'a name' }];
+    expect(
+      checkReview(brief, review({ verdict: 'with_reservations', open_findings: minor })),
+    ).toEqual({ verdict: 'with_reservations', issues: [] });
+  });
+
+  it('calls a rejection with no blocking finding and no failed axis incoherent, unless the turn has one', () => {
+    const bare = review({ verdict: 'rejected' });
+    expect(checkReview(brief, bare).issues.map((i) => i.code)).toEqual(['verdict-incoherent']);
+    expect(checkReview(brief, bare, undefined, { findings: raised, roundsLeft: 1 }).issues).toEqual(
+      [],
+    );
+    expect(
+      checkReview(brief, review({ verdict: 'rejected', open_findings: blocking })).issues,
+    ).toEqual([]);
+  });
+
+  it('says when a rejection with rounds left has no findings, and when findings are dropped', () => {
+    const rejected = review({ verdict: 'rejected', open_findings: blocking });
+    const codes = (r: Review, turn: Parameters<typeof checkReview>[3]) =>
+      checkReview(brief, r, undefined, turn).issues.map((i) => i.code);
+    expect(codes(rejected, { roundsLeft: 1 })).toEqual(['findings-missing']);
+    expect(codes(rejected, { findings: raised, roundsLeft: 0 })).toEqual(['findings-dropped']);
+    expect(codes(review(), { findings: raised, roundsLeft: 2 })).toEqual(['findings-dropped']);
+  });
+});
+
+describe('references to what the runtime issued', () => {
+  it('flags a criterion the brief does not number, in a report and a review', () => {
+    const criteria = verified(['C1', 'C2', 'C3', 'C4', 'C7']);
+    expect(checkReport(brief, report({ criteria }), facts).map((i) => i.code)).toEqual([
+      'criteria-unknown',
+    ]);
+    expect(checkReview(brief, review({ criteria })).issues[0]?.message).toBe(
+      'the review cites criteria the brief does not number: C7.',
+    );
+    // A brief that numbers none has nothing to compare with.
+    expect(checkReport('## Goal\nx', report({ criteria }), '')).toEqual([]);
+  });
+
+  it('flags a finding id that no findings call issued, and skips the check without a list', () => {
+    const resolutions = [{ id: 'R2', resolution: 'fixed' as const, note: 'x' }];
+    expect(checkReport(brief, report({ findings: resolutions }), facts)).toEqual([]);
+    expect(checkReport(brief, report({ findings: resolutions }), facts, ['R1'])[0]?.code).toBe(
+      'findings-unknown',
+    );
+    expect(checkReport(brief, report({ findings: resolutions }), facts, [])[0]?.code).toBe(
+      'findings-unknown',
+    );
+    const open = [{ id: 'R5', severity: 'blocking' as const, issue: 'x' }];
+    const closed = [{ id: 'R6', note: 'x' }];
+    const r = review({ verdict: 'rejected', open_findings: open, closed_findings: closed });
+    expect(checkReview(brief, r).issues).toEqual([]);
+    expect(checkReview(brief, r, ['R5', 'R6']).issues).toEqual([]);
+    expect(checkReview(brief, r, ['R5']).issues).toEqual([
+      {
+        code: 'findings-unknown',
+        message: 'the review cites findings this task did not issue: R6.',
+      },
+    ]);
+    // A minor finding goes straight into the review (reviewer.md): open, it may be new.
+    const minor = [{ id: 'R1', severity: 'minor' as const, issue: 'x' }];
+    const reserved = review({ verdict: 'with_reservations', open_findings: minor });
+    expect(checkReview(brief, reserved, []).issues).toEqual([]);
+  });
+});
+
 describe('contractFacts', () => {
   it('is empty with nothing to say, a list of facts otherwise', () => {
     expect(contractFacts('Checks on the report', [])).toBe('');

@@ -31,6 +31,8 @@ export interface Schema {
   readonly pattern?: string;
   readonly minItems?: number;
   readonly maxItems?: number;
+  /** On an array of objects: no two items share the value of this field. */
+  readonly uniqueBy?: string;
 }
 
 /** The errors of `value` against `schema`, with their paths; empty when valid. */
@@ -59,6 +61,17 @@ export function validate(schema: Schema, value: unknown, at = '$'): string[] {
     }
     if (schema.maxItems !== undefined && value.length > schema.maxItems) {
       return [`${at}: at most ${String(schema.maxItems)} item(s)`];
+    }
+    if (schema.uniqueBy !== undefined) {
+      const field = schema.uniqueBy;
+      const seen = new Set<unknown>();
+      value.forEach((item, i) => {
+        const key = (item as Record<string, unknown> | null)?.[field];
+        if (key === undefined) return;
+        if (seen.has(key))
+          errors.push(`${at}[${String(i)}].${field}: duplicate ${JSON.stringify(key)}`);
+        seen.add(key);
+      });
     }
     if (schema.items) {
       const items = schema.items;

@@ -50,6 +50,13 @@ describe('the tools of each role', () => {
     expect(validate(schemaOf('delegate'), delegateArgs({ acceptance_criteria: [] }))).toEqual([
       '$.acceptance_criteria: at least 1 item(s)',
     ]);
+    const dup = { id: 'C1', status: 'verified', evidence: 'x' };
+    expect(validate(schemaOf('report'), reportArgs({ criteria: [dup, dup] }))).toEqual([
+      '$.criteria[1].id: duplicate "C1"',
+    ]);
+    expect(validate(schemaOf('review'), reviewArgs({ criteria: [dup, dup] }))).toEqual([
+      '$.criteria[1].id: duplicate "C1"',
+    ]);
     expect(validate(schemaOf('findings'), findingsArgs({ items: [] }))).toEqual([
       '$.items: at least 1 item(s)',
     ]);

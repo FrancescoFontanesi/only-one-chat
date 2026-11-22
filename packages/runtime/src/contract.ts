@@ -16,6 +16,11 @@ interface ContractIssue {
     | 'criteria-missing'
     | 'outcome-incoherent'
     | 'files-undeclared'
+    | 'criteria-unknown'
+    | 'findings-unknown'
+    | 'findings-missing'
+    | 'findings-dropped'
+    | 'verdict-incoherent'
     | 'verdict-lowered';
   readonly message: string;
 }
@@ -61,24 +66,50 @@ const normalized = (path: string) =>
 const saysNone = (text: string | undefined) =>
   text === undefined || text.trim() === '' || /^(none|nessun[oa]|n\/?a|-)\.?$/i.test(text.trim());
 
-/** The status of each criterion, the first entry of an id winning. */
-function statusesOf(criteria: readonly { id: string; status: string }[]): Map<string, string> {
-  const statuses = new Map<string, string>();
-  for (const { id, status } of criteria) if (!statuses.has(id)) statuses.set(id, status);
-  return statuses;
-}
+/** The status of each criterion; ids are unique, the handoff schema enforces it. */
+const statusesOf = (criteria: readonly { id: string; status: string }[]) =>
+  new Map(criteria.map((c) => [c.id, c.status]));
+
+/** The ids missing from `known`; none when there is no list to compare. */
+const unknownOf = (ids: readonly string[], known: readonly string[] | undefined) =>
+  known === undefined ? [] : ids.filter((id) => !known.includes(id));
 
 /**
  * What does not hold in an implementer's report on a brief; none when it keeps
  * the contract. `report` is null when the implementer made no valid call.
  */
-export function checkReport(brief: string, report: Report | null, facts: string): ContractIssue[] {
+export function checkReport(
+  brief: string,
+  report: Report | null,
+  facts: string,
+  issued?: readonly string[],
+): ContractIssue[] {
   if (report === null) {
     return [{ code: 'no-report', message: 'the implementer did not call the report tool.' }];
   }
   const issues: ContractIssue[] = [];
   const statuses = statusesOf(report.criteria);
-  const missing = criteriaOf(brief).filter((id) => !statuses.has(id));
+  const numbered = criteriaOf(brief);
+  const missing = numbered.filter((id) => !statuses.has(id));
+  const strange = unknownOf([...statuses.keys()], numbered.length > 0 ? numbered : undefined);
+  if (strange.length > 0) {
+    issues.push({
+      code: 'criteria-unknown',
+      message: `the report cites criteria the brief does not number: ${listed(strange)}.`,
+    });
+  }
+  const strayFindings =
+    issued &&
+    unknownOf(
+      (report.findings ?? []).map((f) => f.id),
+      issued,
+    );
+  if (strayFindings && strayFindings.length > 0) {
+    issues.push({
+      code: 'findings-unknown',
+      message: `the report answers findings this task did not issue: ${listed(strayFindings)}.`,
+    });
+  }
   if (missing.length > 0) {
     issues.push({
       code: 'criteria-missing',
@@ -112,52 +143,116 @@ export function checkReport(brief: string, report: Report | null, facts: string)
 
 /**
  * A review checked against the brief: the criteria it covers, and its verdict
- * as the runtime keeps it. An approval with a criterion not verified, an axis
- * not clean or a finding open is lowered, and the leader is told why.
+ * as the runtime keeps it (ADR 0040). An approval with a criterion not
+ * verified, an axis not clean or a finding open is lowered; any verdict with a
+ * blocking finding open or an axis failed is at least `rejected`; a `rejected`
+ * with neither is incoherent. `turn` is what the same turn also called:
+ * `findings` and the correction rounds left. The leader is told every change.
  */
 export function checkReview(
   brief: string,
   review: Review,
+  issued?: readonly string[],
+  turn: {
+    readonly findings?: { readonly items: readonly { readonly severity: string }[] } | null;
+    readonly roundsLeft?: number;
+  } = {},
 ): { verdict: ReviewVerdict; issues: ContractIssue[] } {
   const issues: ContractIssue[] = [];
   const statuses = statusesOf(review.criteria);
-  const missing = criteriaOf(brief).filter((id) => !statuses.has(id));
+  const numbered = criteriaOf(brief);
+  const missing = numbered.filter((id) => !statuses.has(id));
+  const strange = unknownOf([...statuses.keys()], numbered.length > 0 ? numbered : undefined);
+  if (strange.length > 0) {
+    issues.push({
+      code: 'criteria-unknown',
+      message: `the review cites criteria the brief does not number: ${listed(strange)}.`,
+    });
+  }
+  // Only closed ones: an open finding may be new, as the minor ones that go straight into the review.
+  const strayFindings =
+    issued &&
+    unknownOf(
+      (review.closed_findings ?? []).map((f) => f.id),
+      issued,
+    );
+  if (strayFindings && strayFindings.length > 0) {
+    issues.push({
+      code: 'findings-unknown',
+      message: `the review cites findings this task did not issue: ${listed(strayFindings)}.`,
+    });
+  }
   if (missing.length > 0) {
     issues.push({
       code: 'criteria-missing',
       message: `the review does not say how ${listed(missing)} went.`,
     });
   }
-  if (review.verdict !== 'approved') return { verdict: review.verdict, issues };
-  const unverified = [...statuses].filter(([, s]) => s !== 'verified').map(([id]) => id);
   const { honesty, security, currency } = review.axes;
-  const dubious = [
-    ...(honesty === 'doubtful' ? ['honesty'] : []),
-    ...(security === 'doubtful' ? ['security'] : []),
-    ...(currency === 'doubtful' ? ['currency'] : []),
-  ];
   const failed = [
     ...(honesty === 'bypassed' ? ['honesty'] : []),
     ...(security === 'flaw' ? ['security'] : []),
     ...(currency === 'outdated' ? ['currency'] : []),
   ];
   const open = review.open_findings ?? [];
-  const reasons = [
-    ...(unverified.length > 0 ? [`${listed(unverified)} not verified`] : []),
-    ...(missing.length > 0 ? [`${listed(missing)} not cited`] : []),
-    ...(dubious.length > 0 ? [`doubtful on ${dubious.join(', ')}`] : []),
-    ...(failed.length > 0 ? [`negative on ${failed.join(', ')}`] : []),
-    ...(open.length > 0 ? ['findings still open'] : []),
-  ];
-  if (reasons.length === 0) return { verdict: review.verdict, issues };
-  const verdict: ReviewVerdict =
-    failed.length > 0 || open.some((f) => f.severity === 'blocking')
-      ? 'rejected'
-      : 'with_reservations';
-  issues.push({
-    code: 'verdict-lowered',
-    message: `the reviewer wrote "approved", the runtime keeps it as "${verdict}": ${reasons.join('; ')}.`,
-  });
+  const blocking = failed.length > 0 || open.some((f) => f.severity === 'blocking');
+  let verdict: ReviewVerdict = review.verdict;
+  if (review.verdict === 'approved') {
+    const unverified = [...statuses].filter(([, s]) => s !== 'verified').map(([id]) => id);
+    const dubious = [
+      ...(honesty === 'doubtful' ? ['honesty'] : []),
+      ...(security === 'doubtful' ? ['security'] : []),
+      ...(currency === 'doubtful' ? ['currency'] : []),
+    ];
+    const reasons = [
+      ...(unverified.length > 0 ? [`${listed(unverified)} not verified`] : []),
+      ...(missing.length > 0 ? [`${listed(missing)} not cited`] : []),
+      ...(dubious.length > 0 ? [`doubtful on ${dubious.join(', ')}`] : []),
+      ...(failed.length > 0 ? [`negative on ${failed.join(', ')}`] : []),
+      ...(open.length > 0 ? ['findings still open'] : []),
+    ];
+    if (reasons.length > 0) {
+      verdict = blocking ? 'rejected' : 'with_reservations';
+      issues.push({
+        code: 'verdict-lowered',
+        message: `the reviewer wrote "approved", the runtime keeps it as "${verdict}": ${reasons.join('; ')}.`,
+      });
+    }
+  } else if (review.verdict === 'with_reservations' && blocking) {
+    verdict = 'rejected';
+    const reasons = [
+      ...(failed.length > 0 ? [`negative on ${failed.join(', ')}`] : []),
+      ...(open.some((f) => f.severity === 'blocking') ? ['a blocking finding still open'] : []),
+    ];
+    issues.push({
+      code: 'verdict-lowered',
+      message: `the reviewer wrote "with_reservations", the runtime keeps it as "rejected": ${reasons.join('; ')}.`,
+    });
+  } else if (
+    review.verdict === 'rejected' &&
+    !blocking &&
+    !(turn.findings?.items ?? []).some((f) => f.severity === 'blocking')
+  ) {
+    issues.push({
+      code: 'verdict-incoherent',
+      message:
+        'the reviewer wrote "rejected" but names no blocking finding and no failed axis; the runtime keeps it as it is.',
+    });
+  }
+  const rounds = verdict === 'rejected' && (turn.roundsLeft ?? 0) > 0;
+  if (rounds && !turn.findings) {
+    issues.push({
+      code: 'findings-missing',
+      message:
+        'the verdict is "rejected" with correction rounds left, but the reviewer gave no findings for the implementer.',
+    });
+  } else if (!rounds && turn.findings) {
+    issues.push({
+      code: 'findings-dropped',
+      message:
+        'the reviewer called findings in the same turn as review; the findings were not used.',
+    });
+  }
   return { verdict, issues };
 }
 

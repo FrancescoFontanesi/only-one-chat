@@ -83,7 +83,8 @@ commands, not a campaign.
   proof is not a finding: it goes in `unverified`. Report only what you are sure of.
 - Every finding cites what it violates, in `criterion`: a criterion (C2), a constraint or a
   boundary of the brief, a repository rule, or one of the axes (honesty, security, currency).
-- Number them R1, R2… and keep the same number until the end of the review.
+- Number them R1, R2… and keep the same number until the end of the review; ids are unique within
+  each list (criteria, findings, open and closed findings).
 - It is "blocking" if a criterion is not satisfied, a constraint or a boundary is violated, there
   is a regression, a check was bypassed or weakened, or there is an exploitable security flaw. It
   is "minor" for everything else worth saying.

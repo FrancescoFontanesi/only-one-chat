@@ -64,6 +64,7 @@ import {
   resultPrompt,
   reviewFollowUpPrompt,
   reviewRepairPrompt,
+  verdictRepairPrompt,
   reviewRequestPrompt,
 } from './prompts.js';
 import { checkSubagent, subagentLabel, type SubagentState } from './subagents.js';
@@ -697,11 +698,11 @@ export function runLoop(options: LoopOptions): Loop {
    * The facts after an implementer's turn, with the runtime's checks of its
    * report against the brief (ADR 0031), shown in the thread as well.
    */
-  async function factsFor(brief: string, work: Work): Promise<string> {
+  async function factsFor(brief: string, work: Work, issued?: readonly string[]): Promise<string> {
     const facts = (await options.facts?.()) ?? '';
     const note =
       held && work.data !== undefined && (brief.trim() !== '' || work.text.trim() !== '')
-        ? contractFacts('Checks on the report', checkReport(brief, work.data, facts))
+        ? contractFacts('Checks on the report', checkReport(brief, work.data, facts, issued))
         : '';
     if (note !== '') await emit({ type: 'contract', role: 'worker', message: note });
     return [facts, note, work.commandEvidence].filter(Boolean).join('\n\n');
@@ -767,7 +768,12 @@ export function runLoop(options: LoopOptions): Loop {
    * A reviewer turn: the guard runs around it, and it must end with a valid
    * `review` or `findings` call, or one more turn asks for it.
    */
-  async function reviewerTurn(reviewer: AgentSession, prompt: string, roundsLeft: number) {
+  async function reviewerTurn(
+    reviewer: AgentSession,
+    prompt: string,
+    roundsLeft: number,
+    brief: string,
+  ) {
     let restored = '';
     const commands = new CommandEvidence();
     const guarded = async (text: string) => {
@@ -794,13 +800,31 @@ export function runLoop(options: LoopOptions): Loop {
       review = readHandoff(result.handoffs, 'review');
       findings = readHandoff(result.handoffs, 'findings');
     }
-    return {
-      text,
-      review: review.value,
-      findings: findings.value,
-      restored,
-      handoff: result.threadHandoff,
+    // A `rejected` the implementer cannot act on, or that contradicts itself: one turn (ADR 0040).
+    const unsound = () => {
+      if (review.value === null) return false;
+      const { verdict, issues } = checkReview(brief, review.value, undefined, {
+        findings: findings.value,
+        roundsLeft,
+      });
+      return (
+        verdict === 'rejected' &&
+        issues.some((i) => i.code === 'verdict-incoherent' || i.code === 'findings-missing')
+      );
     };
+    let handoff = result.threadHandoff;
+    if (unsound()) {
+      const again = await guarded(verdictRepairPrompt(roundsLeft));
+      text = [text, again.text].filter((part) => part.trim() !== '').join('\n\n');
+      const rereview = readHandoff(again.handoffs, 'review');
+      const raised = readHandoff(again.handoffs, 'findings');
+      if (rereview.value) {
+        review = rereview;
+        handoff = again.threadHandoff;
+      }
+      if (raised.value) findings = raised;
+    }
+    return { text, review: review.value, findings: findings.value, restored, handoff };
   }
 
   /**
@@ -842,7 +866,11 @@ export function runLoop(options: LoopOptions): Loop {
     if (task?.step === 'implementation' && task.findings) {
       work = await implement(worker, relay(task.findings));
     }
-    let facts = await factsFor(brief, work);
+    // Finding ids issued so far; a resumed task lost those of earlier rounds, so it skips the check.
+    const issued = new Set<string>();
+    const resumed = (task?.used ?? 0) > 0;
+    const known = () => (resumed ? undefined : [...issued]);
+    let facts = await factsFor(brief, work, known());
     if (options.task?.resume?.findings)
       facts += `\n\nSaved findings\n${frameWorkerAnswer(options.task.resume.findings.replace(/\r\n?|[\u2028\u2029]/g, '\n'))}`;
     let prompt = reviewRequestPrompt(
@@ -871,7 +899,7 @@ export function runLoop(options: LoopOptions): Loop {
           step: 'review',
           inFlight: true,
         });
-        answer = await reviewerTurn(reviewer, sent ?? prompt, rounds - round);
+        answer = await reviewerTurn(reviewer, sent ?? prompt, rounds - round, brief);
         saveTask({
           ...(task ?? initialTask(brief, of.direct === true)),
           work,
@@ -880,6 +908,7 @@ export function runLoop(options: LoopOptions): Loop {
           inFlight: false,
         });
       }
+      for (const item of answer.findings?.items ?? []) issued.add(item.id);
       selection = answer.review?.test ?? answer.findings?.test ?? selection;
       saveTask({
         ...(task ?? initialTask(brief, of.direct === true)),
@@ -889,6 +918,15 @@ export function runLoop(options: LoopOptions): Loop {
         step: 'verification',
         inFlight: true,
       });
+      // The normalized verdict decides the step; findings count only for a correction round (ADR 0040).
+      const checked = answer.review
+        ? checkReview(brief, answer.review, known(), {
+            findings: answer.findings,
+            roundsLeft: rounds - round,
+          })
+        : null;
+      const usesFindings =
+        answer.findings !== null && (answer.review === null || checked?.verdict === 'rejected');
       let verified = await options.verification?.check(
         selection,
         'reviewer',
@@ -896,7 +934,7 @@ export function runLoop(options: LoopOptions): Loop {
         answer.review?.verdict,
       );
       let completion: { summary: string; result: typeof verified } | undefined;
-      if (round >= rounds || (answer.findings === null && verified?.status !== 'failed')) {
+      if (round >= rounds || (!usesFindings && verified?.status !== 'failed')) {
         completion = await options.verification?.finish(selection, 'reviewer', controller.signal);
         verified = completion?.result ?? verified;
       }
@@ -904,10 +942,7 @@ export function runLoop(options: LoopOptions): Loop {
       const runtimeNote = verified ? `Runtime verification: ${verified.status}` : '';
       const withRestored = (text: string) =>
         answer.restored === '' ? text : `${text}\n\n${answer.restored}`;
-      if (
-        ((answer.review === null && answer.findings !== null) || verificationFailed) &&
-        round < rounds
-      ) {
+      if ((usesFindings || verificationFailed) && round < rounds) {
         const findings = withRestored(
           findingsPrompt(
             reviewer.name,
@@ -939,13 +974,12 @@ export function runLoop(options: LoopOptions): Loop {
           answer: undefined,
         });
         work = await implement(worker, relay(passed ?? findings));
-        facts = await factsFor(brief, work);
+        facts = await factsFor(brief, work, known());
         prompt = reviewFollowUpPrompt(worker.name, work.text, facts, rounds - round - 1);
         continue;
       }
       // The review, or what is left of it: findings with no round left, or the
       // agent's whole answer, which has nothing to check; an empty one says so.
-      const checked = answer.review ? checkReview(brief, answer.review) : null;
       const note = checked ? contractFacts('Checks on the review', checked.issues) : '';
       if (note !== '') await emit({ type: 'contract', role: 'reviewer', message: note });
       const finalVerification = completion?.summary;

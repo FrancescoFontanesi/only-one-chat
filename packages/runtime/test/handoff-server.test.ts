@@ -57,6 +57,19 @@ describe('validate', () => {
     expect(validate(report.inputSchema, [])).toEqual(['$: expected an object']);
   });
 
+  it('rejects a duplicate value of the uniqueBy field', () => {
+    const list = {
+      type: 'array',
+      uniqueBy: 'id',
+      items: { type: 'object', properties: { id: { type: 'string' } } },
+    } as const;
+    expect(validate(list, [{ id: 'C1' }, { id: 'C2' }])).toEqual([]);
+    expect(validate(list, [{ id: 'C1' }, { id: 'C1' }, { id: 'C1' }])).toEqual([
+      '$[1].id: duplicate "C1"',
+      '$[2].id: duplicate "C1"',
+    ]);
+  });
+
   it('checks a pattern against the whole string', () => {
     const id = { type: 'string', pattern: '^C\\d+$' } as const;
     expect(validate(id, 'C12')).toEqual([]);

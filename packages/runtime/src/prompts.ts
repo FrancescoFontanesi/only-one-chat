@@ -165,6 +165,13 @@ export function reviewRepairPrompt(errors: readonly string[], roundsLeft: number
     : `Your last call was not valid: ${errors.join('; ')}. Call ${call} again with valid arguments; do not change any file.`;
 }
 
+/** One more reviewer turn for a `rejected` that gives the implementer nothing to act on (ADR 0040). */
+export function verdictRepairPrompt(roundsLeft: number): string {
+  return roundsLeft > 0
+    ? 'Your review says "rejected" and correction rounds are left, but no blocking finding reached the implementer. Call the `findings` tool with each blocking finding and its proof, or call `review` again with a corrected verdict; do not change any file.'
+    : 'Your review says "rejected" but it names no blocking finding and no failed axis. Call the `review` tool again, with the blocking finding in open_findings or a corrected verdict; do not change any file.';
+}
+
 /**
  * A brief from the web app: the implementer's report, framed as data, the
  * facts the runtime verified, and the result asked for the reasoning chat.

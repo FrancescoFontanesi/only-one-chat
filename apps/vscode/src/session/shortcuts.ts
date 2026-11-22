@@ -4,6 +4,8 @@
 // They are flags to look at, not proofs: a test moved to another file also
 // shows as a test removed. Pure: no `vscode`, no disk.
 
+import { TEST_FILE } from '@only-one-chat/runtime';
+
 /** A file the request changed, with its text before and after; null: it did not exist. */
 export interface TextChange {
   readonly path: string;
@@ -11,9 +13,6 @@ export interface TextChange {
   readonly after: string | null;
 }
 
-/** A test file, by the conventions of the usual languages and tools. */
-export const TEST_FILE =
-  /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$/;
 const LOCKFILE =
   /(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|npm-shrinkwrap\.json|Cargo\.lock|poetry\.lock|uv\.lock|Pipfile\.lock|go\.sum|Gemfile\.lock|composer\.lock)$/;
 /** What decides which checks run, and how strict they are. */
@@ -35,9 +34,6 @@ function count(text: string | null, pattern: RegExp): number {
  * The flags for the files a request changed, one line each; none when the
  * changes show none of these signs.
  */
-/** Whether a path, with forward slashes, is a test file. */
-export const isTestFile = (path: string): boolean => TEST_FILE.test(path.replaceAll('\\', '/'));
-
 export function shortcutFlags(changes: readonly TextChange[]): string[] {
   const flags: string[] = [];
   for (const { path, before, after } of changes) {

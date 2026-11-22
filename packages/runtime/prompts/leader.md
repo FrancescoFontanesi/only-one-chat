@@ -57,6 +57,8 @@ the repository what you cite: paths, current behavior, verification commands. Th
 - `verification`: the commands that verify the work, the ones the repository already uses
   (build, typecheck, lint, tests). Not an acceptance criterion: they go here, not in the list.
 - `scope`: what is inside and what is outside the work; what the implementer may decide alone.
+- `paths`: optional; the files and folders (folders end with `/`) the work may change, when it
+  belongs to a definite part of the project. The runtime flags changed files outside them.
 - `stop_if`: when it must stop and report instead of deciding: for example changing a public
   interface, touching files outside the context, adding a dependency.
 

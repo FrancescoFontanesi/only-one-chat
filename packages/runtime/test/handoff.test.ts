@@ -50,6 +50,15 @@ describe('the tools of each role', () => {
     expect(validate(schemaOf('delegate'), delegateArgs({ acceptance_criteria: [] }))).toEqual([
       '$.acceptance_criteria: at least 1 item(s)',
     ]);
+    expect(
+      validate(schemaOf('delegate'), delegateArgs({ paths: ['src/', 'My Docs/a.py', '.github/'] })),
+    ).toEqual([]);
+    expect(validate(schemaOf('delegate'), delegateArgs({ paths: [] }))).toEqual([
+      '$.paths: at least 1 item(s)',
+    ]);
+    // Entries that could never match a changed file: a comment, absolute, outside the workspace.
+    for (const bad of ['src/ — the parser', 'src/ (parser)', '/src/', 'C:/x', '../x', 'a/../b'])
+      expect(validate(schemaOf('delegate'), delegateArgs({ paths: [bad] }))).toHaveLength(1);
     const dup = { id: 'C1', status: 'verified', evidence: 'x' };
     expect(validate(schemaOf('report'), reportArgs({ criteria: [dup, dup] }))).toEqual([
       '$.criteria[1].id: duplicate "C1"',
@@ -222,6 +231,9 @@ describe('the renderers', () => {
         '',
         'A dependency is needed.',
       ].join('\n'),
+    );
+    expect(renderBrief({ goal: 'g', acceptance_criteria: ['x'], paths: ['src/', 'a.py'] })).toBe(
+      '## Goal\n\ng\n\n## Acceptance criteria\n\n- C1 — x\n\n## Paths\n\n- src/\n- a.py',
     );
     expect(renderBrief({ goal: 'g', acceptance_criteria: ['x'] })).toBe(
       '## Goal\n\ng\n\n## Acceptance criteria\n\n- C1 — x',

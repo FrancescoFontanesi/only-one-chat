@@ -319,3 +319,60 @@ describe('contractFacts', () => {
     ).toBe('Checks on the report, made by the runtime:\n- missing.');
   });
 });
+
+describe('checkReport against the brief’s paths (ADR 0042)', () => {
+  const withPaths = (...paths: string[]) =>
+    `${brief}\n## Paths\n${paths.map((p) => `- ${p}`).join('\n')}`;
+  const filesFacts = (...lines: string[]) =>
+    ['Files changed since the start of the request:', ...lines].join('\n');
+  const scope = (b: string, f: string) =>
+    checkReport(
+      b,
+      report({ changes: changedFiles(f).map((path) => ({ path, change: 'x' })) }),
+      f,
+    ).filter((i) => i.code === 'scope-exceeded');
+
+  it('checks nothing without a Paths section', () => {
+    expect(scope(brief, filesFacts('- modified anywhere/else.py'))).toEqual([]);
+  });
+
+  it('flags the files outside the entries, folders with or without the slash', () => {
+    const f = filesFacts('- modified src/a.py', '- modified lib/b.py', '- modified srcx/c.py');
+    for (const entry of ['src/', 'src', './src/', '@src']) {
+      expect(scope(withPaths(entry), f)).toEqual([
+        {
+          code: 'scope-exceeded',
+          message: "files changed outside the brief's paths: lib/b.py, srcx/c.py.",
+        },
+      ]);
+    }
+    expect(scope(withPaths('src/a.py', 'lib/'), f)[0]?.message).toContain('srcx/c.py');
+    expect(scope(withPaths('src/', 'lib/b.py', 'srcx/c.py'), f)).toEqual([]);
+  });
+
+  it('allows a new test file anywhere, and flags a modified or deleted one', () => {
+    expect(scope(withPaths('src/'), filesFacts('- added tests/test_x.py'))).toEqual([]);
+    expect(
+      scope(
+        withPaths('src/'),
+        filesFacts('- modified a.py', '- modified tests/test_x.py', '- deleted tests/test_y.py'),
+      ),
+    ).toEqual([
+      {
+        code: 'scope-exceeded',
+        message:
+          "files changed outside the brief's paths: a.py, tests/test_x.py (modified test), tests/test_y.py (deleted test).",
+      },
+    ]);
+  });
+
+  it('uses the turn’s list over the cumulative one', () => {
+    const f = [
+      filesFacts('- modified lib/old.py', '- modified src/new.py'),
+      '',
+      TURN_FILES_HEADER,
+      '- modified src/new.py',
+    ].join('\n');
+    expect(scope(withPaths('src/'), f)).toEqual([]);
+  });
+});

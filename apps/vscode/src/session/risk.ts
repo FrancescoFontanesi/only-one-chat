@@ -10,7 +10,8 @@
 // real changes: a level is a reason to review, not a verdict. Pure: no disk.
 
 import { lineCounts } from './checkpoints.js';
-import { TEST_FILE, shortcutFlags, type TextChange } from './shortcuts.js';
+import { TEST_FILE } from '@only-one-chat/runtime';
+import { shortcutFlags, type TextChange } from './shortcuts.js';
 
 type RiskLevel = 'low' | 'medium' | 'high';
 

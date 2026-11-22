@@ -9,6 +9,13 @@
 
 import type { Report, Review, ReviewVerdict } from './handoff.js';
 
+/** A test file, by the conventions of the usual languages and tools. */
+export const TEST_FILE =
+  /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$/;
+
+/** Whether a path is a test file. */
+export const isTestFile = (path: string): boolean => TEST_FILE.test(path.replaceAll('\\', '/'));
+
 /** A point where a report or a review does not keep the contract. */
 interface ContractIssue {
   readonly code:
@@ -16,6 +23,7 @@ interface ContractIssue {
     | 'criteria-missing'
     | 'outcome-incoherent'
     | 'files-undeclared'
+    | 'scope-exceeded'
     | 'criteria-unknown'
     | 'findings-unknown'
     | 'findings-missing'
@@ -54,8 +62,18 @@ export const TURN_FILES_HEADER = "Files changed by the implementer's last turn:"
 
 /** The files in the facts (`- modified path`): the whole request's, and this turn's when listed. */
 function filesIn(facts: string): { all: string[]; turn: string[] | undefined } {
-  const all: string[] = [];
-  let turn: string[] | undefined;
+  const { all, turn } = changesIn(facts);
+  return { all: all.map((f) => f.path), turn: turn?.map((f) => f.path) };
+}
+
+interface FileChange {
+  readonly path: string;
+  readonly status: string;
+}
+
+function changesIn(facts: string): { all: FileChange[]; turn: FileChange[] | undefined } {
+  const all: FileChange[] = [];
+  let turn: FileChange[] | undefined;
   let inTurn = false;
   for (const line of facts.split(/\r?\n/)) {
     if (line === TURN_FILES_HEADER) {
@@ -64,11 +82,11 @@ function filesIn(facts: string): { all: string[]; turn: string[] | undefined } {
       continue;
     }
     if (!line.startsWith('- ')) inTurn = false;
-    const match = /^- (?:added|modified|deleted) (.+)$/.exec(line);
+    const match = /^- (added|modified|deleted) (.+)$/.exec(line);
     if (!match) continue;
-    const path = (match[1] ?? '').trim().replaceAll('\\', '/');
-    if (inTurn) turn?.push(path);
-    else all.push(path);
+    const file = { status: match[1] ?? '', path: (match[2] ?? '').trim().replaceAll('\\', '/') };
+    if (inTurn) turn?.push(file);
+    else all.push(file);
   }
   return { all, turn };
 }
@@ -83,6 +101,14 @@ const listed = (ids: readonly string[]) => ids.join(', ');
 /** A path as a report names it: forward slashes, no `@`, no leading `./`. */
 const normalized = (path: string) =>
   path.trim().replaceAll('\\', '/').replace(/^@/, '').replace(/^\.\//, '');
+
+/** The entries of a brief's `Paths` section, one bullet each; none when it has none. */
+function pathsOf(brief: string): string[] {
+  return (section(brief, 'Paths') ?? '')
+    .split('\n')
+    .map((line) => normalized(line.replace(/^\s*[-*]\s*/, '').replaceAll('`', '')))
+    .filter((entry) => entry !== '');
+}
 
 /** True when a free-text field says there is nothing ("", "none", "nessuno"). */
 const saysNone = (text: string | undefined) =>
@@ -161,6 +187,24 @@ export function checkReport(
       code: 'files-undeclared',
       message: `files changed that the report does not list in changes: ${undeclared.join(', ')}.`,
     });
+  }
+  const allowed = pathsOf(brief).map((entry) => entry.replace(/\/+$/, ''));
+  if (allowed.length > 0) {
+    const { all: changes, turn: turnChanges } = changesIn(facts);
+    const outside = (turnChanges ?? changes).filter(
+      ({ path, status }) =>
+        !(status === 'added' && isTestFile(path)) &&
+        !allowed.some((entry) => path === entry || path.startsWith(`${entry}/`)),
+    );
+    if (outside.length > 0) {
+      const names = outside.map(({ path, status }) =>
+        isTestFile(path) ? `${path} (${status} test)` : path,
+      );
+      issues.push({
+        code: 'scope-exceeded',
+        message: `files changed outside the brief's paths: ${names.join(', ')}.`,
+      });
+    }
   }
   return issues;
 }

@@ -85,7 +85,7 @@ import {
 } from '../apps/vscode/src/session/facts.js';
 import { guardReviewerTurn } from '../apps/vscode/src/session/guard.js';
 import { WorkspaceVerification } from '../apps/vscode/src/session/verification.js';
-import { isTestFile } from '../apps/vscode/src/session/shortcuts.js';
+import { isTestFile } from '../packages/runtime/src/index.js';
 import {
   findLeaks,
   homeLiteral,

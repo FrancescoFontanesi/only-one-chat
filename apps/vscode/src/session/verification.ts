@@ -12,16 +12,16 @@ import {
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { OWN_PROCESS_GROUP, terminateTree, withoutApiKeys } from '@only-one-chat/adapters';
-import type {
-  TestSelection,
-  VerificationEvidence,
-  VerificationResult,
-  WorkVerification,
+import {
+  isTestFile,
+  type TestSelection,
+  type VerificationEvidence,
+  type VerificationResult,
+  type WorkVerification,
 } from '@only-one-chat/runtime';
 import type { VerificationCheckpoint } from '../../../../packages/runtime/src/verification.js';
 import { CheckpointStore, type Checkpoint } from './checkpoints.js';
 import { readJUnit, MAX_REPORT_BYTES, type TestResult } from './junit.js';
-import { isTestFile } from './shortcuts.js';
 import { copyVerificationDependencies } from './verificationDependencies.js';
 
 interface Run extends VerificationResult {

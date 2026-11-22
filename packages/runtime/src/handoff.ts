@@ -35,6 +35,7 @@ export interface Delegate {
   readonly acceptance_criteria: readonly string[];
   readonly verification?: string;
   readonly scope?: string;
+  readonly paths?: readonly string[];
   readonly stop_if?: string;
 }
 
@@ -197,6 +198,20 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
       ),
       scope: optional(
         'What is inside and outside the work; what the implementer may decide alone.',
+      ),
+      paths: list(
+        {
+          type: 'string',
+          minLength: 1,
+          // A comment, an absolute path or `..` would never match a changed file: rejected here.
+          pattern: '^(?!/|[A-Za-z]:|.*\\.\\.)[^()—:]+$',
+          description: 'One workspace-relative path, with no comment.',
+        },
+        {
+          minItems: 1,
+          description:
+            'The workspace-relative files and folders the work may change (a folder ends with /). The runtime flags changed files outside them; new test files are always allowed. Omit it when the work has no definite part of the project.',
+        },
       ),
       stop_if: optional(
         'When the implementer must stop and report instead of deciding, for example changing a public interface, touching files outside the Context, adding a dependency.',
@@ -474,6 +489,9 @@ export function renderBrief(delegate: Delegate): string {
     parts.push(section('Verification', clean(delegate.verification)));
   }
   if (clean(delegate.scope) !== '') parts.push(section('Scope', clean(delegate.scope)));
+  if (delegate.paths !== undefined && delegate.paths.length > 0) {
+    parts.push(section('Paths', delegate.paths.map((path) => `- ${clean(path)}`).join('\n')));
+  }
   if (clean(delegate.stop_if) !== '') parts.push(section('Stop if', clean(delegate.stop_if)));
   return parts.join('\n\n');
 }

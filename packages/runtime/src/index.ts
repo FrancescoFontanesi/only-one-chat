@@ -56,12 +56,14 @@ export type {
 } from './verification.js';
 export { openEventLog, type EventLog, type LoggedEvent } from './event-log.js';
 export {
+  TEST_FILE,
   TURN_FILES_HEADER,
   changedFiles,
   checkReport,
   checkReview,
   contractFacts,
   criteriaOf,
+  isTestFile,
 } from './contract.js';
 export {
   handoffTools,

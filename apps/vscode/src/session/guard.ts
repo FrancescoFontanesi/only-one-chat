@@ -6,7 +6,7 @@
 // `vscode`.
 
 import type { CheckpointStore } from './checkpoints.js';
-import { isTestFile } from './shortcuts.js';
+import { isTestFile } from '@only-one-chat/runtime';
 
 /**
  * Records the folder before a reviewer turn; the function it returns puts back

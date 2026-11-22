@@ -85,6 +85,8 @@ commands, not a campaign.
   boundary of the brief, a repository rule, or one of the axes (honesty, security, currency).
 - Number them R1, R2… and keep the same number until the end of the review; ids are unique within
   each list (criteria, findings, open and closed findings).
+- The runtime flags files changed outside the brief's Paths (`scope-exceeded`): that is a violated
+  boundary unless the report's `decisions` justify it.
 - It is "blocking" if a criterion is not satisfied, a constraint or a boundary is violated, there
   is a regression, a check was bypassed or weakened, or there is an exploitable security flaw. It
   is "minor" for everything else worth saying.

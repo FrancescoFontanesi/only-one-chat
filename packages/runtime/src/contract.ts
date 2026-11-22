@@ -7,7 +7,7 @@
 // comparisons between the fields of the handoffs (ADR 0035); only the brief
 // stays text, because the user can edit it before it is sent.
 
-import type { Report, Review, ReviewVerdict } from './handoff.js';
+import type { Delegate, Report, Review, ReviewVerdict } from './handoff.js';
 
 /** A test file, by the conventions of the usual languages and tools. */
 export const TEST_FILE =
@@ -101,6 +101,51 @@ const listed = (ids: readonly string[]) => ids.join(', ');
 /** A path as a report names it: forward slashes, no `@`, no leading `./`. */
 const normalized = (path: string) =>
   path.trim().replaceAll('\\', '/').replace(/^@/, '').replace(/^\.\//, '');
+
+/** What the workspace says of a reference's path (ADR 0044). */
+export type ReferenceKind = 'file' | 'folder' | 'missing' | 'ignored';
+
+const REFERENCE_RANGE = /#L(\d+)(?:-(\d+))?$/;
+/** The CLIs load these at the root already. */
+const INSTRUCTION_FILES = /^(agents|claude)\.md$/i;
+
+/**
+ * The `delegate` call with its references normalized and cleaned (ADR 0044): the
+ * root `AGENTS.md`/`CLAUDE.md` and duplicates are dropped; a missing file, a
+ * folder, an ignored path or a reversed range become errors, as schema errors do.
+ * Without `kind`, no path is looked up.
+ */
+export function checkReferences(
+  call: { readonly value: Delegate | null; readonly errors: readonly string[] },
+  kind?: (path: string) => ReferenceKind,
+): { readonly value: Delegate | null; readonly errors: readonly string[] } {
+  const { value } = call;
+  if (value?.references === undefined) return call;
+  const errors: string[] = [];
+  const kept = new Set<string>();
+  value.references.forEach((raw, at) => {
+    const ref = normalized(raw);
+    const range = REFERENCE_RANGE.exec(ref);
+    const path = range ? ref.slice(0, range.index) : ref;
+    if (INSTRUCTION_FILES.test(path)) return;
+    const found = kind?.(path);
+    const problem =
+      range?.[2] !== undefined && Number(range[2]) < Number(range[1])
+        ? 'has a range that ends before it starts'
+        : found === 'missing'
+          ? 'does not exist in the workspace'
+          : found === 'folder'
+            ? 'is a folder: name its files'
+            : found === 'ignored'
+              ? 'is an ignored path'
+              : undefined;
+    if (problem) errors.push(`$.references[${String(at)}]: ${JSON.stringify(ref)} ${problem}`);
+    else kept.add(ref);
+  });
+  return errors.length > 0
+    ? { value: null, errors }
+    : { value: { ...value, references: [...kept] }, errors: [] };
+}
 
 /** The entries of a brief's `Paths` section, one bullet each; none when it has none. */
 function pathsOf(brief: string): string[] {

@@ -84,6 +84,8 @@ import {
   verifiedFacts as productFacts,
 } from '../apps/vscode/src/session/facts.js';
 import { guardReviewerTurn } from '../apps/vscode/src/session/guard.js';
+import { NOTHING_IGNORED } from '../apps/vscode/src/session/ignore.js';
+import { referenceKind } from '../apps/vscode/src/session/mentions.js';
 import { WorkspaceVerification } from '../apps/vscode/src/session/verification.js';
 import { isTestFile } from '../packages/runtime/src/index.js';
 import {
@@ -556,8 +558,20 @@ async function main(): Promise<void> {
     const { type, ...fields } = event;
     void log.append(type, fields);
   };
+  /**
+   * Tool calls per role in sequential steps (ADR 0044): calls under 1.5 s apart
+   * are one parallel batch. Steps, not raw calls, measure exploration.
+   */
+  const toolSteps: Record<string, { calls: number; steps: number; last: number }> = {};
   const onEvent = (event: ThreadEvent): void => {
     if (event.type === 'text' || event.type === 'subagent_text') return;
+    if (event.type === 'activity' && event.kind === 'tool') {
+      const now = Date.now();
+      const row = (toolSteps[event.role] ??= { calls: 0, steps: 0, last: -Infinity });
+      row.calls += 1;
+      if (now - row.last > 1500) row.steps += 1;
+      row.last = now;
+    }
     if (event.type === 'message') {
       turns.push({
         ...(currentMessage === undefined ? {} : { message: currentMessage }),
@@ -723,6 +737,7 @@ async function main(): Promise<void> {
           onEvent,
           mode: 'leader',
           leaderSession,
+          referenceKind: referenceKind(runDir, NOTHING_IGNORED),
           workerSession: () => implementerSession(message.implementer),
           autoApprove: true,
           worker: () => Promise.reject(new Error('the implementer session is given')),
@@ -987,6 +1002,9 @@ ${configuredCommandFact(verifyCommand)}`,
     },
     shadows,
     handoffs: handoffMetrics(turns, events.filter((type) => type === 'delegation_invalid').length),
+    toolSteps: Object.fromEntries(
+      Object.entries(toolSteps).map(([role, { calls, steps }]) => [role, { calls, steps }]),
+    ),
     otherEvents: events,
   };
 
@@ -1009,6 +1027,11 @@ ${configuredCommandFact(verifyCommand)}`,
         )
         .join('; ') || 'none'
     }; invalid delegation calls ${String(result.handoffs.invalidDelegations)}`,
+    `- Tool calls (sequential steps): ${
+      Object.entries(toolSteps)
+        .map(([role, row]) => `${role} ${String(row.calls)} (${String(row.steps)})`)
+        .join(', ') || 'none'
+    }`,
     `- Files: ${files.map((f) => `${f.path} (${String(f.lines)})`).join(', ') || 'none'}`,
     '',
     '| Message | Turn | Label | Time | Context read | Output | Quota observed |',

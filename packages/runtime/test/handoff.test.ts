@@ -59,6 +59,27 @@ describe('the tools of each role', () => {
     // Entries that could never match a changed file: a comment, absolute, outside the workspace.
     for (const bad of ['src/ — the parser', 'src/ (parser)', '/src/', 'C:/x', '../x', 'a/../b'])
       expect(validate(schemaOf('delegate'), delegateArgs({ paths: [bad] }))).toHaveLength(1);
+    // References (ADR 0044): a path with an optional line range, 1 to 8 entries.
+    const refs = (references: unknown) =>
+      validate(schemaOf('delegate'), delegateArgs({ references }));
+    expect(refs(['a.py', 'docs/spec.md#L10-40', 'x.ts#L3'])).toEqual([]);
+    expect(refs([])).toEqual(['$.references: at least 1 item(s)']);
+    expect(refs(Array.from({ length: 9 }, (_, i) => `f${String(i)}.ts`))).toHaveLength(1);
+    for (const bad of [
+      'a.py#L0',
+      'a.py#L010',
+      'a.py#L1-0',
+      'a.py#L1-',
+      'a.py#10',
+      'a.py (parser)',
+      'a.py — x',
+      '/a.py',
+      'C:/a.py',
+      '../a.py',
+      'a/../b.py',
+      'a.py:3',
+    ])
+      expect(refs([bad])).toHaveLength(1);
     const dup = { id: 'C1', status: 'verified', evidence: 'x' };
     expect(validate(schemaOf('report'), reportArgs({ criteria: [dup, dup] }))).toEqual([
       '$.criteria[1].id: duplicate "C1"',
@@ -234,6 +255,19 @@ describe('the renderers', () => {
     );
     expect(renderBrief({ goal: 'g', acceptance_criteria: ['x'], paths: ['src/', 'a.py'] })).toBe(
       '## Goal\n\ng\n\n## Acceptance criteria\n\n- C1 — x\n\n## Paths\n\n- src/\n- a.py',
+    );
+    expect(
+      renderBrief({
+        goal: 'g',
+        acceptance_criteria: ['x'],
+        paths: ['a.py'],
+        references: ['a.py', 'docs/spec.md#L10-40'],
+      }),
+    ).toBe(
+      '## Goal\n\ng\n\n## Acceptance criteria\n\n- C1 — x\n\n## Paths\n\n- a.py\n\n## References\n\n- @a.py\n- @docs/spec.md#L10-40',
+    );
+    expect(renderBrief({ goal: 'g', acceptance_criteria: ['x'], references: [] })).toBe(
+      '## Goal\n\ng\n\n## Acceptance criteria\n\n- C1 — x',
     );
     expect(renderBrief({ goal: 'g', acceptance_criteria: ['x'] })).toBe(
       '## Goal\n\ng\n\n## Acceptance criteria\n\n- C1 — x',

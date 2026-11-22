@@ -59,7 +59,9 @@ executed, and if it sits in the implementer's work it is a finding.
 1. Start from the brief, before opening the changes. For each criterion note what you should
    observe if it is satisfied, and what whoever bypasses it would do: the limit, the empty case,
    the error, the invalid input, the hostile input. Deciding it beforehand avoids measuring the
-   code with the code itself.
+   code with the code itself. The brief's References are the implementer's starting context: read
+   in parallel those that bear on the constraints and the criteria, above all specification
+   documents, before judging.
 2. Read the changes: the files changed according to the runtime's facts (with git, the diff), then
    whoever uses what changed. Compare the report's list with the facts, do not use it in their
    place. Start from the notices of the "Checks on the diff": they are suspicions, not proofs, and

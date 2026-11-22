@@ -406,6 +406,80 @@ describe('the user in the middle', () => {
   });
 });
 
+describe('brief references, checked before the brief is sent (ADR 0044)', () => {
+  const kinds: Record<string, 'file' | 'folder' | 'ignored'> = {
+    'a.py': 'file',
+    'docs/spec.md': 'file',
+    'docs/AGENTS.md': 'file',
+    src: 'folder',
+    'vendor/x.js': 'ignored',
+  };
+  const referenceKind = (path: string) => kinds[path] ?? 'missing';
+  const run = async (
+    references: string[],
+    options: Partial<LoopOptions> = { referenceKind },
+    second?: string[],
+  ) => {
+    const codex = fakeAgent('Codex', [
+      delegates({ references }),
+      ...(second ? [delegates({ references: second })] : []),
+      { answer: 'Done.' },
+    ]);
+    const claude = fakeAgent('Claude', [reports()]);
+    const { running } = await loop(codex, claude, [], [], { ...auto, ...options });
+    return { codex, claude, done: await running.done };
+  };
+
+  it.each([
+    ['a file that does not exist', 'gone.py', 'gone.py'],
+    ['a folder', 'src', 'src'],
+    ['an ignored path', 'vendor/x.js', 'vendor/x.js'],
+    ['a range that ends before it starts', 'a.py#L9-3', 'a.py#L9-3'],
+  ])(
+    'sends %s back to the leader once, then the valid brief goes through',
+    async (_, bad, shown) => {
+      const { codex, claude, done } = await run([bad], { referenceKind }, ['docs/spec.md#L2-4']);
+      expect(done).toMatchObject({ status: 'completed', exchanges: 1 });
+      expect(codex.prompts[1]).toContain('Your `delegate` call was not valid');
+      expect(codex.prompts[1]).toContain(shown);
+      expect(claude.prompts[0]).toContain('## References\n\n- @docs/spec.md#L2-4');
+      expect(claude.prompts[0]).not.toContain(shown);
+    },
+  );
+
+  it('drops AGENTS.md and CLAUDE.md at the root and duplicates silently, keeps nested ones', async () => {
+    const { codex, claude } = await run([
+      'AGENTS.md',
+      'agents.md#L3-9',
+      './CLAUDE.md',
+      'a.py',
+      '@a.py',
+      'docs/AGENTS.md',
+      'docs/spec.md#L1-5',
+      'docs/spec.md#L1-6',
+    ]);
+    expect(codex.prompts[1]).not.toContain('not valid');
+    expect(claude.prompts[0]).toContain(
+      '## References\n\n- @a.py\n- @docs/AGENTS.md\n- @docs/spec.md#L1-5\n- @docs/spec.md#L1-6',
+    );
+  });
+
+  it('omits the section when everything is filtered', async () => {
+    const { codex, claude } = await run(['AGENTS.md', 'claude.md']);
+    expect(codex.prompts[1]).not.toContain('not valid');
+    expect(claude.prompts[0]).not.toContain('References');
+  });
+
+  it('checks no existence without the callback, but still the range', async () => {
+    const free = await run(['gone.py', 'src'], {});
+    expect(free.codex.prompts[1]).not.toContain('not valid');
+    expect(free.claude.prompts[0]).toContain('- @gone.py\n- @src');
+
+    const reversed = await run(['gone.py#L5-2'], {}, ['a.py']);
+    expect(reversed.codex.prompts[1]).toContain('gone.py#L5-2');
+  });
+});
+
 describe('a delegate call that never validated', () => {
   const invalid = (): Step => ({
     answer: 'Plan.',

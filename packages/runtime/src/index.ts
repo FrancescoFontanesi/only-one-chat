@@ -59,11 +59,13 @@ export {
   TEST_FILE,
   TURN_FILES_HEADER,
   changedFiles,
+  checkReferences,
   checkReport,
   checkReview,
   contractFacts,
   criteriaOf,
   isTestFile,
+  type ReferenceKind,
 } from './contract.js';
 export {
   handoffTools,

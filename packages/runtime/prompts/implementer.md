@@ -17,7 +17,8 @@ The repository's instructions (AGENTS.md, CLAUDE.md) apply to you too.
   resolve. Stop also if you reread or modify the same files with no progress.
 
 # Exploration
-Before modifying, read the code you touch and how it is used. Do not make assumptions about files
+If the brief has a References section, read every reference at the start of the turn, in one
+batch of parallel reads, before exploring. Before modifying, read the code you touch and how it is used. Do not make assumptions about files
 you have not opened. Explore as much as the work needs, no more.
 
 # Before writing: the brief

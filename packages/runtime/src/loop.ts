@@ -35,7 +35,13 @@ import { CommandEvidence, reportWithoutCommandReferences } from './command-evide
 import type { EventLog } from './event-log.js';
 import type { TaskJournal, TaskProgress, TaskReview } from './task.js';
 import type { TestSelection, VerificationResult, WorkVerification } from './verification.js';
-import { checkReport, checkReview, contractFacts } from './contract.js';
+import {
+  checkReferences,
+  checkReport,
+  checkReview,
+  contractFacts,
+  type ReferenceKind,
+} from './contract.js';
 import {
   handoffTools,
   readHandoff,
@@ -303,6 +309,12 @@ export interface LoopOptions {
   readonly preface?: string;
   /** Background data from a pending implementer handoff, until its first completed turn. */
   workerPreface?(): string | undefined;
+  /**
+   * What the workspace says of a path the leader's brief references (ADR 0044):
+   * a missing, folder or ignored one is sent back to the leader. Without it no
+   * path is looked up; the runtime itself stays free of the file system.
+   */
+  readonly referenceKind?: (path: string) => ReferenceKind;
   /**
    * `leader` mode, after a delegation: `always` (default) asks the leader to
    * review the report at once; `deferred` ends with the report, which the
@@ -1164,7 +1176,11 @@ export function runLoop(options: LoopOptions): Loop {
         delegation = draft;
       } else {
         if (!answered) throw new Error('the leader has not answered');
-        const call = readHandoff(answered.handoffs, 'delegate');
+        // The leader's own call only: a brief the user edits or approves is not checked again (ADR 0044).
+        const call = checkReferences(
+          readHandoff(answered.handoffs, 'delegate'),
+          options.referenceKind,
+        );
         // The leader answered by itself: a question, or a request for clarification.
         if (call.value === null && call.errors.length === 0) {
           return { status: 'completed', conclusion: answered.text, exchanges: 0 };

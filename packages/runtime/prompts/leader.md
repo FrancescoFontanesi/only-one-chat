@@ -59,6 +59,9 @@ the repository what you cite: paths, current behavior, verification commands. Th
 - `scope`: what is inside and what is outside the work; what the implementer may decide alone.
 - `paths`: optional; the files and folders (folders end with `/`) the work may change, when it
   belongs to a definite part of the project. The runtime flags changed files outside them.
+- `references`: optional; the existing files the work must read (code to change, patterns to
+  follow, specifications), narrowed to a line range (`a.py#L10-40`) when a part is enough; never
+  AGENTS.md or CLAUDE.md. The implementer reads them first, in parallel.
 - `stop_if`: when it must stop and report instead of deciding: for example changing a public
   interface, touching files outside the context, adding a dependency.
 

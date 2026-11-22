@@ -36,6 +36,7 @@ export interface Delegate {
   readonly verification?: string;
   readonly scope?: string;
   readonly paths?: readonly string[];
+  readonly references?: readonly string[];
   readonly stop_if?: string;
 }
 
@@ -211,6 +212,21 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
           minItems: 1,
           description:
             'The workspace-relative files and folders the work may change (a folder ends with /). The runtime flags changed files outside them; new test files are always allowed. Omit it when the work has no definite part of the project.',
+        },
+      ),
+      references: list(
+        {
+          type: 'string',
+          minLength: 1,
+          // The path part follows the rules of `paths`; the only extra is a line range, from 1.
+          pattern: '^(?!/|[A-Za-z]:|.*\\.\\.)[^()—:#]+(?:#L[1-9]\\d*(?:-[1-9]\\d*)?)?$',
+          description: 'One workspace-relative file, with an optional range: a.py or a.py#L10-40.',
+        },
+        {
+          minItems: 1,
+          maxItems: 8,
+          description:
+            'The files the implementer reads first, in parallel, before exploring: code to change, patterns to follow, specifications. Narrow to a line range when a part is enough. Existing files only, never AGENTS.md or CLAUDE.md. Omit it when you do not know the code.',
         },
       ),
       stop_if: optional(
@@ -491,6 +507,11 @@ export function renderBrief(delegate: Delegate): string {
   if (clean(delegate.scope) !== '') parts.push(section('Scope', clean(delegate.scope)));
   if (delegate.paths !== undefined && delegate.paths.length > 0) {
     parts.push(section('Paths', delegate.paths.map((path) => `- ${clean(path)}`).join('\n')));
+  }
+  if (delegate.references !== undefined && delegate.references.length > 0) {
+    parts.push(
+      section('References', delegate.references.map((ref) => `- @${clean(ref)}`).join('\n')),
+    );
   }
   if (clean(delegate.stop_if) !== '') parts.push(section('Stop if', clean(delegate.stop_if)));
   return parts.join('\n\n');

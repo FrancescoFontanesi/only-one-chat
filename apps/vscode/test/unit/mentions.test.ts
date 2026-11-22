@@ -7,9 +7,11 @@ import {
   expandMentions,
   insideFolder,
   plainRefs,
+  referenceKind,
   resolveRefs,
   withRefs,
 } from '../../src/session/mentions.js';
+import { ignoredPaths } from '../../src/session/ignore.js';
 import { linkPath, pathCandidates, refTokens } from '../../src/webview/refs.js';
 import type { ThreadUpdate } from '../../src/webview/protocol.js';
 import { matchPaths, mentionAt, pickMention } from '../../webview/mentions.js';
@@ -209,5 +211,22 @@ describe('files an agent names without @ (ADR 0018)', () => {
     expect((withRefs(turn, cwd) as { refs?: string[] }).refs).toEqual([url, 'src/calc.py']);
     expect(insideFolder(cwd, join(root, 'secret.txt'))).toBeUndefined();
     expect(insideFolder(cwd, join(cwd, 'src'))?.folder).toBe(true);
+  });
+});
+
+describe('the kind of a brief reference (ADR 0044)', () => {
+  it('tells files, folders, missing and ignored paths; outside the folder is missing', () => {
+    mkdirSync(join(cwd, 'vendor', 'lib'), { recursive: true });
+    writeFileSync(join(cwd, 'vendor', 'lib', 'x.js'), 'x');
+    writeFileSync(join(cwd, 'notes.log'), 'x');
+    const kind = referenceKind(cwd, ignoredPaths(['vendor/', '*.log']));
+    expect(kind('src/calc.py')).toBe('file');
+    expect(kind('src')).toBe('folder');
+    expect(kind('src/none.py')).toBe('missing');
+    expect(kind('../secret.txt')).toBe('missing');
+    expect(kind(join(root, 'secret.txt'))).toBe('missing');
+    expect(kind('notes.log')).toBe('ignored');
+    expect(kind('vendor/lib/x.js')).toBe('ignored');
+    expect(kind('vendor')).toBe('ignored');
   });
 });

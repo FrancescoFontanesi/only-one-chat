@@ -6,8 +6,10 @@
 
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, isAbsolute, relative, resolve } from 'node:path';
+import type { ReferenceKind } from '@only-one-chat/runtime';
 import type { ThreadUpdate } from '../webview/protocol.js';
 import { linkPath, looksLikeFile, pathCandidates, refTokens } from '../webview/refs.js';
+import type { Ignored } from './ignore.js';
 
 /** A range of lines this short is included in the message; a longer one is named only. */
 export const MAX_EXCERPT_LINES = 80;
@@ -58,6 +60,23 @@ export function insideFolder(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * What the folder says of a brief's reference (ADR 0044), for the loop. A path
+ * outside the folder, through a link too, counts as missing; one under an
+ * ignored path (itself or a folder above it) as ignored.
+ */
+export function referenceKind(cwd: string, ignored: Ignored): (path: string) => ReferenceKind {
+  return (path) => {
+    const found = inside(cwd, path);
+    if (!found) return 'missing';
+    const parts = path.replace(/\/+$/, '').split('/');
+    const skipped = parts.some((_, at) =>
+      ignored(parts.slice(0, at + 1).join('/'), found.folder || at < parts.length - 1),
+    );
+    return skipped ? 'ignored' : found.folder ? 'folder' : 'file';
+  };
 }
 
 /** The mentions of a message and the attachments block that names them. */

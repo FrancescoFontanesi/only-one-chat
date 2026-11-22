@@ -65,7 +65,7 @@ import { guardReviewerTurn } from './guard.js';
 import { assessRisk, riskFact } from './risk.js';
 import { shortcutFacts, type TextChange } from './shortcuts.js';
 import { ignoredPaths, type Ignored } from './ignore.js';
-import { plainRefs } from './mentions.js';
+import { plainRefs, referenceKind } from './mentions.js';
 import { PROVIDERS, type ProviderChoice } from './providers.js';
 
 /** A role's choice: the leader and the implementer run on Codex or Claude (ADR 0022, 0023). */
@@ -1684,6 +1684,7 @@ ${this.diffChecks()}`;
       task: this.taskJournal(),
       verification: this.verification,
       leaderSession: this.leaderSession,
+      referenceKind: referenceKind(config.cwd, this.ignored),
       workerSession: () => this.implementer(),
       workerPreface: () => this.implementerPreface(),
       review: config.review,

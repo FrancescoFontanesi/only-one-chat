@@ -55,7 +55,14 @@ export type {
   WorkVerification,
 } from './verification.js';
 export { openEventLog, type EventLog, type LoggedEvent } from './event-log.js';
-export { changedFiles, checkReport, checkReview, contractFacts, criteriaOf } from './contract.js';
+export {
+  TURN_FILES_HEADER,
+  changedFiles,
+  checkReport,
+  checkReview,
+  contractFacts,
+  criteriaOf,
+} from './contract.js';
 export {
   handoffTools,
   readHandoff,

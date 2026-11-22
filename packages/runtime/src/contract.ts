@@ -49,11 +49,33 @@ export function criteriaOf(brief: string): string[] {
   return [...ids];
 }
 
-/** The files the runtime saw change, from its facts (`- modified path`). */
+/** Heads the files one implementer turn changed, in the runtime's facts (ADR 0041). */
+export const TURN_FILES_HEADER = "Files changed by the implementer's last turn:";
+
+/** The files in the facts (`- modified path`): the whole request's, and this turn's when listed. */
+function filesIn(facts: string): { all: string[]; turn: string[] | undefined } {
+  const all: string[] = [];
+  let turn: string[] | undefined;
+  let inTurn = false;
+  for (const line of facts.split(/\r?\n/)) {
+    if (line === TURN_FILES_HEADER) {
+      inTurn = true;
+      turn = [];
+      continue;
+    }
+    if (!line.startsWith('- ')) inTurn = false;
+    const match = /^- (?:added|modified|deleted) (.+)$/.exec(line);
+    if (!match) continue;
+    const path = (match[1] ?? '').trim().replaceAll('\\', '/');
+    if (inTurn) turn?.push(path);
+    else all.push(path);
+  }
+  return { all, turn };
+}
+
+/** The files the runtime saw change since the request began, from its facts. */
 export function changedFiles(facts: string): string[] {
-  return [...facts.matchAll(/^- (?:added|modified|deleted) (.+)$/gm)].map((match) =>
-    (match[1] ?? '').trim().replaceAll('\\', '/'),
-  );
+  return filesIn(facts).all;
 }
 
 const listed = (ids: readonly string[]) => ids.join(', ');
@@ -129,7 +151,9 @@ export function checkReport(
     });
   }
   const declared = report.changes.map((change) => normalized(change.path));
-  const undeclared = changedFiles(facts).filter(
+  // A turn's report answers for that turn's changes only; without the list, for all of them.
+  const { all, turn } = filesIn(facts);
+  const undeclared = (turn ?? all).filter(
     (path) => !declared.some((d) => d === path || d.endsWith(`/${path}`)),
   );
   if (undeclared.length > 0) {

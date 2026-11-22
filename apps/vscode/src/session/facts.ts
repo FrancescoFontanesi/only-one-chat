@@ -7,6 +7,8 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
+import { withoutApiKeys } from '@only-one-chat/adapters';
+import { TURN_FILES_HEADER } from '@only-one-chat/runtime';
 import { NOTHING_IGNORED, type Ignored } from './ignore.js';
 
 /** Folders never walked: dependencies, caches, version control. */
@@ -81,7 +83,7 @@ function runCommand(
   return new Promise((resolve) => {
     const child = spawn(program, args, {
       cwd,
-      env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+      env: { ...withoutApiKeys(process.env), PYTHONDONTWRITEBYTECODE: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -107,12 +109,23 @@ export async function verifiedFacts(
   baseline: Snapshot,
   verify: readonly string[],
   ignored: Ignored = NOTHING_IGNORED,
+  /** The workspace just before the implementer's last turn: lists what that turn changed (ADR 0041). */
+  turnBase?: Snapshot,
 ): Promise<string> {
-  const changed = changes(baseline, snapshot(dir, ignored));
+  const now = snapshot(dir, ignored);
+  const changed = changes(baseline, now);
   const lines = ['Files changed since the request began:'];
   if (changed === 'unknown') {
     lines.push('- unavailable: the workspace has too many files or could not be read');
   } else lines.push(...(changed.length > 0 ? changed.map((c) => `- ${c}`) : ['- none']));
+  const turn = turnBase ? changes(turnBase, now) : 'unknown';
+  if (turn !== 'unknown') {
+    lines.push(
+      '',
+      TURN_FILES_HEADER,
+      ...(turn.length > 0 ? turn.map((c) => `- ${c}`) : ['- none']),
+    );
+  }
   if (verify.length > 0) {
     const run = await runCommand(verify, dir);
     const output = run.output.replace(/\r\n/g, '\n').trim();
@@ -127,4 +140,11 @@ export async function verifiedFacts(
     );
   }
   return lines.join('\n');
+}
+
+/** The line the facts carry about the configured verification command. */
+export function configuredCommandFact(verify: readonly string[]): string {
+  return verify.length > 0
+    ? `Configured runtime verification command: ${JSON.stringify(verify)}. The {junit} placeholder receives an extension-owned report path.`
+    : 'No runtime verification command configured.';
 }

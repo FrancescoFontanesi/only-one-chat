@@ -20,5 +20,6 @@ export default defineConfig({
       'tests/**/*.test.ts',
     ],
     environment: 'node',
+    setupFiles: ['tests/hermetic-env.ts'],
   },
 });

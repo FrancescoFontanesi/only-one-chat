@@ -58,6 +58,7 @@ import {
   findingsPrompt,
   frameWorkerAnswer,
   fixPrompt,
+  gatePrompt,
   leaderResultPrompt,
   leaderReviewPrompt,
   reportRepairPrompt,
@@ -322,6 +323,11 @@ export interface LoopOptions {
    * Without it the leader judges the report alone.
    */
   facts?(): Promise<string>;
+  /**
+   * An implementer turn is about to start: the caller can record the workspace
+   * to list, in `facts`, what that turn changed (ADR 0041).
+   */
+  onWorkerTurn?(): void;
   /**
    * Benchmark runs only (ADR 0008): messages between agents are approved
    * without asking; each is still intercepted, logged and shown as an
@@ -716,6 +722,7 @@ export function runLoop(options: LoopOptions): Loop {
    */
   async function implement(worker: AgentSession, prompt: string): Promise<Work> {
     options.verification?.begin();
+    options.onWorkerTurn?.();
     saveTask({
       ...(task ?? initialTask(prompt, reviewOnly && options.reviewOf?.direct === true)),
       step: 'implementation',
@@ -870,7 +877,68 @@ export function runLoop(options: LoopOptions): Loop {
     const issued = new Set<string>();
     const resumed = (task?.used ?? 0) > 0;
     const known = () => (resumed ? undefined : [...issued]);
-    let facts = await factsFor(brief, work, known());
+    /**
+     * Before each review request, the runtime verifies the work itself (ADR 0041).
+     * A failure goes back to the implementer once, outside the review rounds; the
+     * reviewer then judges what is left, with the result among the facts.
+     */
+    const gate = async (round: number): Promise<string> => {
+      const { verification } = options;
+      if (
+        !verification ||
+        work.data?.outcome === 'blocked' ||
+        (task?.step === 'verification' && task.answer)
+      )
+        return '';
+      const check = () => verification.check(work.data?.test, 'implementer', controller.signal);
+      // A run that ended non-zero without proving success goes back too: often a red suite
+      // with no JUnit report. A timeout or a launch error has no exit code and does not.
+      const sendsBack = (r: VerificationResult) =>
+        r.status === 'failed' ||
+        (r.status === 'inconclusive' && typeof r.exitCode === 'number' && r.exitCode !== 0);
+      let result = await check();
+      if (sendsBack(result)) {
+        const failure = gatePrompt(
+          [`Runtime verification: ${result.status}`, result.summary, result.detail ?? '']
+            .join('\n')
+            .replace(/\r\n?|[\u2028\u2029]/g, '\n'),
+        );
+        const sent = await intercept(
+          {
+            kind: 'review',
+            from: 'Runtime verification',
+            to: worker.name,
+            text: failure,
+            exchange,
+          },
+          true,
+        );
+        saveTask({
+          ...(task ?? initialTask(brief, of.direct === true)),
+          step: 'implementation',
+          inFlight: false,
+          used: round,
+          findings: sent ?? failure,
+          answer: undefined,
+        });
+        work = await implement(worker, relay(sent ?? failure));
+        result = await check();
+      }
+      return [
+        `Runtime verification before review: ${result.status} — ${result.summary}`,
+        sendsBack(result) && result.detail
+          ? frameWorkerAnswer(result.detail.replace(/\r\n?|[\u2028\u2029]/g, '\n'))
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+    };
+    /** The facts for a review request: the work as it stands after the gate. */
+    const requestFacts = async (round: number): Promise<string> => {
+      const verified = await gate(round);
+      return [await factsFor(brief, work, known()), verified].filter(Boolean).join('\n\n');
+    };
+    let facts = await requestFacts(task?.used ?? 0);
     if (options.task?.resume?.findings)
       facts += `\n\nSaved findings\n${frameWorkerAnswer(options.task.resume.findings.replace(/\r\n?|[\u2028\u2029]/g, '\n'))}`;
     let prompt = reviewRequestPrompt(
@@ -974,7 +1042,7 @@ export function runLoop(options: LoopOptions): Loop {
           answer: undefined,
         });
         work = await implement(worker, relay(passed ?? findings));
-        facts = await factsFor(brief, work, known());
+        facts = await requestFacts(round + 1);
         prompt = reviewFollowUpPrompt(worker.name, work.text, facts, rounds - round - 1);
         continue;
       }

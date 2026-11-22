@@ -11,6 +11,8 @@ export interface VerificationResult {
   readonly detail?: string;
   readonly status: 'passed' | 'failed' | 'inconclusive' | 'unavailable';
   readonly summary: string;
+  /** The command's exit code when it ran to its end; absent on a timeout or a launch error. */
+  readonly exitCode?: number | null;
 }
 
 export interface VerificationEvidence extends VerificationResult {

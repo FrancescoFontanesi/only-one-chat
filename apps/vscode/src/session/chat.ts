@@ -60,7 +60,7 @@ import type {
   TurnUsageSummary,
 } from '../webview/protocol.js';
 import type { Checkpoint, CheckpointStore } from './checkpoints.js';
-import { changes, snapshot, verifiedFacts } from './facts.js';
+import { changes, configuredCommandFact, snapshot, verifiedFacts } from './facts.js';
 import { guardReviewerTurn } from './guard.js';
 import { assessRisk, riskFact } from './risk.js';
 import { shortcutFacts, type TextChange } from './shortcuts.js';
@@ -1289,13 +1289,13 @@ export class ChatSession {
    * What the runtime verified after an implementer's turn (ADR 0010, 0030): the
    * changed files and the verification command, then the checks on the diff.
    */
-  private async facts(baseline: ReturnType<typeof snapshot>): Promise<string> {
+  private async facts(
+    baseline: ReturnType<typeof snapshot>,
+    turnBase?: ReturnType<typeof snapshot>,
+  ): Promise<string> {
     const { config } = this;
-    const facts = await verifiedFacts(config.cwd, baseline, [], this.ignored);
-    const command =
-      config.verifyCommand.length > 0
-        ? `Configured runtime verification command: ${JSON.stringify(config.verifyCommand)}. The {junit} placeholder receives an extension-owned report path.`
-        : 'No runtime verification command configured.';
+    const facts = await verifiedFacts(config.cwd, baseline, [], this.ignored, turnBase);
+    const command = configuredCommandFact(config.verifyCommand);
     return `${facts}
 
 ${command}
@@ -1396,6 +1396,7 @@ ${this.diffChecks()}`;
     const { config } = this;
     const reviewer = this.reviewerOptions(baseline);
     if (!reviewer) return undefined;
+    let turnBase: ReturnType<typeof snapshot> | undefined;
     const loop = runLoop({
       request: '',
       handoffServer: config.handoffServer,
@@ -1418,8 +1419,11 @@ ${this.diffChecks()}`;
       },
       onApproval: ({ role, agent, request }, signal) =>
         this.askPermission(roleOf(role), agent, request.summary, signal),
+      onWorkerTurn: () => {
+        turnBase = snapshot(config.cwd, this.ignored);
+      },
       facts: async () => {
-        const facts = await this.facts(baseline);
+        const facts = await this.facts(baseline, turnBase);
         shown.facts = true;
         this.events.update({ type: 'notice', level: 'info', text: facts });
         return facts;
@@ -1664,6 +1668,7 @@ ${this.diffChecks()}`;
       .join('\n\n');
     const manual = this.mode === 'manual';
     const reviewer = this.reviewerOptions(baseline);
+    let turnBase: ReturnType<typeof snapshot> | undefined;
     const loop = runLoop({
       request: text,
       handoffServer: config.handoffServer,
@@ -1695,8 +1700,11 @@ ${this.diffChecks()}`;
         this.askPermission(roleOf(role), agent, request.summary, signal),
       onQuestion: ({ role, agent, questions }, signal) =>
         this.ask(roleOf(role), agent, questions, signal),
+      onWorkerTurn: () => {
+        turnBase = snapshot(config.cwd, this.ignored);
+      },
       facts: async () => {
-        const facts = await this.facts(baseline);
+        const facts = await this.facts(baseline, turnBase);
         shown.facts = true;
         this.events.update({ type: 'notice', level: 'info', text: facts });
         return facts;

@@ -1414,9 +1414,9 @@ describe('leader mode with a reviewer (ADR 0029, 0035)', () => {
       reviewRounds: 1,
       verification: {
         begin() {},
-        check: () =>
+        check: (_selection, origin) =>
           Promise.resolve(
-            ++checks === 1
+            origin === 'reviewer' && ++checks === 1
               ? { status: 'failed', summary: 'RUNTIME-TEST failed' }
               : { status: 'passed', summary: 'passed' },
           ),
@@ -1447,7 +1447,12 @@ describe('leader mode with a reviewer (ADR 0029, 0035)', () => {
         reviewRounds: status === 'failed' ? 0 : 2,
         verification: {
           begin() {},
-          check: () => Promise.resolve({ status, summary: 'RUNTIME-OUTCOME' }),
+          check: (_selection, origin) =>
+            Promise.resolve(
+              origin === 'reviewer'
+                ? { status, summary: 'RUNTIME-OUTCOME' }
+                : { status: 'passed', summary: 'passed' },
+            ),
           finish: () =>
             Promise.resolve({
               summary: 'RUNTIME-FINAL-OUTCOME',
@@ -1468,6 +1473,188 @@ describe('leader mode with a reviewer (ADR 0029, 0035)', () => {
       );
     },
   );
+  describe('the verification gate before a review request (ADR 0041)', () => {
+    /** Fails the implementer-origin checks listed by call number; every reviewer check passes. */
+    function gateVerification(failing: readonly number[], onCheck?: (origin: string) => void) {
+      let implementerChecks = 0;
+      return {
+        begin() {},
+        check: (_selection: unknown, origin: string) => {
+          onCheck?.(origin);
+          if (origin === 'implementer' && failing.includes(++implementerChecks))
+            return Promise.resolve({
+              status: 'failed' as const,
+              summary: 'GATE-SUMMARY',
+              detail: 'GATE-DETAIL test_ans failed',
+            });
+          return Promise.resolve({ status: 'passed' as const, summary: 'all green' });
+        },
+        finish: () =>
+          Promise.resolve({
+            summary: 'final',
+            result: { status: 'passed' as const, summary: 'all green' },
+          }),
+      };
+    }
+
+    it('sends a failure to the implementer before the reviewer, once, and then reviews', async () => {
+      const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed.' }]);
+      const claude = fakeAgent('Claude', [reports(), reports()]);
+      const gemini = fakeAgent('Gemini', [reviews()]);
+      const saved: TaskProgress[] = [];
+      let reviewerPromptsAtRecheck = -1;
+      let turns = 0;
+      const { running, harness } = await reviewedLoop(codex, claude, gemini, {
+        task: { save: (next) => void saved.push(next) },
+        onWorkerTurn: () => {
+          turns++;
+        },
+        verification: gateVerification([1], (origin) => {
+          if (origin === 'implementer') reviewerPromptsAtRecheck = gemini.prompts.length;
+        }),
+      });
+      await running.done;
+      expect(claude.prompts).toHaveLength(2);
+      expect(claude.prompts[1]).toContain('did not pass.');
+      expect(claude.prompts[1]).toContain(`${WORKER_ANSWER_START}\nRuntime verification: failed`);
+      expect(claude.prompts[1]).toContain('GATE-DETAIL');
+      expect(claude.prompts[1]).toContain('existed\nbefore your work');
+      expect(reviewerPromptsAtRecheck).toBe(0);
+      expect(gemini.prompts).toHaveLength(1);
+      expect(gemini.prompts[0]).toContain('Runtime verification before review: passed — all green');
+      expect(harness.events).toContainEqual({
+        type: 'intercepted',
+        message: expect.objectContaining({ from: 'Runtime verification', to: 'Claude' }) as unknown,
+      });
+      expect(saved).toContainEqual(
+        expect.objectContaining({
+          step: 'implementation',
+          findings: expect.stringContaining('GATE-DETAIL') as unknown,
+        }),
+      );
+      expect(turns).toBe(2);
+    });
+
+    it('lets the reviewer judge a failure that is still there after the single retry', async () => {
+      const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed.' }]);
+      const claude = fakeAgent('Claude', [reports(), reports()]);
+      const gemini = fakeAgent('Gemini', [reviews()]);
+      const { running, harness } = await reviewedLoop(codex, claude, gemini, {
+        verification: gateVerification([1, 2]),
+      });
+      await running.done;
+      expect(claude.prompts).toHaveLength(2);
+      expect(gemini.prompts).toHaveLength(1);
+      expect(gemini.prompts[0]).toContain(
+        'Runtime verification before review: failed — GATE-SUMMARY',
+      );
+      expect(gemini.prompts[0]).toContain('GATE-DETAIL');
+      expect(harness.events).toContainEqual(
+        expect.objectContaining({ type: 'reviewed', rounds: 0 }),
+      );
+    });
+
+    it('does not count the retry in the review rounds', async () => {
+      const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed.' }]);
+      const claude = fakeAgent('Claude', [reports(), reports(), reports()]);
+      const gemini = fakeAgent('Gemini', [raisesFindings, reviews()]);
+      const { running, harness } = await reviewedLoop(codex, claude, gemini, {
+        reviewRounds: 1,
+        verification: gateVerification([1]),
+      });
+      await running.done;
+      expect(claude.prompts).toHaveLength(3);
+      expect(gemini.prompts[0]).toContain('Correction rounds left: 1.');
+      expect(gemini.prompts[1]).toContain('No correction rounds left');
+      expect(harness.events).toContainEqual(
+        expect.objectContaining({ type: 'reviewed', rounds: 1 }),
+      );
+    });
+
+    it.each(['passed', 'inconclusive', 'unavailable'] as const)(
+      'goes straight to the reviewer when the check is %s, with the result in the facts',
+      async (status) => {
+        const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed.' }]);
+        const claude = fakeAgent('Claude', [reports()]);
+        const gemini = fakeAgent('Gemini', [reviews()]);
+        const { running } = await reviewedLoop(codex, claude, gemini, {
+          verification: {
+            ...gateVerification([]),
+            check: () => Promise.resolve({ status, summary: 'GATE-STATUS' }),
+          },
+        });
+        await running.done;
+        expect(claude.prompts).toHaveLength(1);
+        expect(gemini.prompts[0]).toContain(
+          `Runtime verification before review: ${status} — GATE-STATUS`,
+        );
+      },
+    );
+
+    it('sends back an inconclusive run that exited non-zero, not one that never finished', async () => {
+      for (const [exitCode, retried] of [
+        [1, true],
+        [undefined, false],
+        [0, false],
+      ] as const) {
+        const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed.' }]);
+        const claude = fakeAgent('Claude', [reports(), reports()]);
+        const gemini = fakeAgent('Gemini', [reviews()]);
+        let checks = 0;
+        const { running } = await reviewedLoop(codex, claude, gemini, {
+          verification: {
+            ...gateVerification([]),
+            check: () =>
+              Promise.resolve(
+                ++checks === 1
+                  ? {
+                      status: 'inconclusive' as const,
+                      summary: 'Verification exit 1; JUnit not configured',
+                      detail: 'TAIL-OF-OUTPUT',
+                      ...(exitCode !== undefined ? { exitCode } : {}),
+                    }
+                  : { status: 'passed' as const, summary: 'all green' },
+              ),
+          },
+        });
+        await running.done;
+        expect(claude.prompts).toHaveLength(retried ? 2 : 1);
+        if (retried) expect(claude.prompts[1]).toContain('TAIL-OF-OUTPUT');
+      }
+    });
+
+    it('does not check a blocked report, and adds nothing without a verification', async () => {
+      for (const blocked of [true, false]) {
+        const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed.' }]);
+        const claude = fakeAgent('Claude', [
+          reports(blocked ? { outcome: 'blocked', blocked_on: 'a decision' } : {}),
+        ]);
+        const gemini = fakeAgent('Gemini', [reviews()]);
+        let checks = 0;
+        const { running } = await reviewedLoop(
+          codex,
+          claude,
+          gemini,
+          blocked
+            ? {
+                verification: {
+                  ...gateVerification([1]),
+                  check: (_selection, origin) => {
+                    if (origin === 'implementer') checks++;
+                    return Promise.resolve({ status: 'failed', summary: 'x' });
+                  },
+                },
+              }
+            : {},
+        );
+        await running.done;
+        expect(checks).toBe(0);
+        expect(claude.prompts).toHaveLength(1);
+        if (!blocked) expect(gemini.prompts[0]).not.toContain('before review');
+      }
+    });
+  });
+
   const facts = () =>
     Promise.resolve('Files changed since the start of the request:\n- modified calc.py');
 

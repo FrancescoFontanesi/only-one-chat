@@ -78,7 +78,13 @@ import {
 } from '../packages/runtime/src/index.js';
 import { loadSuite, runHiddenTests, type HiddenResults } from './bench/hidden.js';
 import { CheckpointStore } from '../apps/vscode/src/session/checkpoints.js';
+import {
+  configuredCommandFact,
+  snapshot as productSnapshot,
+  verifiedFacts as productFacts,
+} from '../apps/vscode/src/session/facts.js';
 import { guardReviewerTurn } from '../apps/vscode/src/session/guard.js';
+import { WorkspaceVerification } from '../apps/vscode/src/session/verification.js';
 import { isTestFile } from '../apps/vscode/src/session/shortcuts.js';
 import {
   findLeaks,
@@ -614,6 +620,18 @@ async function main(): Promise<void> {
       join(stateDir(), 'sandbox', `${runId}-guard`),
       runDir,
     );
+    // The product's path (ADR 0041): the runtime verifies before the reviewer, as ChatSession does.
+    const verifyCommand = systems.verify ?? [];
+    const productBaseline = productSnapshot(runDir);
+    let turnBase: ReturnType<typeof productSnapshot> | undefined;
+    let verificationRuns = 0;
+    const verification = new WorkspaceVerification({
+      cwd: runDir,
+      command: verifyCommand,
+      store: new CheckpointStore(join(stateDir(), 'sandbox', `${runId}-verify`), runDir),
+      id: () => `v${String(++verificationRuns)}`,
+      update: (evidence) => void log.append('verification', { evidence }),
+    });
     let reviewerTurns = 0;
     const reviewerPolicy = reviewerConfig ? policy(reviewerConfig) : undefined;
     const answers: Answer[] = [];
@@ -738,7 +756,14 @@ async function main(): Promise<void> {
             ...(implementerPolicy ? { worker: implementerPolicy } : {}),
             ...(reviewerPolicy ? { reviewer: reviewerPolicy } : {}),
           },
-          facts: () => verifiedFacts(runDir, baseline, systems.verify),
+          verification,
+          onWorkerTurn: () => {
+            turnBase = productSnapshot(runDir);
+          },
+          facts: async () =>
+            `${await productFacts(runDir, productBaseline, [], undefined, turnBase)}
+
+${configuredCommandFact(verifyCommand)}`,
           intercept: () => Promise.reject(new Error('not used with autoApprove')),
           onMalformedDelegation: () => Promise.reject(new Error('not used with autoApprove')),
         });

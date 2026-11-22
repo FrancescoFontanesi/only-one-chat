@@ -20,8 +20,12 @@ export function guardReviewerTurn(store: CheckpointStore, id: string): (() => st
     const review = store.review(before);
     if (!review) return 'The runtime could not read the workspace after the reviewer’s turn.';
     const restored: string[] = [];
+    const kept: string[] = [];
     for (const file of review.files) {
-      if (isTestFile(file.path)) continue;
+      if (isTestFile(file.path)) {
+        kept.push(file.path);
+        continue;
+      }
       store.put(file.path, file.before);
       restored.push(file.path);
     }
@@ -29,6 +33,7 @@ export function guardReviewerTurn(store: CheckpointStore, id: string): (() => st
       ...(restored.length > 0
         ? [`The runtime restored non-test files changed by the reviewer: ${restored.join(', ')}.`]
         : []),
+      ...(kept.length > 0 ? [`The reviewer kept test files: ${kept.join(', ')}.`] : []),
       ...(review.uncovered.length > 0
         ? [
             `Files changed by the reviewer that were too large to restore: ${review.uncovered.join(', ')}.`,

@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  TURN_FILES_HEADER,
   changedFiles,
   checkReport,
   checkReview,
@@ -94,6 +95,24 @@ describe('checkReport', () => {
         message: 'files changed that the report does not list in changes: tests/test_round.py.',
       },
     ]);
+  });
+
+  it('holds a turn’s report to that turn’s files only when the facts list them (ADR 0041)', () => {
+    const perTurn = [
+      facts,
+      '',
+      TURN_FILES_HEADER,
+      '- modified evaluator.py',
+      '',
+      'Verification run by the runtime: python -m unittest → exit 0',
+    ].join('\n');
+    const only = report({ changes: [{ path: 'evaluator.py', change: 'x' }] });
+    expect(changedFiles(perTurn)).toEqual(['evaluator.py', 'tests/test_round.py']);
+    expect(checkReport(brief, only, perTurn)).toEqual([]);
+    expect(checkReport(brief, only, facts).map((i) => i.code)).toEqual(['files-undeclared']);
+    expect(
+      checkReport(brief, only, perTurn.replace('- modified evaluator.py\n\nVer', '- none\n\nVer')),
+    ).toEqual([]);
   });
 
   it('matches the paths however the report writes them', () => {

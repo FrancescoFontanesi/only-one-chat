@@ -136,13 +136,30 @@ describe('workspace verification', () => {
       'inconclusive',
     );
   });
+  it('gives the exit code and the output tail of a run without JUnit (ADR 0041)', async () => {
+    const red = fixture([
+      process.execPath,
+      '-e',
+      'console.log("FAIL: test_tabs"); process.exit(1)',
+    ]);
+    expect(await red.verification.check(test, 'implementer', new AbortController().signal)).toEqual(
+      {
+        status: 'inconclusive',
+        summary: 'Verification exit 1; JUnit not configured',
+        detail: expect.stringContaining('FAIL: test_tabs') as unknown,
+        exitCode: 1,
+      },
+    );
+  });
+
   it('cancels a running command and bounds a hung command', async () => {
     const hanging = [process.execPath, '-e', 'setInterval(() => {}, 1000)', '{junit}'];
     const first = fixture(hanging, 200);
     first.verification.begin();
-    expect(
-      (await first.verification.check(test, 'reviewer', new AbortController().signal)).summary,
-    ).toContain('timed out');
+    const timedOut = await first.verification.check(test, 'reviewer', new AbortController().signal);
+    expect(timedOut.summary).toContain('timed out');
+    // No exit code: the gate never sends a timeout back to the implementer.
+    expect(timedOut.exitCode).toBeUndefined();
     const second = fixture(hanging);
     const controller = new AbortController();
     const pending = second.verification.check(test, 'reviewer', controller.signal);

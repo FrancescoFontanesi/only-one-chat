@@ -114,6 +114,7 @@ async function execute(
     if (!command.some((part) => part.includes('{junit}'))) {
       return {
         status: code === 0 ? 'passed' : 'inconclusive',
+        exitCode: code,
         summary: `Verification exit ${String(code)}; JUnit not configured`,
         tests,
         output,
@@ -121,6 +122,7 @@ async function execute(
     }
     return {
       status: 'inconclusive',
+      exitCode: code,
       summary: `JUnit unavailable: ${error instanceof Error ? error.message : String(error)}`,
       tests,
       xml,
@@ -130,6 +132,7 @@ async function execute(
   if (tests.some((test) => test.status === 'error'))
     return {
       status: 'inconclusive',
+      exitCode: code,
       summary: 'JUnit reports a test execution error',
       tests,
       xml,
@@ -148,6 +151,7 @@ async function execute(
   if (code !== 0 || failed.length > 0 || !tests.some((test) => test.status === 'passed')) {
     return {
       status: 'inconclusive',
+      exitCode: code,
       summary: 'Process exit and JUnit outcomes do not establish success',
       tests,
       xml,
@@ -178,7 +182,12 @@ export class WorkspaceVerification implements WorkVerification {
   private round = 0;
   private budget = 0;
   private reviewVerdict: string | undefined;
-  constructor(private readonly options: Options) {}
+  // An explicit field, not a parameter property: the bench runs this file with Node's type stripping.
+  private readonly options: Options;
+
+  constructor(options: Options) {
+    this.options = options;
+  }
 
   checkpoint(): VerificationCheckpoint | undefined {
     return this.active
@@ -322,15 +331,19 @@ export class WorkspaceVerification implements WorkVerification {
     const run = at && this.cached?.key === key ? this.cached.run : await this.run(at, signal);
     this.cached = { key, run };
     this.publish(run, selection, origin, 'pending', run.output);
+    const failing = run.tests
+      .filter((test) => test.status !== 'passed')
+      .slice(0, 8)
+      .map((test) => `${test.className} / ${test.name}\n${test.detail}`)
+      .join('\n');
     return {
       status: run.status,
       summary: run.summary,
-      detail: run.tests
-        .filter((test) => test.status !== 'passed')
-        .slice(0, 8)
-        .map((test) => `${test.className} / ${test.name}\n${test.detail}`)
-        .join('\n')
-        .slice(0, 16384),
+      // Without JUnit details, the output's tail is all that says what failed.
+      detail: (
+        failing || (run.status === 'passed' ? '' : run.output.split(/\r?\n/).slice(-40).join('\n'))
+      ).slice(0, 16384),
+      ...(run.exitCode !== undefined ? { exitCode: run.exitCode } : {}),
     };
   }
 

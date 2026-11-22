@@ -622,7 +622,8 @@ async function main(): Promise<void> {
     );
     // The product's path (ADR 0041): the runtime verifies before the reviewer, as ChatSession does.
     const verifyCommand = systems.verify ?? [];
-    const productBaseline = productSnapshot(runDir);
+    // Taken again at each script message, as the product does at each user message.
+    let productBaseline = productSnapshot(runDir);
     let turnBase: ReturnType<typeof productSnapshot> | undefined;
     let verificationRuns = 0;
     const verification = new WorkspaceVerification({
@@ -663,6 +664,7 @@ async function main(): Promise<void> {
     };
     try {
       for (const message of script) {
+        productBaseline = productSnapshot(runDir);
         currentMessage = message.name;
         process.stdout.write(`\n— ${message.name} → ${message.to}\n`);
         if (message.to === 'implementer') {

@@ -16,7 +16,8 @@ import {
 } from '@only-one-chat/adapters';
 import {
   CommandEvidence,
-  IMPLEMENTER_ROLE_INSTRUCTIONS,
+  directMessagePrompt,
+  implementerInstructions,
   NO_COMMANDS_NOTE,
   agentLabel,
   agentSessionOptions,
@@ -504,6 +505,11 @@ export class ChatSession {
     };
   }
 
+  /** The verification command has a {junit} placeholder: the roles may select a test (ADR 0045). */
+  private hasJunit(): boolean {
+    return this.config.verifyCommand.some((part) => part.includes('{junit}'));
+  }
+
   /** The role's instructions, followed by the user's own for it, if any (ADR 0013). */
   private withUserInstructions(role: TurnRole, instructions: string): string {
     const own = this.config.instructions?.[role]?.trim();
@@ -565,7 +571,10 @@ export class ChatSession {
       await closed.close();
     }
     if (!this.implementerSession) {
-      const instructions = this.withUserInstructions('implementer', IMPLEMENTER_ROLE_INSTRUCTIONS);
+      const instructions = this.withUserInstructions(
+        'implementer',
+        implementerInstructions({ junit: this.hasJunit() }),
+      );
       this.implementerSession = await this.openSession(
         'implementer',
         this.factory('implementer', this.roles.implementer, await this.bridgeFor('implementer')),
@@ -1369,6 +1378,7 @@ ${this.diffChecks()}`;
             instructions: this.withUserInstructions('reviewer', options.instructions),
           }),
         reviewRounds: current.rounds,
+        junit: this.hasJunit(),
         ...(reviewerNote ? { reviewerNote } : {}),
         ...(store && guardable
           ? { guardReviewer: () => guardReviewerTurn(store, this.id('rev')) }
@@ -1496,15 +1506,17 @@ ${this.diffChecks()}`;
     this.saveTaskProgress({ ...initial, step: 'implementation', inFlight: true });
     const result = await this.implementerTurn(
       session,
-      [
-        this.implementerPreface(),
-        notes,
-        this.resuming
-          ? 'Continue the approved work described in the saved recovery context.'
-          : text,
-      ]
-        .filter(Boolean)
-        .join('\n\n'),
+      directMessagePrompt(
+        [
+          this.implementerPreface(),
+          notes,
+          this.resuming
+            ? 'Continue the approved work described in the saved recovery context.'
+            : text,
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+      ),
       true,
       skill,
     );

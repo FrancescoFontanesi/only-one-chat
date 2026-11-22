@@ -9,16 +9,17 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   APPROVAL_DENIED_MESSAGE,
   EMPTY_REVIEW,
-  IMPLEMENTER_ROLE_INSTRUCTIONS,
+  PROMPT_MODULES,
   NO_COMMANDS_NOTE,
-  REVIEWER_ROLE_INSTRUCTIONS,
   WORKER_ANSWER_END,
   WORKER_ANSWER_START,
   agentSessionOptions,
   checkSubagent,
   frameWorkerAnswer,
   handoffTools,
+  implementerInstructions,
   leaderInstructions,
+  reviewerInstructions,
   openEventLog,
   pendingReportsPreface,
   renderBrief,
@@ -1273,13 +1274,14 @@ describe('leader mode: questions while the leader works (ADR 0019)', () => {
 describe('the role prompts (ADR 0020, 0035)', () => {
   const prompts = {
     leader: leaderInstructions('claude'),
-    implementer: IMPLEMENTER_ROLE_INSTRUCTIONS,
-    reviewer: REVIEWER_ROLE_INSTRUCTIONS,
+    implementer: implementerInstructions(),
+    reviewer: reviewerInstructions(),
   };
 
-  it('fill every placeholder, name the implementer, and keep the web-app markers', () => {
+  it('fill every placeholder and name the implementer; the web-app markers are in a module', () => {
     expect(prompts.leader).toContain('"claude"');
-    expect(prompts.leader).toContain('OOC-BRIEF>>>');
+    expect(prompts.leader).not.toContain('OOC-BRIEF>>>');
+    expect(PROMPT_MODULES.webAppBrief).toContain('OOC-BRIEF>>>');
     for (const text of Object.values(prompts)) expect(text).not.toMatch(/\{\{\w+\}\}/);
   });
 
@@ -1291,14 +1293,10 @@ describe('the role prompts (ADR 0020, 0035)', () => {
     }
   });
 
-  it('name each tool of their role and every field of it', () => {
+  it('name each tool of their role; the fields are defined by the schemas alone', () => {
     for (const role of ['leader', 'implementer', 'reviewer'] as const) {
       for (const tool of handoffTools(role, SERVER).tools) {
         expect(prompts[role]).toContain(`\`${tool.name}\``);
-        const properties = (tool.inputSchema as { properties: Record<string, unknown> }).properties;
-        for (const field of Object.keys(properties)) {
-          expect(prompts[role], `${role}: ${tool.name}.${field}`).toContain(`\`${field}\``);
-        }
       }
     }
   });
@@ -1308,11 +1306,20 @@ describe('the role prompts (ADR 0020, 0035)', () => {
     expect(leaderInstructions('claude')).toMatch(/with the questions tool/);
   });
 
-  it('say how a verdict and an outcome are given, in the values the schema fixes', () => {
-    expect(prompts.implementer).toContain('done | partial | blocked');
-    expect(prompts.implementer).toContain('verified | not_verified | not_met');
-    expect(prompts.reviewer).toContain('approved | with_reservations | rejected');
-    expect(prompts.reviewer).toContain('honesty (clean | doubtful | bypassed)');
+  it('leave the outcome and the verdict rules to the schemas', () => {
+    const schemas = (role: 'implementer' | 'reviewer', tool: string, field: string) => {
+      const found = handoffTools(role, SERVER).tools.find((t) => t.name === tool);
+      const properties = (
+        found?.inputSchema as { properties: Record<string, { description: string }> }
+      ).properties;
+      return properties[field]?.description ?? '';
+    };
+    expect(schemas('implementer', 'report', 'outcome')).toMatch(/done:.*partial:.*blocked:/);
+    expect(schemas('reviewer', 'review', 'verdict')).toMatch(
+      /approved:.*with_reservations:.*rejected:/,
+    );
+    expect(prompts.implementer).not.toContain('done | partial | blocked');
+    expect(prompts.reviewer).not.toContain('approved | with_reservations | rejected');
   });
 });
 
@@ -1830,6 +1837,52 @@ describe('leader mode with a reviewer (ADR 0029, 0035)', () => {
     });
   }
 
+  it('gives the rules for answering findings once, then only a reminder (ADR 0045)', async () => {
+    const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed: fine.' }]);
+    const claude = fakeAgent('Claude', [reports(), reports(), reports()]);
+    const second = {
+      answer: 'Again.',
+      handoffs: [
+        findings({ items: [{ id: 'R2', severity: 'blocking', issue: 'Still.', evidence: 'x' }] }),
+      ],
+    };
+    const gemini = fakeAgent('Gemini', [raisesFindings, second, reviews()]);
+    const { running } = await reviewedLoop(codex, claude, gemini);
+    await running.done;
+    expect(claude.prompts).toHaveLength(3);
+    expect(claude.prompts[1]).toContain(PROMPT_MODULES.answeringFindings);
+    expect(claude.prompts[2]).not.toContain(PROMPT_MODULES.answeringFindings);
+    expect(claude.prompts[2]).toContain('Answer them as you did before');
+  });
+
+  it('puts the web-app module on the leader turn that carries the brief, and not otherwise', async () => {
+    const brief = '<<<OOC-BRIEF v1 project=calc track=ans\n## Goal\nans.\nOOC-BRIEF>>>';
+    const asked = async (request: string) => {
+      const codex = fakeAgent('Codex', [{ answer: 'Noted.' }]);
+      const session = await codex.factory({ instructions: leaderInstructions('claude') });
+      const { running } = await loop(codex, fakeAgent('Claude', []), [], [], {
+        request,
+        mode: 'leader',
+        leaderSession: session,
+      });
+      await running.done;
+      return codex.prompts[0] ?? '';
+    };
+    expect(await asked(brief)).toContain(PROMPT_MODULES.webAppBrief);
+    expect(await asked('A plain question.')).not.toContain(PROMPT_MODULES.webAppBrief);
+  });
+
+  it('sends the JUnit selection only to the sessions of a workspace with a {junit} command', async () => {
+    for (const junit of [false, true]) {
+      const codex = fakeAgent('Codex', [delegates(), { answer: 'ok' }]);
+      const claude = fakeAgent('Claude', [reports()]);
+      const gemini = fakeAgent('Gemini', [reviews()]);
+      const { running } = await reviewedLoop(codex, claude, gemini, { junit });
+      await running.done;
+      expect(gemini.instructions[0]?.includes('JUnit selection')).toBe(junit);
+    }
+  });
+
   it('sends the findings to the implementer, then the review to the leader in place of the report', async () => {
     const codex = fakeAgent('Codex', [delegates(), { answer: 'Reviewed: fine.' }]);
     const claude = fakeAgent('Claude', [reports(), reports()]);
@@ -1854,6 +1907,10 @@ describe('leader mode with a reviewer (ADR 0029, 0035)', () => {
     // The implementer gets the findings alone, as data, not what the reviewer wrote around them.
     expect(claude.prompts[1]).toContain(`${WORKER_ANSWER_START}\n${FINDINGS}`);
     expect(claude.prompts[1]).not.toContain('I read calc.py.');
+    // The first findings of the task carry the rules for answering; the follow-up the reviewer's (ADR 0045).
+    expect(claude.prompts[1]).toContain(PROMPT_MODULES.answeringFindings);
+    expect(gemini.prompts[1]).toContain(PROMPT_MODULES.followUpRound);
+    expect(gemini.prompts[0]).not.toContain(PROMPT_MODULES.followUpRound);
     // The leader reads the review, not the implementer's report.
     expect(codex.prompts[1]).toMatch(/^Review report of Gemini\./);
     expect(codex.prompts[1]).toContain(`${WORKER_ANSWER_START}\n${REVIEW}`);

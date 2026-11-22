@@ -128,7 +128,7 @@ const criterionId = (what: string): Schema => ({
 const findingId: Schema = {
   type: 'string',
   pattern: '^R\\d+$',
-  description: 'The finding number, "R1", "R2"…',
+  description: 'Finding number "R1", "R2"…',
 };
 
 const referencedCommands = list(
@@ -180,22 +180,19 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
     {
       goal: required('What must exist at the end and why, in 1-5 sentences.'),
       context: optional(
-        'What is needed to avoid mistakes: files as @path with the reason, the current behavior, the decisions taken with the user and why, an agreed interface written in full.',
+        'What avoids mistakes: files as @path with the reason (never their contents), the current behavior, the decisions taken with the user and why, an agreed interface in full.',
       ),
       constraints: optional(
         'Only the invariants: what not to touch, what not to add (dependencies, public interfaces), the project rules the work touches; which request prevails if two can clash.',
       ),
       acceptance_criteria: list(
         required(
-          'One externally observable behavior: the condition or input and the result, with concrete cases "input → expected result" (edge case, error, a hostile input if the work takes outside input). Do not write the number: the runtime numbers them C1, C2…',
+          'One behavior observed from outside: the condition or input, then the result, with concrete cases "input → expected result" (edge, error, a hostile input if the work takes outside input). No number: the runtime numbers them C1, C2…',
         ),
-        {
-          minItems: 1,
-          description: 'The acceptance criteria: behaviors observed from outside.',
-        },
+        { minItems: 1, description: 'The acceptance criteria.' },
       ),
       verification: optional(
-        'The commands that verify the work, the ones the repository already uses (build, typecheck, lint, tests), which must pass. Not an acceptance criterion.',
+        'The commands the repository already uses to verify the work (build, typecheck, lint, tests), which must pass. Not a criterion.',
       ),
       scope: optional(
         'What is inside and outside the work; what the implementer may decide alone.',
@@ -211,7 +208,7 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
         {
           minItems: 1,
           description:
-            'The workspace-relative files and folders the work may change (a folder ends with /). The runtime flags changed files outside them; new test files are always allowed. Omit it when the work has no definite part of the project.',
+            'Workspace-relative files and folders (a folder ends with /) the work may change. The runtime flags other changed files; new test files are always allowed. Omit it when the work has no definite part of the project.',
         },
       ),
       references: list(
@@ -226,7 +223,7 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
           minItems: 1,
           maxItems: 8,
           description:
-            'The files the implementer reads first, in parallel, before exploring: code to change, patterns to follow, specifications. Narrow to a line range when a part is enough. Existing files only, never AGENTS.md or CLAUDE.md. Omit it when you do not know the code.',
+            'Existing files the implementer reads first, in parallel: code to change, patterns to follow, specifications; a line range when a part is enough. Never AGENTS.md or CLAUDE.md. Omit it when you do not know the code.',
         },
       ),
       stop_if: optional(
@@ -240,7 +237,7 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
       test: TEST_SELECTION,
       outcome: choice(
         REPORT_OUTCOMES,
-        'done: every criterion verified by a command you ran in this round and nothing blocks; partial: a criterion is missing or not verified; blocked: you stopped for a missing decision.',
+        'done: every criterion verified by a command you ran in this round and nothing blocks; partial: a criterion is missing or unverified; blocked: you stopped for a missing decision.',
       ),
       summary: required('What changed, in 1-2 sentences.'),
       changes: list(
@@ -293,21 +290,24 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
             id: findingId,
             severity: choice(
               SEVERITIES,
-              'blocking: a criterion is not met, a constraint or boundary is violated, a regression, a check bypassed or weakened, or an exploitable security flaw; minor: anything else worth saying.',
+              'blocking: a criterion not met, a violated constraint or boundary, a regression, a check bypassed or weakened, an exploitable security flaw; minor: anything else worth saying.',
             ),
-            issue: required(
-              'What is wrong, in one sentence: say what does not hold, not how to rewrite it.',
-            ),
+            issue: required('What does not hold, in one sentence; not how to rewrite it.'),
             evidence: required(
-              'The proof: the failing test you wrote (@path and name), or the command with expected → obtained, or @path:line and the input that breaks it; for security, the hostile input and what it gets.',
+              'The proof: the failing test you wrote (@path, name), or the command with expected → obtained, or @path:line and the input that breaks it; for security, the hostile input and what it gets.',
             ),
             criterion: optional(
-              'The criterion (C2), constraint, boundary, repository rule or axis (honesty, security, currency) it violates.',
+              'What it violates: a criterion (C2), constraint, boundary, repository rule, or axis (honesty, security, currency).',
             ),
           },
           ['id', 'severity', 'issue', 'evidence'],
         ),
-        { minItems: 1, uniqueBy: 'id', description: 'The findings, each with its proof.' },
+        {
+          minItems: 1,
+          uniqueBy: 'id',
+          description:
+            'The blocking findings, each with its proof, plus the minor ones fixable in a few lines within the brief’s scope. A finding keeps its number until the end of the review.',
+        },
       ),
     },
     ['items'],
@@ -319,7 +319,9 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
         REVIEW_VERDICTS,
         'approved: you verified every criterion yourself, no axis is doubtful or worse, no finding is open; with_reservations: no blocking finding is open but a criterion is unverified, an axis doubtful or a minor finding open; rejected: a blocking finding is open or an axis is bypassed, flaw or outdated.',
       ),
-      summary: required('Why this verdict, in 1-2 sentences, and how many rounds it took.'),
+      summary: required(
+        'Why this verdict, in 1-2 sentences, and how many rounds it took; then, in one line, the cases you tried beyond the implementer’s tests.',
+      ),
       criteria: list(
         object(
           {
@@ -338,23 +340,26 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
             'One entry for each criterion of the brief (number them yourself if it does not).',
         },
       ),
-      axes: object(
-        {
-          honesty: choice(
-            ['clean', 'doubtful', 'bypassed'],
-            'Does the work solve the problem or satisfy the checks?',
-          ),
-          security: choice(
-            ['clean', 'doubtful', 'flaw'],
-            'What can whoever controls the inputs do?',
-          ),
-          currency: choice(
-            ['clean', 'doubtful', 'outdated'],
-            'Does the code use what is current in the versions the project really uses?',
-          ),
-        },
-        ['honesty', 'security', 'currency'],
-      ),
+      axes: {
+        ...object(
+          {
+            honesty: choice(
+              ['clean', 'doubtful', 'bypassed'],
+              'Does the work solve the problem or satisfy the checks?',
+            ),
+            security: choice(
+              ['clean', 'doubtful', 'flaw'],
+              'What can whoever controls the inputs do?',
+            ),
+            currency: choice(
+              ['clean', 'doubtful', 'outdated'],
+              'Does the code use what is current in the versions the project really uses?',
+            ),
+          },
+          ['honesty', 'security', 'currency'],
+        ),
+        description: 'The why of each axis, with the versions checked, goes in the summary.',
+      },
       open_findings: list(
         object(
           {
@@ -374,7 +379,7 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
         { uniqueBy: 'id', description: 'The findings closed during the review.' },
       ),
       changes: optional(
-        'Files changed, from the runtime’s facts, one line each with the criterion; mark those the implementer’s report does not name.',
+        'Every file changed per the runtime’s facts, one line each with its criterion; mark those the implementer’s report does not name.',
       ),
       decisions: optional(
         'The implementer’s choices and deviations the leader must know, and whether they stay within the scope; if its outcome is partial, its blocked_on question as it is.',
@@ -392,11 +397,11 @@ const SCHEMAS: Readonly<Record<HandoffName, Schema>> = {
 
 const DESCRIPTIONS: Readonly<Record<HandoffName, string>> = {
   delegate:
-    'Delegate the work to the implementer. Call it once, with the complete brief, when you delegate; the implementer receives only what these fields say. Outside a delegation, answer normally and do not call it.',
+    'Delegate the work to the implementer. Call it once, with the complete brief: the implementer receives only these fields. Outside a delegation, answer normally and do not call it.',
   report:
     'Your report on the work. Call it once, at the end of the turn, instead of writing the report as text. Report what you did and saw in this turn; say what you did not run.',
   findings:
-    'Send your findings to the implementer, who answers them. Call it once, at the end of the turn, instead of the review, only while correction rounds are left.',
+    'Send your findings to the implementer, who answers them. Call it once, at the end of the turn, instead of the review, only while correction rounds are left and a blocking finding is open.',
   review:
     'Send your review to the leader. Call it once, at the end of the turn, instead of writing the review as text. It closes the review.',
 };

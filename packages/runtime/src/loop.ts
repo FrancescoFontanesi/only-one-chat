@@ -57,19 +57,20 @@ import {
   DEFAULT_REVIEW_ROUNDS,
   EMPTY_LEADER_TURN_PROMPT,
   EMPTY_REVIEW,
-  IMPLEMENTER_ROLE_INSTRUCTIONS,
   MAX_REVIEW_ROUNDS,
-  REVIEWER_ROLE_INSTRUCTIONS,
   agentSessionOptions,
   findingsPrompt,
   frameWorkerAnswer,
   fixPrompt,
   gatePrompt,
+  implementerInstructions,
+  leaderFirstPrompt,
   leaderResultPrompt,
   leaderReviewPrompt,
   reportRepairPrompt,
   resultPrompt,
   reviewFollowUpPrompt,
+  reviewerInstructions,
   reviewRepairPrompt,
   verdictRepairPrompt,
   reviewRequestPrompt,
@@ -246,6 +247,8 @@ export type LoopOutcome =
 export interface LoopOptions {
   readonly task?: TaskJournal | undefined;
   readonly verification?: WorkVerification;
+  /** The verification command has a `{junit}` placeholder: the roles' instructions add the test selection (ADR 0045). */
+  readonly junit?: boolean;
   readonly request: string;
   readonly worker: AgentFactory;
   /** How the CLIs launch the handoff server (ADR 0035), for the sessions the loop creates. */
@@ -875,7 +878,7 @@ export function runLoop(options: LoopOptions): Loop {
       Math.max(0, Math.min(options.reviewRounds ?? DEFAULT_REVIEW_ROUNDS, MAX_REVIEW_ROUNDS));
     const reviewer = await options.reviewer(
       agentSessionOptions(
-        REVIEWER_ROLE_INSTRUCTIONS,
+        reviewerInstructions({ junit: options.junit === true }),
         options.subagents?.reviewer,
         handoffTools('reviewer', options.handoffServer),
       ),
@@ -1040,6 +1043,7 @@ export function runLoop(options: LoopOptions): Loop {
             ]
               .filter(Boolean)
               .join('\n\n'),
+            round === 0,
           ),
         );
         const passed = await intercept(
@@ -1147,7 +1151,7 @@ export function runLoop(options: LoopOptions): Loop {
         // The loop owns a session it creates itself and closes it.
         const created = await options.worker(
           agentSessionOptions(
-            IMPLEMENTER_ROLE_INSTRUCTIONS,
+            implementerInstructions({ junit: options.junit === true }),
             options.subagents?.worker,
             handoffTools('implementer', options.handoffServer),
           ),
@@ -1157,7 +1161,7 @@ export function runLoop(options: LoopOptions): Loop {
       })());
 
     // The leader reads a web-app brief as it came, with its markers (ADR 0020).
-    const first = options.preface ? `${options.preface}\n\n${options.request}` : options.request;
+    const first = leaderFirstPrompt(options.request, options.preface);
     /** A draft the user approved: the implementer starts from it, with no leader turn first. */
     const draft = options.task?.resume?.brief ?? options.delegation;
     let answered =

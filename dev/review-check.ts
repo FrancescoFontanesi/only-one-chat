@@ -25,7 +25,7 @@ import {
   resolveCodexExecutable,
 } from '../packages/adapters/src/index.js';
 import {
-  REVIEWER_ROLE_INSTRUCTIONS,
+  reviewerInstructions,
   agentSessionOptions,
   handoffTools,
   readHandoff,
@@ -163,7 +163,7 @@ async function main(): Promise<void> {
               });
       const session = await factory(
         agentSessionOptions(
-          REVIEWER_ROLE_INSTRUCTIONS,
+          reviewerInstructions(),
           undefined,
           handoffTools('reviewer', HANDOFF_SERVER),
         ),

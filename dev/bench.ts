@@ -55,9 +55,9 @@ import {
   briefAgentPrompt,
   extractResult,
   leaderInstructions,
-  IMPLEMENTER_ROLE_INSTRUCTIONS,
+  implementerInstructions,
   LIGHT_IMPLEMENTER_INSTRUCTIONS,
-  REVIEWER_ROLE_INSTRUCTIONS,
+  reviewerInstructions,
   handoffTools,
   readHandoff,
   renderFindings,
@@ -371,6 +371,7 @@ async function main(): Promise<void> {
     throw new Error(`usage: bench --system ${names} [--scenario ${scenario}] [--fake]`);
   }
   const scriptPath = join(scenarioDir, system.script ?? 'script.json');
+  const hasJunit = (systems.verify ?? []).some((part) => part.includes('{junit}'));
   /**
    * A session scenario: the user's messages, in order (a file is read as it
    * is: a brief). `to`: the leader (default) or the implementer directly;
@@ -683,7 +684,7 @@ async function main(): Promise<void> {
         true,
       )(
         agentSessionOptions(
-          product ? IMPLEMENTER_ROLE_INSTRUCTIONS : LIGHT_IMPLEMENTER_INSTRUCTIONS,
+          product ? implementerInstructions({ junit: hasJunit }) : LIGHT_IMPLEMENTER_INSTRUCTIONS,
           implementerPolicy,
           handoffTools('implementer', HANDOFF_SERVER),
         ),
@@ -791,6 +792,7 @@ async function main(): Promise<void> {
                   };
                 },
                 reviewRounds: 2,
+                junit: hasJunit,
                 guardReviewer: () =>
                   guardReviewerTurn(reviewerStore, `rev-${String(++reviewerTurns)}`),
               }
@@ -939,7 +941,7 @@ ${configuredCommandFact(verifyCommand)}`,
         dir,
       )(
         agentSessionOptions(
-          REVIEWER_ROLE_INSTRUCTIONS,
+          reviewerInstructions({ junit: hasJunit }),
           policy(config),
           handoffTools('reviewer', HANDOFF_SERVER),
         ),

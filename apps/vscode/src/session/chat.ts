@@ -1656,7 +1656,6 @@ ${this.diffChecks()}`;
         handoffTools('leader', config.handoffServer),
       ),
     );
-    const worker = await this.implementer();
     // A draft sent later has no message of the user: what the leader has not seen waits for one.
     const unseen = draft === undefined ? this.unseen : [];
     if (draft === undefined) this.unseen = [];
@@ -1685,7 +1684,7 @@ ${this.diffChecks()}`;
       task: this.taskJournal(),
       verification: this.verification,
       leaderSession: this.leaderSession,
-      workerSession: worker,
+      workerSession: () => this.implementer(),
       workerPreface: () => this.implementerPreface(),
       review: config.review,
       ...(reviewer?.options ?? {}),

@@ -935,7 +935,8 @@ describe('chat session: handoff of the implementer (ADR 0017)', () => {
     20_000,
   );
 
-  it.each(['@impl work', '[spec] work'])(
+  // The leader path opens the implementer only at a delegation (not before its turn).
+  it.each(['@impl work'])(
     'honors Stop while the replacement opens for %s',
     async (request) => {
       const log = join(root, 'codex.jsonl');

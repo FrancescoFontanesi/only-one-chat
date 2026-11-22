@@ -292,9 +292,10 @@ export interface LoopOptions {
   /**
    * An implementer session to continue (same line of work, ADR 0011), never
    * closed by the loop; `worker` is not called. Without it each delegation
-   * starts a new implementer session.
+   * starts a new implementer session. A function opens it on demand, once, at
+   * the first delegation (leader mode): a turn with no delegation never opens it.
    */
-  readonly workerSession?: AgentSession;
+  readonly workerSession?: AgentSession | (() => Promise<AgentSession>);
   /**
    * `leader` mode: text put before the request in the leader's first prompt,
    * such as reports of work it has not seen yet (pendingReportsPreface).
@@ -1097,7 +1098,8 @@ export function runLoop(options: LoopOptions): Loop {
     if (options.delegation) approveTask(options.delegation);
     if (reviewOnly) {
       const of = options.reviewOf;
-      const worker = options.workerSession;
+      const given = options.workerSession;
+      const worker = typeof given === 'function' ? await given() : given;
       if (!of || !worker || !options.reviewer) {
         throw new Error('review mode needs reviewOf, workerSession and reviewer');
       }
@@ -1123,17 +1125,24 @@ export function runLoop(options: LoopOptions): Loop {
     // The leader's session outlives this request: whoever created it closes it.
     const leader = options.leaderSession;
     if (!leader) throw new Error('leader mode needs leaderSession');
-    const worker =
-      options.workerSession ??
-      (await options.worker(
-        agentSessionOptions(
-          IMPLEMENTER_ROLE_INSTRUCTIONS,
-          options.subagents?.worker,
-          handoffTools('implementer', options.handoffServer),
-        ),
-      ));
-    // A continued implementer session outlives this request, like the leader's.
-    if (worker !== options.workerSession) sessions.push(worker);
+    // Opened at the first delegation, not before: a turn the leader answers alone opens nothing.
+    let workerOpening: Promise<AgentSession> | undefined;
+    const openWorker = (): Promise<AgentSession> =>
+      (workerOpening ??= (async () => {
+        const given = options.workerSession;
+        if (typeof given === 'function') return given();
+        if (given) return given;
+        // The loop owns a session it creates itself and closes it.
+        const created = await options.worker(
+          agentSessionOptions(
+            IMPLEMENTER_ROLE_INSTRUCTIONS,
+            options.subagents?.worker,
+            handoffTools('implementer', options.handoffServer),
+          ),
+        );
+        sessions.push(created);
+        return created;
+      })());
 
     // The leader reads a web-app brief as it came, with its markers (ADR 0020).
     const first = options.preface ? `${options.preface}\n\n${options.request}` : options.request;
@@ -1202,6 +1211,7 @@ export function runLoop(options: LoopOptions): Loop {
         }
       }
 
+      const worker = await abortable(openWorker(), controller.signal);
       // A brief from the web app is reviewed there already: it goes on (ADR 0018).
       const approved = fromDraft
         ? delegation

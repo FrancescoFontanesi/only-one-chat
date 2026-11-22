@@ -898,6 +898,86 @@ describe('leader mode: one chat across requests', () => {
     expect(codex.prompts[1]?.endsWith('And now?')).toBe(true);
   });
 
+  it('opens a lazy implementer session only at the delegation, once, and leaves it open', async () => {
+    const codex = fakeAgent('Codex', [
+      delegates({
+        goal: 'round(x).',
+        context: undefined,
+        verification: undefined,
+        acceptance_criteria: ['round(2.5) → 2'],
+      }),
+      { answer: 'Done.' },
+    ]);
+    const claude = fakeAgent('Claude', [reports()]);
+    const leaderSession = await codex.factory({ instructions: leaderInstructions('claude') });
+    let opened = 0;
+    const { running } = await loop(codex, claude, [], [], {
+      request: 'Add round.',
+      mode: 'leader',
+      leaderSession,
+      workerSession: () => {
+        opened++;
+        return claude.factory({ instructions: 'implementer' });
+      },
+      ...auto,
+    });
+    expect(await running.done).toMatchObject({ status: 'completed', exchanges: 1 });
+    expect(opened).toBe(1);
+    expect(claude.closed).toBe(false);
+  });
+
+  it('stops while a lazy implementer session is still opening, with no implementer turn', async () => {
+    const codex = fakeAgent('Codex', [
+      delegates({
+        goal: 'round(x).',
+        context: undefined,
+        verification: undefined,
+        acceptance_criteria: ['round(2.5) → 2'],
+      }),
+    ]);
+    const claude = fakeAgent('Claude', []);
+    const leaderSession = await codex.factory({ instructions: leaderInstructions('claude') });
+    let opening!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      opening = resolve;
+    });
+    const { running } = await loop(codex, claude, [], [], {
+      request: 'Add round.',
+      mode: 'leader',
+      leaderSession,
+      // Never resolves: the open hangs until the loop is stopped.
+      workerSession: () => {
+        opening();
+        return new Promise<never>(() => undefined);
+      },
+      ...auto,
+    });
+    await pending;
+    await running.stop();
+    expect(await running.done).toEqual({ status: 'stopped' });
+    expect(claude.prompts).toEqual([]);
+  });
+
+  it('never opens a lazy implementer session when the leader answers alone', async () => {
+    const codex = fakeAgent('Codex', [{ answer: 'Which rounding mode?' }]);
+    const claude = fakeAgent('Claude', []);
+    const leaderSession = await codex.factory({ instructions: leaderInstructions('claude') });
+    let opened = 0;
+    const { running } = await loop(codex, claude, [], [], {
+      request: 'Add round.',
+      mode: 'leader',
+      leaderSession,
+      workerSession: () => {
+        opened++;
+        return claude.factory({ instructions: 'implementer' });
+      },
+      ...auto,
+    });
+    expect(await running.done).toMatchObject({ status: 'completed', exchanges: 0 });
+    expect(opened).toBe(0);
+    expect(claude.instructions).toEqual([]);
+  });
+
   it('continues a given implementer session and leaves it open', async () => {
     const codex = fakeAgent('Codex', [
       delegates({

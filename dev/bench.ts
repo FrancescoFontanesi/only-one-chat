@@ -372,8 +372,8 @@ async function main(): Promise<void> {
   /**
    * A session scenario: the user's messages, in order (a file is read as it
    * is: a brief). `to`: the leader (default) or the implementer directly;
-   * `implementer`: its session continues (`same`) or starts over (`new`,
-   * the default when the field is absent).
+   * `implementer`: its session continues (`same`, the default when the field
+   * is absent, as the product does) or starts over (`new`).
    */
   const script = existsSync(scriptPath)
     ? (
@@ -392,7 +392,7 @@ async function main(): Promise<void> {
           ? readFileSync(join(scenarioDir, message.file), 'utf8')
           : (message.text ?? ''),
         to: message.to ?? 'leader',
-        implementer: message.implementer ?? 'new',
+        implementer: message.implementer ?? 'same',
       }))
     : undefined;
   const briefPath = join(scenarioDir, 'brief.txt');
@@ -641,6 +641,7 @@ async function main(): Promise<void> {
     const implementerSession = async (which: 'new' | 'same'): Promise<AgentSession> => {
       const current = implementers.at(-1);
       if (which === 'same' && current) return current;
+      const opening = Date.now();
       const session = await factory(
         implementerConfig,
         true,
@@ -651,6 +652,8 @@ async function main(): Promise<void> {
           handoffTools('implementer', HANDOFF_SERVER),
         ),
       );
+      // How long a fresh implementer session takes to open, before its first turn (ADR 0043).
+      await log.append('session_opened', { role: 'worker', ms: Date.now() - opening });
       const injected =
         implementers.length === 0
           ? withFirstTurnNote(session, env['OOC_BENCH_FIRST_TURN_NOTE'])
@@ -718,7 +721,7 @@ async function main(): Promise<void> {
           onEvent,
           mode: 'leader',
           leaderSession,
-          workerSession: await implementerSession(message.implementer),
+          workerSession: () => implementerSession(message.implementer),
           autoApprove: true,
           worker: () => Promise.reject(new Error('the implementer session is given')),
           ...(reviewerConfig

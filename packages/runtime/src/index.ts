@@ -107,6 +107,9 @@ export {
   subagentRules,
   type PendingReport,
 } from './prompts.js';
+export { lineCounts } from './line-counts.js';
+export { assessRisk, riskFact } from './risk.js';
+export { shortcutFacts, shortcutFlags, type TextChange } from './shortcuts.js';
 export { checkSubagent, subagentLabel, type SubagentState } from './subagents.js';
 export {
   APPROVAL_DENIED_MESSAGE,

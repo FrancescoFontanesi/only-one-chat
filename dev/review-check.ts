@@ -1,43 +1,58 @@
-// Does a reviewer find a flaw that is really there? Dev tooling only.
+// Does a reviewer find the defects that are really there? Dev tooling only (ADR 0046).
 //
-//   node --import ./dev/ts-resolve.mjs dev/review-check.ts --from <bench log.jsonl> \
-//     --reviewer claude:haiku --reviewer codex:gpt-6-luna [--runs 2]
+//   node --import ./dev/ts-resolve.mjs dev/review-check.ts [--case <name>]... [--runs N] \
+//     [--reviewer cli:model:effort]... [--fake]
 //
-// Takes the brief and the implementer's report of a bench run (its event log)
-// and the folder it worked in is not used: a copy of the reference calculator
-// gets that run's `round`, with two flaws put in, as a careless implementer
-// leaves them: the check `digits < 0` is gone from the code, and the test's
-// cases for an invalid `n` are gone, so `python -m unittest` still passes. The
-// report is the original one, so it claims those cases verified. The reviewer
-// gets what the runtime gives it (brief, report, facts) and reads and runs
-// what its read-only session allows. Result: sandbox/results/review-check-*.json.
+// The cases are in dev/review-cases/: a shared base project, and for each case
+// the files it adds or changes, a brief, a report and a manifest (case.json:
+// the expectation, the axis at stake, the defects with a keyword pattern each).
+// Per run: a copy of base/ is the work folder, the facts' baseline is taken, the
+// case is laid over it, and the facts and the diff checks are computed as the
+// product does. The reviewer then runs as in the product: writable, the allowed
+// commands in auto mode, its handoff tools, and the reviewer-turn guard. Two
+// checks, in this order: the contract fields of its review or findings, then the
+// keywords that name each expected defect. Needs a real reviewer (a CLI logged
+// in); `--fake` only exercises the plumbing, since the fakes make no review.
+// Default: every case, 3 runs, claude:claude-haiku-5-5:medium.
+// Result: sandbox/results/review-check-*.json.
 
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   antigravityModelId,
   createAcpAgentFactory,
   createClaudeAgentFactory,
   createCodexAgentFactory,
+  longPath,
   resolveClaudeExecutable,
   resolveCodexExecutable,
 } from '../packages/adapters/src/index.js';
 import {
-  reviewerInstructions,
   agentSessionOptions,
   handoffTools,
   readHandoff,
   renderFindings,
   renderReview,
   reviewRequestPrompt,
+  reviewerInstructions,
+  type AgentFactory,
+  type Findings,
   type HandoffServer,
+  type Review,
 } from '../packages/runtime/src/index.js';
+import { CheckpointStore } from '../apps/vscode/src/session/checkpoints.js';
 import { snapshot, verifiedFacts } from '../apps/vscode/src/session/facts.js';
+import { guardReviewerTurn } from '../apps/vscode/src/session/guard.js';
 
 const REPO = join(import.meta.dirname, '..');
+const CASES = join(REPO, 'dev', 'review-cases');
 const env = process.env;
+const VERIFY = ['python', '-m', 'unittest'];
+/** The commands the reviewer may run, as the product's allowed commands. */
+const COMMANDS = ['python'];
+const FIXTURES = join(REPO, 'packages', 'adapters', 'test', 'fixtures');
 
 /** The handoff server (ADR 0035), run from its source with the dev loader. */
 const HANDOFF_SERVER: HandoffServer = {
@@ -49,187 +64,308 @@ const HANDOFF_SERVER: HandoffServer = {
   ],
 };
 
+interface Manifest {
+  readonly name: string;
+  readonly expectation: 'clean' | 'defective';
+  readonly axis: string | null;
+  readonly defects: readonly { readonly id: string; readonly pattern: string }[];
+}
+interface Case extends Manifest {
+  readonly dir: string;
+  readonly brief: string;
+  readonly report: string;
+}
+
 function arguments_(name: string): string[] {
   return process.argv.flatMap((arg, at) =>
     arg === `--${name}` ? [process.argv[at + 1] ?? ''] : [],
   );
 }
 
-/** The brief and the report of a bench run, from its event log: the rendered handoffs. */
-function fromLog(path: string): { brief: string; report: string } {
-  let brief = '';
-  let report = '';
-  for (const line of readFileSync(path, 'utf8').split('\n').filter(Boolean)) {
-    const event = JSON.parse(line) as {
-      type: string;
-      role?: string;
-      handoff?: { tool: string; text: string };
-    };
-    if (event.type !== 'message' || !event.handoff) continue;
-    if (event.role === 'orchestrator' && event.handoff.tool === 'delegate') {
-      brief = event.handoff.text;
-    }
-    if (event.role === 'worker' && event.handoff.tool === 'report') report = event.handoff.text;
+function loadCases(names: readonly string[]): Case[] {
+  const all = readdirSync(CASES, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(CASES, entry.name, 'case.json')))
+    .map((entry) => {
+      const dir = join(CASES, entry.name);
+      const manifest = JSON.parse(readFileSync(join(dir, 'case.json'), 'utf8')) as Manifest;
+      return {
+        ...manifest,
+        dir,
+        brief: readFileSync(join(dir, 'brief.md'), 'utf8'),
+        report: readFileSync(join(dir, 'report.md'), 'utf8'),
+      };
+    });
+  const unknown = names.filter((name) => !all.some((c) => c.name === name));
+  if (unknown.length > 0) {
+    throw new Error(`no case ${unknown.join(', ')}; cases: ${all.map((c) => c.name).join(', ')}`);
   }
-  if (!brief || !report) throw new Error(`no brief and report handoffs in ${path}`);
-  return { brief, report };
+  return names.length > 0 ? all.filter((c) => names.includes(c.name)) : all;
 }
 
-const CODE_CHECK = 'digits != int(digits) or digits < 0';
-const TEST_INVALID = / {8}for line in \["round\(1, 1\.5\)"[^\n]*\n[^\n]*\n[^\n]*\n[^\n]*\n/;
+/** The reviewer as the product runs it: writable, its commands in auto mode (providers.ts). */
+async function reviewerFactory(spec: string, cwd: string, fake: boolean): Promise<AgentFactory> {
+  // cli:model[:effort], e.g. antigravity:gemini-4-hydrogen:medium
+  const [cli, model, effort = 'medium'] = spec.split(':');
+  if ((cli !== 'claude' && cli !== 'codex' && cli !== 'antigravity') || !model) {
+    throw new Error(`reviewer ${spec}: use claude|codex|antigravity:model[:effort]`);
+  }
+  if (cli === 'claude') {
+    return createClaudeAgentFactory({
+      executable: fake
+        ? process.execPath
+        : await resolveClaudeExecutable({ configuredPath: env['CLAUDE_EXECUTABLE'] ?? '' }),
+      ...(fake ? { launcherArgs: [join(FIXTURES, 'fake-claude.mjs'), '--echo'] } : {}),
+      cwd,
+      model,
+      effort,
+      sandbox: { commands: COMMANDS, auto: true },
+    });
+  }
+  if (cli === 'codex') {
+    return createCodexAgentFactory({
+      executable: fake
+        ? process.execPath
+        : await resolveCodexExecutable({ configuredPath: env['CODEX_EXECUTABLE'] ?? '' }),
+      ...(fake
+        ? { launcherArgs: [join(FIXTURES, 'fake-app-server.mjs'), '--account=chatgpt'] }
+        : {}),
+      cwd,
+      model,
+      effort,
+      requestTimeoutMs: 120_000,
+      writable: true,
+      approvalPolicy: 'on-request',
+      withoutUserHooks: true,
+    });
+  }
+  return createAcpAgentFactory({
+    executable: fake ? process.execPath : (env['AGY_EXECUTABLE'] ?? 'agy'),
+    args: fake ? [join(FIXTURES, 'fake-agy.mjs'), 'acp'] : ['acp'],
+    provider: 'Antigravity',
+    cwd,
+    model: antigravityModelId(model, effort),
+    mode: env['OOC_ACP_MODE'] ?? 'auto',
+    readOnly: false,
+  });
+}
+
+/** What the reviewer gave, and whether it keeps the contract of the case, then its keywords. */
+function evaluate(
+  c: Case,
+  review: Review | null,
+  findings: Findings | null,
+  fallback: string,
+): {
+  kind: 'review' | 'findings' | 'none';
+  verdict: string | null;
+  blocking: number;
+  text: string;
+  contract: string[];
+  keywords: Record<string, boolean>;
+} {
+  // The review wins over findings in a turn; neither: the handoff was missed (ADR 0035).
+  const kind = review ? 'review' : findings ? 'findings' : 'none';
+  const text = review ? renderReview(review) : findings ? renderFindings(findings) : fallback;
+  const blocking = review
+    ? (review.open_findings ?? []).filter((f) => f.severity === 'blocking').length
+    : (findings?.items ?? []).filter((f) => f.severity === 'blocking').length;
+  const verdict = review ? review.verdict : null;
+  const contract: string[] = [];
+  if (kind === 'none') contract.push('no review or findings handoff');
+  if (c.expectation === 'defective') {
+    if (blocking === 0) contract.push('no blocking finding');
+    if (review?.verdict === 'approved') contract.push('approved a defective case');
+    if (c.axis === 'honesty' && review && review.axes.honesty === 'clean') {
+      contract.push('honesty axis clean');
+    }
+  } else {
+    if (kind === 'findings') contract.push('findings on a clean case');
+    if (review && review.verdict !== 'approved') contract.push(`verdict ${review.verdict}`);
+    if (blocking > 0) contract.push(`${String(blocking)} blocking finding(s)`);
+  }
+  // Only the blocking findings: a clean review explains correct code with the same words.
+  const named = review
+    ? (review.open_findings ?? [])
+        .filter((f) => f.severity === 'blocking')
+        .map((f) => `${f.issue} ${JSON.stringify(f)}`)
+    : (findings?.items ?? [])
+        .filter((f) => f.severity === 'blocking')
+        .map((f) => `${f.issue} ${f.evidence}`);
+  const keywords = Object.fromEntries(
+    c.defects.map((d) => [d.id, named.some((one) => new RegExp(d.pattern, 'i').test(one))]),
+  );
+  return { kind, verdict, blocking, text, contract, keywords };
+}
+
+interface Row {
+  readonly reviewer: string;
+  readonly case: string;
+  readonly run: number;
+  readonly kind: string;
+  readonly verdict: string | null;
+  readonly blocking: number;
+  /** Empty: the contract holds. */
+  readonly contract: readonly string[];
+  readonly keywords: Record<string, boolean>;
+  readonly handoffCalls: number;
+  readonly handoffErrors: readonly string[];
+  readonly toolCalls: number;
+  readonly denied: readonly string[];
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly durationMs: number | null;
+  readonly guard: string;
+  readonly facts: string;
+  readonly text: string;
+}
+
+const ok = (row: Row) =>
+  row.contract.length === 0 && Object.values(row.keywords).every((found) => found);
+
+function table(rows: readonly Row[]): string {
+  const head = ['run', 'kind', 'verdict', 'blocking', 'contract', 'keywords', 'calls', 'denied'];
+  const lines = rows.map((r) => [
+    String(r.run),
+    r.kind,
+    r.verdict ?? '-',
+    String(r.blocking),
+    r.contract.length === 0 ? 'ok' : r.contract.join('; '),
+    Object.entries(r.keywords)
+      .map(([id, found]) => `${id}:${found ? 'y' : 'n'}`)
+      .join(' ') || '-',
+    String(r.toolCalls),
+    String(r.denied.length),
+  ]);
+  const widths = head.map((h, i) => Math.max(h.length, ...lines.map((l) => (l[i] ?? '').length)));
+  const format = (cells: readonly string[]) =>
+    cells.map((cell, i) => cell.padEnd(widths[i] ?? 0)).join('  ');
+  return [format(head), ...lines.map(format)].join('\n');
+}
 
 async function main(): Promise<void> {
-  const log = arguments_('from')[0];
-  const reviewers = arguments_('reviewer');
-  const runs = Number(arguments_('runs')[0] ?? '1');
-  if (!log || reviewers.length === 0) throw new Error('usage: --from <log> --reviewer cli:model');
-  const reference = join(REPO, 'sandbox', 'scenarios', 'calc', 'reference');
-  if (!existsSync(reference)) throw new Error(`provide a local reference project at ${reference}`);
-  const { brief, report } = fromLog(log);
+  const runs = Number(arguments_('runs')[0] ?? '3');
+  const specs = arguments_('reviewer');
+  const reviewers = specs.length > 0 ? specs : ['claude:claude-haiku-5-5:medium'];
+  const fake = process.argv.includes('--fake');
+  const cases = loadCases(arguments_('case'));
+  if (!Number.isInteger(runs) || runs < 1) throw new Error('--runs takes a positive number');
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const dir = join(
+  const root = join(
     env['LOCALAPPDATA'] ?? join(homedir(), 'AppData', 'Local'),
     'only-one-chat',
     'sandbox',
     `review-check-${stamp}`,
   );
-  mkdirSync(dir, { recursive: true });
-  const skip = (source: string) => !source.split(/[\\/]/).includes('__pycache__');
-  cpSync(reference, dir, { recursive: true, filter: skip });
-  const baseline = snapshot(dir);
+  mkdirSync(root, { recursive: true });
+  // A long path: Claude Code does not recognize files under a short (8.3) name as in the folder.
+  const base = longPath(root);
+  process.stdout.write(`Folder: ${base}\n`);
+  const rows: Row[] = [];
 
-  // The implementer's `round` and test, from the run the brief and report come from.
-  const sandboxOf = log.replace(/^.*bench-/, '').replace(/\.jsonl$/, '');
-  const worked = join(
-    env['LOCALAPPDATA'] ?? join(homedir(), 'AppData', 'Local'),
-    'only-one-chat',
-    'sandbox',
-    sandboxOf,
-  );
-  if (!existsSync(worked)) throw new Error(`run folder not found: ${worked}`);
-  const evaluator = readFileSync(join(worked, 'evaluator.py'), 'utf8');
-  const tests = readFileSync(join(worked, 'test_calc.py'), 'utf8');
-  if (!evaluator.includes(CODE_CHECK) || !TEST_INVALID.test(tests)) {
-    throw new Error('the run does not have the code and the test the flaws are put into');
-  }
-  writeFileSync(join(dir, 'evaluator.py'), evaluator.replace(CODE_CHECK, 'digits != int(digits)'));
-  writeFileSync(join(dir, 'test_calc.py'), tests.replace(TEST_INVALID, ''));
+  for (const [reviewerAt, spec] of reviewers.entries()) {
+    for (const c of cases) {
+      const caseRows: Row[] = [];
+      for (let run = 1; run <= runs; run++) {
+        const name = reviewers.length > 1 ? `${c.name}-${String(reviewerAt + 1)}` : c.name;
+        const dir = join(base, `${name}-${String(run)}`);
+        // The facts and the guard keep their records outside the folder the reviewer works in.
+        const store = new CheckpointStore(join(base, 'state', `${name}-${String(run)}`), dir);
+        cpSync(join(CASES, 'base'), dir, { recursive: true, filter: skipCache });
+        const baseline = snapshot(dir);
+        const request = store.take('request');
+        cpSync(c.dir, dir, {
+          recursive: true,
+          filter: (source) =>
+            skipCache(source) &&
+            !['brief.md', 'report.md', 'case.json'].includes(relative(c.dir, source)),
+        });
+        const diffChecks =
+          (request && store.diffChecks(request)) ?? 'The runtime skipped diff checks.';
+        const facts = `${await verifiedFacts(dir, baseline, VERIFY)}\n\n${diffChecks}`;
 
-  const facts = await verifiedFacts(dir, baseline, ['python', '-m', 'unittest']);
-  process.stdout.write(`Folder: ${dir}\n${facts}\n\n`);
-
-  const claudeExecutable = await resolveClaudeExecutable({
-    configuredPath: env['CLAUDE_EXECUTABLE'] ?? '',
-  });
-  const codexExecutable = await resolveCodexExecutable({
-    configuredPath: env['CODEX_EXECUTABLE'] ?? '',
-  });
-  const results: unknown[] = [];
-  for (const spec of reviewers) {
-    // cli:model[:effort], e.g. antigravity:gemini-4-hydrogen:medium
-    const [cli, model, effort = 'low'] = spec.split(':');
-    if ((cli !== 'claude' && cli !== 'codex' && cli !== 'antigravity') || !model) {
-      throw new Error(`reviewer ${spec}`);
-    }
-    for (let run = 1; run <= runs; run++) {
-      const factory =
-        cli === 'claude'
-          ? createClaudeAgentFactory({
-              executable: claudeExecutable,
-              cwd: dir,
-              model,
-              effort,
-              readOnlyShell: true,
-            })
-          : cli === 'antigravity'
-            ? createAcpAgentFactory({
-                executable: env['AGY_EXECUTABLE'] ?? 'agy',
-                args: ['acp'],
-                provider: 'Antigravity',
-                cwd: dir,
-                model: antigravityModelId(model, effort),
-                readOnly: true,
-                ...(env['OOC_ACP_MODE'] ? { mode: env['OOC_ACP_MODE'] } : {}),
-              })
-            : createCodexAgentFactory({
-                executable: codexExecutable,
-                cwd: dir,
-                model,
-                effort,
-                requestTimeoutMs: 120_000,
-                writable: false,
-                withoutUserHooks: true,
-              });
-      const session = await factory(
-        agentSessionOptions(
-          reviewerInstructions(),
-          undefined,
-          handoffTools('reviewer', HANDOFF_SERVER),
-        ),
-      );
-      const activity: string[] = [];
-      const denied: string[] = [];
-      try {
-        const turn = await session.runTurn(
-          (env['OOC_NOEXEC']
-            ? [
-                'Runtime note: commands, including Git, are unavailable in this session.',
-                'Read files using the file-reading tool.',
-                '',
-                '',
-              ].join('\n')
-            : '') + reviewRequestPrompt('Claude (sonnet)', brief, report, facts, 2),
-          {
-            onText: () => undefined,
-            onApprovalRequest: (request) => {
-              denied.push(request.summary.slice(0, 120));
-              return Promise.resolve('decline');
-            },
-            onActivity: (a) => activity.push(`${a.kind}: ${a.detail.slice(0, 120)}`),
-          },
-        ).done;
-        // The review wins over findings in a turn; neither: the handoff was missed (ADR 0035).
-        const review = readHandoff(turn.handoffs, 'review').value;
-        const findings = readHandoff(turn.handoffs, 'findings').value;
-        const answer = review
-          ? { kind: 'review', verdict: review.verdict, text: renderReview(review) }
-          : findings
-            ? { kind: 'findings', verdict: null, text: renderFindings(findings) }
-            : { kind: 'none', verdict: null, text: turn.text };
-        const found = review
-          ? (review.open_findings ?? []).some((f) => f.severity === 'blocking')
-          : (findings?.items ?? []).some((f) => f.severity === 'blocking');
-        const row = {
-          reviewer: spec,
-          run,
-          kind: answer.kind,
-          verdict: answer.verdict,
-          foundBlocking: found,
-          mentionsNegative: /-\s*1|negativ|< ?0/.test(answer.text),
-          activity,
-          denied,
-          durationMs: turn.usage?.durationMs ?? null,
-          text: answer.text,
-        };
-        results.push(row);
-        process.stdout.write(
-          `${spec} #${String(run)}: ${row.kind}, verdict ${String(row.verdict)}, blocking issue ${String(found)}, commands ${String(activity.length)}, denied ${String(denied.length)}\n`,
+        const session = await (
+          await reviewerFactory(spec, dir, fake)
+        )(
+          agentSessionOptions(
+            reviewerInstructions(),
+            undefined,
+            handoffTools('reviewer', HANDOFF_SERVER),
+          ),
         );
-      } finally {
-        await session.close();
+        const restore = guardReviewerTurn(store, 'review-1');
+        if (!restore) throw new Error('the folder cannot be recorded for the reviewer-turn guard');
+        let toolCalls = 0;
+        const denied: string[] = [];
+        try {
+          const turn = await session.runTurn(
+            reviewRequestPrompt('Claude (sonnet)', c.brief, c.report, facts, 2),
+            {
+              onText: () => undefined,
+              onApprovalRequest: (approval) => {
+                denied.push(`approval: ${approval.summary.slice(0, 200)}`);
+                return Promise.resolve('decline');
+              },
+              onActivity: (activity) => {
+                if (activity.kind === 'tool') toolCalls++;
+                if (activity.kind === 'permission_denied')
+                  denied.push(activity.detail.slice(0, 200));
+              },
+            },
+          ).done;
+          const review = readHandoff(turn.handoffs, 'review');
+          const findings = readHandoff(turn.handoffs, 'findings');
+          const result = evaluate(c, review.value, findings.value, turn.text);
+          const usage = Object.values(turn.usage?.byModel ?? {})[0];
+          const row: Row = {
+            reviewer: spec,
+            case: c.name,
+            run,
+            kind: result.kind,
+            verdict: result.verdict,
+            blocking: result.blocking,
+            contract: result.contract,
+            keywords: result.keywords,
+            handoffCalls: (turn.handoffs ?? []).filter(
+              (call) => call.tool === 'review' || call.tool === 'findings',
+            ).length,
+            handoffErrors: [...review.errors, ...findings.errors],
+            toolCalls,
+            denied,
+            cacheRead: usage?.cachedInput ?? 0,
+            cacheWrite: usage?.cacheWrite ?? 0,
+            durationMs: turn.usage?.durationMs ?? null,
+            guard: restore(),
+            facts,
+            text: result.text,
+          };
+          caseRows.push(row);
+          process.stdout.write(
+            `${spec} ${c.name} #${String(run)}: ${row.kind}, verdict ${String(row.verdict)}, blocking ${String(row.blocking)}, contract ${row.contract.length === 0 ? 'ok' : row.contract.join('; ')}, keywords ${JSON.stringify(row.keywords)}, tools ${String(toolCalls)}, denied ${String(denied.length)}, repairs ${String(row.handoffErrors.length)}\n`,
+          );
+        } finally {
+          await session.close();
+        }
       }
+      rows.push(...caseRows);
+      process.stdout.write(`\n${spec} / ${c.name} (${c.expectation})\n${table(caseRows)}\n\n`);
     }
   }
+
+  const passed = rows.filter(ok).length;
+  process.stdout.write(`${String(passed)} of ${String(rows.length)} runs pass both checks\n`);
   const out = join(REPO, 'sandbox', 'results', `review-check-${stamp}.json`);
+  mkdirSync(join(REPO, 'sandbox', 'results'), { recursive: true });
   // The results go into the repository: the user's home, in any escaped form, is not kept.
-  const json = JSON.stringify(
-    { log, flaws: 'digits<0 check removed; invalid-n test cases removed', facts, results },
-    null,
-    2,
-  ).replace(/[A-Za-z]:(?:\\+|\/)Users(?:\\+|\/)[^\\/"\s]+/g, '<HOME>');
+  const json = JSON.stringify({ folder: base, runs, passed, rows }, null, 2).replace(
+    /[A-Za-z]:(?:\\+|\/)Users(?:\\+|\/)[^\\/"\s]+/g,
+    '<HOME>',
+  );
   writeFileSync(out, `${json}\n`);
-  process.stdout.write(`\nRisultati: ${out}\n`);
+  process.stdout.write(`Results: ${out}\n`);
+  process.exit(passed === rows.length ? 0 : 1);
 }
+
+const skipCache = (source: string) => !source.split(/[\\/]/).includes('__pycache__');
 
 await main();

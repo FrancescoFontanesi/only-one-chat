@@ -2,7 +2,14 @@
 // from Claude Code 2.1.308 (test/fixtures/claude/). The fake logs its argv,
 // cwd, environment and stdin, so the tests can prove what reached it.
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -214,7 +221,7 @@ describe('a turn', () => {
   it('runs in the workspace directory', async () => {
     await startClaudeTurn(options().options).done;
     const turnRun = fakeLog().find((entry) => entry.argv?.includes('-p'));
-    expect(turnRun?.cwd?.toLowerCase()).toBe(dir.toLowerCase());
+    expect(turnRun?.cwd?.toLowerCase()).toBe(realpathSync.native(dir).toLowerCase());
   });
 
   it('passes the user environment minus API keys', async () => {

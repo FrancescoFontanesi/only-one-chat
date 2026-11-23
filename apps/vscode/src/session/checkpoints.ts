@@ -20,14 +20,19 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import {
+  assessRisk,
+  lineCounts,
+  riskFact,
+  shortcutFacts,
+  type TextChange,
+} from '@only-one-chat/runtime';
 import type { ChangedFile } from '../webview/protocol.js';
 import { MAX_FILES, SKIPPED } from './facts.js';
 import { NOTHING_IGNORED, type Ignored } from './ignore.js';
 
 /** Larger files are not recorded: their changes cannot be undone. */
 export const MAX_FILE_BYTES = 2 * 1024 * 1024;
-/** A diff longer than this many edits is not computed line by line. */
-const MAX_EDITS = 20_000;
 
 export interface Checkpoint {
   readonly incomplete?: boolean;
@@ -54,32 +59,6 @@ function hash(content: Buffer): string {
 
 function isBinary(content: Buffer): boolean {
   return content.subarray(0, 8000).includes(0);
-}
-
-/** Lines added and removed between two texts (Myers' shortest edit script, lengths only). */
-export function lineCounts(before: string, after: string): { added: number; removed: number } {
-  // A final newline ends the last line; it does not start another.
-  const lines = (text: string) => (text === '' ? [] : text.replace(/\r?\n$/, '').split(/\r?\n/));
-  const a = lines(before);
-  const b = lines(after);
-  const n = a.length;
-  const m = b.length;
-  const max = Math.min(n + m, MAX_EDITS);
-  const v = new Map<number, number>([[1, 0]]);
-  for (let d = 0; d <= max; d++) {
-    for (let k = -d; k <= d; k += 2) {
-      const down = k === -d || (k !== d && (v.get(k - 1) ?? -1) < (v.get(k + 1) ?? -1));
-      let x = down ? (v.get(k + 1) ?? 0) : (v.get(k - 1) ?? 0) + 1;
-      let y = x - k;
-      while (x < n && y < m && a[x] === b[y]) {
-        x++;
-        y++;
-      }
-      v.set(k, x);
-      if (x >= n && y >= m) return { added: (d + m - n) / 2, removed: (d - m + n) / 2 };
-    }
-  }
-  return { added: m, removed: n };
 }
 
 export class CheckpointStore {
@@ -298,6 +277,24 @@ export class CheckpointStore {
       if (!isBinary(content)) out.set(path, content.toString('utf8'));
     }
     return out;
+  }
+
+  /**
+   * The runtime's checks on what changed since the checkpoint (ADR 0030, 0032),
+   * as the facts' text; null when the folder cannot be read.
+   */
+  diffChecks(checkpoint: Checkpoint): string | null {
+    const review = this.review(checkpoint);
+    if (!review) return null;
+    const text = (hash: string | null) =>
+      hash === null ? null : this.content(hash).toString('utf8');
+    const changed: TextChange[] = review.files
+      .filter((file) => !file.binary)
+      .map((file) => ({ path: file.path, before: text(file.before), after: text(file.after) }));
+    return [
+      shortcutFacts(changed, review.uncovered),
+      riskFact(assessRisk(changed, this.texts())),
+    ].join('\n');
   }
 
   /** The file's content hash now; null when it does not exist. */

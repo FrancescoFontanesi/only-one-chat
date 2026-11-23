@@ -77,7 +77,7 @@ import {
   type TurnUsage,
 } from '../packages/runtime/src/index.js';
 import { loadSuite, runHiddenTests, type HiddenResults } from './bench/hidden.js';
-import { CheckpointStore } from '../apps/vscode/src/session/checkpoints.js';
+import { CheckpointStore, type Checkpoint } from '../apps/vscode/src/session/checkpoints.js';
 import {
   configuredCommandFact,
   snapshot as productSnapshot,
@@ -661,6 +661,13 @@ async function main(): Promise<void> {
     // Taken again at each script message, as the product does at each user message.
     let productBaseline = productSnapshot(runDir);
     let turnBase: ReturnType<typeof productSnapshot> | undefined;
+    // The folder at each script message, for the diff checks of the facts (ADR 0030, 0046).
+    const requestStore = new CheckpointStore(
+      join(stateDir(), 'sandbox', `${runId}-request`),
+      runDir,
+    );
+    let requestCheckpoint: Checkpoint | null = null;
+    let requests = 0;
     let verificationRuns = 0;
     const verification = new WorkspaceVerification({
       cwd: runDir,
@@ -701,6 +708,7 @@ async function main(): Promise<void> {
     try {
       for (const message of script) {
         productBaseline = productSnapshot(runDir);
+        requestCheckpoint = requestStore.take(`req-${String(++requests)}`);
         currentMessage = message.name;
         process.stdout.write(`\n— ${message.name} → ${message.to}\n`);
         if (message.to === 'implementer') {
@@ -809,7 +817,12 @@ async function main(): Promise<void> {
           facts: async () =>
             `${await productFacts(runDir, productBaseline, [], undefined, turnBase)}
 
-${configuredCommandFact(verifyCommand)}`,
+${configuredCommandFact(verifyCommand)}
+
+${
+  (requestCheckpoint && requestStore.diffChecks(requestCheckpoint)) ??
+  'The runtime skipped diff checks because there was no workspace checkpoint.'
+}`,
           intercept: () => Promise.reject(new Error('not used with autoApprove')),
           onMalformedDelegation: () => Promise.reject(new Error('not used with autoApprove')),
         });

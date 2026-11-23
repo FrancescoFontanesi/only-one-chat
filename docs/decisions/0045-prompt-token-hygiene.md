@@ -177,6 +177,15 @@ same quality.
 - **Reviewer cache:** unchanged within noise. Its turns are dominated by the
   files it reads.
 
+> **Errata (2026-11-23): this reviewer table is invalid.** The case folders sat
+> under a Windows short path (`FRANCE~1`). Claude Code refused reads and
+> commands there, and the reviewer ran with a read-only shell where the product
+> gives it a writable one. It saw the code only in part and the tests almost
+> never. Rerun from the long path, the same reviewer found the weak test in 3 of
+> 3 runs. The valid baseline is the review case suite of
+> [ADR 0046](0046-review-cases-and-shared-diff-checks.md). The old prompts were
+> not measured again.
+
 **Full product path**, two tasks on sandbox `adr43`: leader Codex
 `gpt-6.1-terra` low, implementer Sonnet low, reviewer Haiku medium. Compared
 with the two earlier runs on the old prompts:

@@ -36,7 +36,7 @@ export {
   type CodexSession,
   type CodexSessionOptions,
 } from './codex/session.js';
-export { API_KEY_VARIABLES, getEnv, withoutApiKeys } from './environment.js';
+export { API_KEY_VARIABLES, getEnv, longPath, withoutApiKeys } from './environment.js';
 export {
   codexQuota,
   type ContextUsage,

@@ -15,7 +15,7 @@
 
 import { execFile, spawn } from 'node:child_process';
 import { onJsonLines } from '../lines.js';
-import { getEnv, withoutApiKeys } from '../environment.js';
+import { getEnv, longPath, withoutApiKeys } from '../environment.js';
 import { OWN_PROCESS_GROUP, terminateTree } from '../process-tree.js';
 import {
   HANDOFF_SERVER_NAME,
@@ -524,7 +524,7 @@ export function startClaudeTurn(options: ClaudeTurnOptions): ClaudeTurn {
     if (stopRequested()) throw new ClaudeError('stopped', 'The Claude turn was stopped');
 
     const spawned = spawn(options.executable, claudeTurnArgs(options), {
-      cwd: options.cwd,
+      cwd: longPath(options.cwd),
       env: {
         ...withoutApiKeys(options.baseEnv ?? process.env),
         ...(options.subagents ? subagentEnv(options.subagents) : {}),

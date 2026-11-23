@@ -77,6 +77,14 @@ Git ignores `sandbox/`. To run the benchmarks, provide a local scenario in
 files. `pnpm bench --fake --system <system> --scenario <name>` uses fake CLIs. Live runs
 consume quota and require authorization. Results are written to `sandbox/results/`.
 
+`dev/review-check.ts` measures the reviewer on the cases of `dev/review-cases/` (ADR 0046):
+a shared `base/` project and, per case, the files it changes, a brief, a report and a
+`case.json` with the expected outcome. It needs no local scenario but a real reviewer,
+so a run consumes quota: `node --import ./dev/ts-resolve.mjs dev/review-check.ts [--case
+<name>]... [--runs N] [--reviewer claude:model:effort]`. Each run checks the contract
+fields of the review, then the keywords naming each defect, and writes
+`sandbox/results/review-check-*.json`. `--fake` only exercises the setup.
+
 `pnpm playground` and the "Run Extension (playground)" launch configuration use a
 separate working copy. To create or reset it, provide the local reference project in
 `sandbox/scenarios/calc/reference/`. The "Run Extension" configuration works from a

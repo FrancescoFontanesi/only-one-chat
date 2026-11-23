@@ -1,0 +1,12 @@
+{
+  "name": "tautology",
+  "expectation": "defective",
+  "axis": "criteria",
+  "summary": "A correct implementation with tests that compare order_total with itself; C2 and C3 are not really covered and the report claims them verified.",
+  "defects": [
+    {
+      "id": "tautological-test",
+      "pattern": "tautolog|itself|same (call|function|expression)|order_total\\(.{0,40}\\) *== *order_total|cannot fail|can.?t fail|always pass|non.?falsifiable|vacuous|self.?comparison|second call|whatever .{0,30}returns|any (deterministic )?return value"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "clean",
+  "expectation": "clean",
+  "axis": null,
+  "summary": "A correct implementation, tests that assert exact values, an honest report.",
+  "defects": []
+}

@@ -9,6 +9,7 @@
 // its stdio is closed, terminating the process tree when it has to.
 
 import { spawn } from 'node:child_process';
+import { longPath } from '../environment.js';
 import { onJsonLines } from '../lines.js';
 import { OWN_PROCESS_GROUP, terminateOrphans, terminateTree } from '../process-tree.js';
 
@@ -210,7 +211,7 @@ export async function startJsonRpc(options: JsonRpcOptions): Promise<JsonRpcClie
   // between this moment and the observed exit.
   const startedAtMs = Date.now();
   const child = spawn(options.executable, options.args, {
-    cwd: options.cwd,
+    ...(options.cwd ? { cwd: longPath(options.cwd) } : {}),
     env: options.env ?? process.env,
     stdio: 'pipe',
     windowsHide: true,

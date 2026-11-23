@@ -28,6 +28,7 @@ import {
   type AgentTurnStep,
   type AgentUserQuestion,
 } from '../agent.js';
+import { longPath } from '../environment.js';
 import { diffCounts, StepStream, tail } from '../steps.js';
 import { CodexAuthError, isUsable } from './auth.js';
 import {
@@ -775,7 +776,7 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
         ...(handoff ? handoffThreadConfig(handoff) : {}),
       };
       const threadParams = {
-        cwd,
+        cwd: longPath(cwd),
         sandbox: writable ? 'workspace-write' : 'read-only',
         approvalPolicy,
         // Approvals go to us, never to Codex's own automatic reviewer.

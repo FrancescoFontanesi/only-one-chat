@@ -4,7 +4,7 @@
 // inside agy, as with Codex's account/rateLimits/read. Never a credential file.
 
 import { spawn } from 'node:child_process';
-import { withoutApiKeys } from '../environment.js';
+import { longPath, withoutApiKeys } from '../environment.js';
 import type { QuotaWindow } from '../usage.js';
 
 export interface AgyOptions {
@@ -21,7 +21,7 @@ export function runAgy(options: AgyOptions, args: readonly string[]): Promise<st
   return new Promise((resolve, reject) => {
     // No shell: `/quota` reaches agy as written (Git Bash would turn it into a path).
     const child = spawn(options.executable, [...(options.launcherArgs ?? []), ...args], {
-      ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...(options.cwd ? { cwd: longPath(options.cwd) } : {}),
       env: withoutApiKeys(options.baseEnv ?? process.env),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,

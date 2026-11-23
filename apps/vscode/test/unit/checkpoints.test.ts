@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CheckpointStore, MAX_FILE_BYTES, lineCounts } from '../../src/session/checkpoints.js';
+import { CheckpointStore, MAX_FILE_BYTES } from '../../src/session/checkpoints.js';
 
 let root: string;
 let cwd: string;
@@ -16,14 +16,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
-});
-
-describe('line counts', () => {
-  it('counts the lines added and removed', () => {
-    expect(lineCounts('a\nb\nc', 'a\nB\nc\nd')).toEqual({ added: 2, removed: 1 });
-    expect(lineCounts('', 'x\ny')).toEqual({ added: 2, removed: 0 });
-    expect(lineCounts('x\r\ny', 'x\ny')).toEqual({ added: 0, removed: 0 });
-  });
 });
 
 describe('checkpoints (ADR 0014)', () => {
@@ -82,6 +74,21 @@ describe('checkpoints (ADR 0014)', () => {
     expect(review?.uncovered).toEqual(['big.dat']);
     store.restore(checkpoint);
     expect(readFileSync(join(cwd, 'big.dat'), 'utf8')).toBe('small now');
+  });
+
+  it('writes the diff checks of what changed since a checkpoint (ADR 0030, 0046)', () => {
+    writeFileSync(join(cwd, 'calc.py'), 'def f(x):\n    return x\n');
+    const checkpoint = store.take('ckpt-1');
+    if (!checkpoint) throw new Error('no checkpoint');
+    expect(store.diffChecks(checkpoint)).toContain('- no flags');
+
+    mkdirSync(join(cwd, 'tests'));
+    writeFileSync(join(cwd, 'tests', 'test_calc.py'), 'self.assertEqual(f(1), f(1))\n');
+    const checks = store.diffChecks(checkpoint);
+    expect(checks).toContain(
+      '- tests/test_calc.py: assertions that compare an expression with itself: 1',
+    );
+    expect(checks).toContain('Change risk estimated by the runtime:');
   });
 
   it('refuses a path outside the folder', () => {

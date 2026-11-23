@@ -1,7 +1,7 @@
 // The risk of a change (ADR 0032): what makes it low, medium or high.
 
 import { describe, expect, it } from 'vitest';
-import { assessRisk, fanIn, riskFact } from '../../src/session/risk.js';
+import { assessRisk, fanIn, riskFact } from '../src/risk.js';
 
 const lines = (n: number, text = 'x = x + 1') => Array.from({ length: n }, () => text).join('\n');
 

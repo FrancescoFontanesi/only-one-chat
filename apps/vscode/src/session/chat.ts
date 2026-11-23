@@ -63,8 +63,6 @@ import type {
 import type { Checkpoint, CheckpointStore } from './checkpoints.js';
 import { changes, configuredCommandFact, snapshot, verifiedFacts } from './facts.js';
 import { guardReviewerTurn } from './guard.js';
-import { assessRisk, riskFact } from './risk.js';
-import { shortcutFacts, type TextChange } from './shortcuts.js';
 import { ignoredPaths, type Ignored } from './ignore.js';
 import { plainRefs, referenceKind } from './mentions.js';
 import { PROVIDERS, type ProviderChoice } from './providers.js';
@@ -1314,31 +1312,11 @@ ${this.diffChecks()}`;
 
   /** The checks on the diff since the request began; said so when they cannot be made. */
   private diffChecks(): string {
-    const now = this.changesNow();
-    if (!now) {
-      return 'The runtime skipped diff checks because there was no workspace checkpoint.';
-    }
-    return [
-      shortcutFacts(now.changed, now.uncovered),
-      riskFact(assessRisk(now.changed, now.store.texts())),
-    ].join('\n');
-  }
-
-  /** What the message changed so far, text before and after; null without a checkpoint. */
-  private changesNow(): {
-    changed: TextChange[];
-    uncovered: readonly string[];
-    store: CheckpointStore;
-  } | null {
-    const store = this.config.checkpoints;
-    const review = this.inRequest ? store?.review(this.inRequest) : undefined;
-    if (!store || !review) return null;
-    const text = (hash: string | null) =>
-      hash === null ? null : store.content(hash).toString('utf8');
-    const changed: TextChange[] = review.files
-      .filter((file) => !file.binary)
-      .map((file) => ({ path: file.path, before: text(file.before), after: text(file.after) }));
-    return { changed, uncovered: review.uncovered, store };
+    const { checkpoints } = this.config;
+    return (
+      (this.inRequest ? checkpoints?.diffChecks(this.inRequest) : null) ??
+      'The runtime skipped diff checks because there was no workspace checkpoint.'
+    );
   }
 
   /**

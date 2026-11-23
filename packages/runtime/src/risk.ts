@@ -9,8 +9,8 @@
 // shortcut flags (ADR 0030). The weights and caps are choices, to be tuned on
 // real changes: a level is a reason to review, not a verdict. Pure: no disk.
 
-import { lineCounts } from './checkpoints.js';
-import { TEST_FILE } from '@only-one-chat/runtime';
+import { lineCounts } from './line-counts.js';
+import { TEST_FILE } from './contract.js';
 import { shortcutFlags, type TextChange } from './shortcuts.js';
 
 type RiskLevel = 'low' | 'medium' | 'high';

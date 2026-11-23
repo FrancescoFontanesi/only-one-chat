@@ -4,7 +4,7 @@
 // They are flags to look at, not proofs: a test moved to another file also
 // shows as a test removed. Pure: no `vscode`, no disk.
 
-import { TEST_FILE } from '@only-one-chat/runtime';
+import { TEST_FILE } from './contract.js';
 
 /** A file the request changed, with its text before and after; null: it did not exist. */
 export interface TextChange {
@@ -25,6 +25,72 @@ const SKIPS =
   /\b(?:it|test|describe)\.(?:skip|only)\b|\bx(?:it|describe)\b|\.only\s*\(|@pytest\.mark\.skip|@unittest\.skip|\bpytest\.skip\b|\bt\.Skip\b/g;
 const SWITCHED_OFF =
   /eslint-disable|@ts-ignore|@ts-nocheck|@ts-expect-error|#\s*type:\s*ignore|#\s*noqa|#\s*pylint:\s*disable|\bas any\b|:\s*any\b/g;
+
+/** Longer lines are not parsed. */
+const MAX_LINE = 400;
+const COMPARISON = /\b(assertEqual|assertIs|expect)\s*\(|^\s*assert\s/;
+const EXPECT_EQUAL = /^\s*\.(?:toBe|toEqual|toStrictEqual)\(/;
+
+/**
+ * The pieces of `text` from `from`, split at the top-level `separator`, up to the
+ * parenthesis that closes it (`closed`) or the end. Strings and nested brackets
+ * are skipped; null when `closed` and it never closes.
+ */
+function pieces(
+  text: string,
+  from: number,
+  separator: string,
+  closed: boolean,
+): { parts: string[]; end: number } | null {
+  const parts: string[] = [];
+  let depth = 0;
+  let quote = '';
+  let start = from;
+  for (let i = from; i < text.length; i++) {
+    const c = text.charAt(i);
+    if (quote) {
+      if (c === '\\') i++;
+      else if (c === quote) quote = '';
+    } else if (c === '"' || c === "'" || c === '`') quote = c;
+    else if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) {
+      if (depth > 0) depth--;
+      else if (closed) return { parts: [...parts, text.slice(start, i)], end: i };
+    } else if (depth === 0 && text.startsWith(separator, i)) {
+      parts.push(text.slice(start, i));
+      start = i + separator.length;
+      i = start - 1;
+    }
+  }
+  return closed ? null : { parts: [...parts, text.slice(start)], end: text.length };
+}
+
+const same = (a: string | undefined, b: string | undefined) =>
+  a !== undefined && b !== undefined && a.trim() !== '' && a.trim() === b.trim();
+
+/** Assertions that compare an expression with itself: they pass whatever the code does. */
+function selfComparisons(text: string | null): number {
+  let found = 0;
+  for (const line of text === null ? [] : text.split('\n')) {
+    const call = line.length <= MAX_LINE ? COMPARISON.exec(line) : null;
+    if (!call) continue;
+    const at = call.index + call[0].length;
+    if (call[1] === 'assertEqual' || call[1] === 'assertIs') {
+      const args = pieces(line, at, ',', true)?.parts;
+      if (same(args?.[0], args?.[1])) found++;
+    } else if (call[1] === 'expect') {
+      const actual = pieces(line, at, ',', true);
+      const next = actual && EXPECT_EQUAL.exec(line.slice(actual.end + 1));
+      const wanted = next && pieces(line, actual.end + 1 + next[0].length, ',', true);
+      if (actual && wanted && same(actual.parts[0], wanted.parts[0])) found++;
+    } else {
+      const condition = pieces(line, at, ',', false)?.parts[0] ?? '';
+      const sides = pieces(condition, 0, '==', false)?.parts;
+      if (sides?.length === 2 && same(sides[0], sides[1])) found++;
+    }
+  }
+  return found;
+}
 
 function count(text: string | null, pattern: RegExp): number {
   return text === null ? 0 : (text.match(pattern)?.length ?? 0);
@@ -54,6 +120,14 @@ export function shortcutFlags(changes: readonly TextChange[]): string[] {
       const skipped = count(after, SKIPS) - count(before, SKIPS);
       if (skipped > 0) {
         flags.push(`${path}: new skipped or isolated tests (skip, only): ${String(skipped)}`);
+      }
+    }
+    if (test && after !== null) {
+      const tautologies = selfComparisons(after) - selfComparisons(before);
+      if (tautologies > 0) {
+        flags.push(
+          `${path}: assertions that compare an expression with itself: ${String(tautologies)}`,
+        );
       }
     }
     if (after !== null) {

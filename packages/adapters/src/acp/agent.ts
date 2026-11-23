@@ -9,7 +9,7 @@
 // except the calls to the handoff tools of the MCP server `ooc` (ADR 0035).
 
 import { startJsonRpc, type JsonRpcClient } from '../codex/app-server.js';
-import { withoutApiKeys } from '../environment.js';
+import { longPath, withoutApiKeys } from '../environment.js';
 import { StepStream, tail } from '../steps.js';
 import {
   HANDOFF_SERVER_NAME,
@@ -284,13 +284,16 @@ export function createAcpAgentFactory(config: AcpAgentConfig): AgentFactory {
       if (resume) {
         await client.request('session/load', {
           sessionId: resume,
-          cwd: config.cwd,
+          cwd: longPath(config.cwd),
           mcpServers,
         });
         sessionId = resume;
         fresh = false;
       } else {
-        const created = await client.request('session/new', { cwd: config.cwd, mcpServers });
+        const created = await client.request('session/new', {
+          cwd: longPath(config.cwd),
+          mcpServers,
+        });
         sessionId = isRecord(created) ? text(created['sessionId']) : '';
         if (!sessionId) throw new Error(`${config.provider}: session/new gave no session id`);
         fresh = true;

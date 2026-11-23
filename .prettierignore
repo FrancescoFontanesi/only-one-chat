@@ -12,3 +12,6 @@ pnpm-lock.yaml
 packages/runtime/prompts/
 
 .mcp.json
+
+# Review case fixtures are read by the reviewer as written; the brief cites line numbers (ADR 0046).
+dev/review-cases/

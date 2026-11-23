@@ -13,7 +13,6 @@ import { startPermissionBridge, type PermissionBridge } from '@only-one-chat/ada
 import {
   CommandEvidence,
   DIFF_CHECKS_UNAVAILABLE,
-  GATE_SENT_BACK_HEADER,
   directMessagePrompt,
   implementerInstructions,
   NO_COMMANDS_NOTE,
@@ -57,6 +56,7 @@ import { guardReviewerTurn } from './guard.js';
 import { ignoredPaths, type Ignored } from './ignore.js';
 import { plainRefs, referenceKind } from './mentions.js';
 import { PROVIDERS } from './providers.js';
+import { TurnTracker } from './thread-projection.js';
 import { UserRequests } from './user-requests.js';
 import {
   DIRECT,
@@ -106,7 +106,9 @@ export class ChatSession {
   private running = false;
   private nextId = 1;
   private readonly tag = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  private readonly currentTurn = new Map<TurnRole, string>();
+  private readonly turns = new TurnTracker((update) => {
+    this.events.update(update);
+  });
   private readonly pending = new Map<string, (decision: InterceptDecision) => void>();
   /** The permission bridges of the Claude roles, for the chat. */
   private readonly bridges = new Map<RoleName, PermissionBridge>();
@@ -867,7 +869,7 @@ export class ChatSession {
     } finally {
       this.running = false;
       this.stopRunning = undefined;
-      this.closeRunningTurns('failed');
+      this.turns.closeRunning('failed');
       this.events.busy(false);
     }
   }
@@ -886,14 +888,7 @@ export class ChatSession {
     const id = this.id('t');
     const commands = new CommandEvidence();
     const observe = commands.nextTurn();
-    this.currentTurn.set('implementer', id);
-    this.events.update({
-      type: 'turn',
-      id,
-      role: 'implementer',
-      agent: session.name,
-      status: 'running',
-    });
+    this.turns.start('implementer', id, session.name);
     const turn = session.runTurn(
       prompt,
       {
@@ -919,7 +914,7 @@ export class ChatSession {
     this.stopRunning = () => turn.stop();
     const result = await turn.done;
     this.folderMayHaveChanged();
-    this.currentTurn.delete('implementer');
+    this.turns.end('implementer');
     const usage = summarize(result.usage);
     const report = readHandoff(result.handoffs, 'report').value;
     const reportText = report ? renderReport(report) : result.text;
@@ -1162,7 +1157,7 @@ export class ChatSession {
         this.held = undefined;
       }
       this.verification.reset();
-      this.closeRunningTurns('failed');
+      this.turns.closeRunning('failed');
       const reviewed = checkpoint ? this.review(checkpoint) : false;
       if (!shown.facts && !reviewed) {
         // Changes made with no delegation: shown, not judged.
@@ -1720,20 +1715,13 @@ ${this.diffChecks()}`;
     await Promise.allSettled([...this.bridges.values()].map((bridge) => bridge.close()));
     this.bridges.clear();
     this.unseen = [];
-    this.currentTurn.clear();
+    this.turns.clear();
   }
 
   /** The chat is closed or another is shown: a delegation waiting for the user stays with it. */
   async dispose(): Promise<void> {
     this.closing = true;
     await this.reset();
-  }
-
-  private closeRunningTurns(status: 'done' | 'failed'): void {
-    for (const [role, id] of this.currentTurn) {
-      this.events.update({ type: 'turn', id, role, agent: '', status });
-    }
-    this.currentTurn.clear();
   }
 
   private onEvent(event: ThreadEvent): void {
@@ -1744,23 +1732,14 @@ ${this.diffChecks()}`;
       case 'turn_started': {
         // The orchestrator is read-only; the others may write.
         if (event.role !== 'orchestrator') this.folderMayHaveChanged();
-        const id = this.id('t');
-        const role = roleOf(event.role);
-        this.currentTurn.set(role, id);
-        update({ type: 'turn', id, role, agent: event.agent, status: 'running' });
-        break;
-      }
-      case 'text': {
-        const turnId = this.currentTurn.get(roleOf(event.role));
-        if (turnId) update({ type: 'chunk', turnId, text: event.text });
+        this.turns.start(roleOf(event.role), this.id('t'), event.agent);
         break;
       }
       case 'message': {
         if (event.role !== 'orchestrator') this.folderMayHaveChanged();
         const role = roleOf(event.role);
-        const id = this.currentTurn.get(role);
+        const id = this.turns.end(role);
         if (!id) break;
-        this.currentTurn.delete(role);
         const usage = summarize(event.usage);
         update({
           type: 'turn',
@@ -1790,44 +1769,6 @@ ${this.diffChecks()}`;
         this.noteSession(role, event.identity.sessionId);
         break;
       }
-      case 'step': {
-        const turnId = this.currentTurn.get(roleOf(event.role));
-        if (turnId) update({ type: 'step', turnId, step: event.step });
-        break;
-      }
-      case 'activity':
-      case 'subagent_activity': {
-        const turnId = this.currentTurn.get(roleOf(event.role));
-        const prefix = event.type === 'subagent_activity' ? '↳ ' : '';
-        if (turnId) {
-          update({
-            type: 'activity',
-            turnId,
-            text: `${prefix}${event.kind}: ${event.detail.slice(0, 240)}`,
-          });
-        }
-        break;
-      }
-      case 'subagent': {
-        const turnId = this.currentTurn.get(roleOf(event.role));
-        if (turnId) {
-          update({
-            type: 'subagent',
-            turnId,
-            id: event.subagent.id,
-            label: event.label,
-            status: event.subagent.status,
-          });
-        }
-        break;
-      }
-      case 'approval_denied':
-        update({
-          type: 'notice',
-          level: 'warn',
-          text: `Request from ${event.agent} denied: ${event.request.summary}`,
-        });
-        break;
       case 'intercepted':
         this.lastIntercepted = event.message;
         // The last work a review the user asks for looks at (ADR 0033).
@@ -1866,42 +1807,8 @@ ${this.diffChecks()}`;
         update({ type: 'approval_closed', id, action: 'sent' });
         break;
       }
-      case 'gate_sent_back':
-        update({
-          type: 'notice',
-          level: 'warn',
-          text: `${GATE_SENT_BACK_HEADER}\n${event.status} — ${event.summary}`,
-        });
-        break;
-      case 'reviewed': {
-        const verdict = event.verdict
-          ? event.verdict.replace('_', ' ').toUpperCase()
-          : 'NO VERDICT';
-        const rounds =
-          event.rounds === 1 ? '1 correction round' : `${String(event.rounds)} correction rounds`;
-        update({
-          type: 'notice',
-          level: event.verdict === 'rejected' || event.verdict === null ? 'warn' : 'info',
-          text: `Review by ${event.reviewer}: ${verdict} · ${rounds}${event.verification ? ` · Runtime ${event.verification}` : ''}`,
-        });
-        break;
-      }
-      case 'contract':
-        update({ type: 'notice', level: 'warn', text: event.message });
-        break;
-      case 'delegation_invalid':
-        update({
-          type: 'notice',
-          level: 'warn',
-          text: `Invalid delegation call: ${event.errors.join('; ')}`,
-        });
-        break;
-      case 'subagent_violation':
-      case 'error':
-        update({ type: 'notice', level: 'error', text: event.message });
-        break;
       default:
-        break;
+        this.turns.project(event);
     }
   }
 }

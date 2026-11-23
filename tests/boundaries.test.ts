@@ -146,7 +146,7 @@ describe('structure (ADR 0047)', () => {
     'packages/runtime/src/loop.ts': 1414,
     'packages/adapters/src/claude/turn.ts': 855,
     'packages/adapters/src/codex/agent.ts': 956,
-    'apps/vscode/src/session/chat.ts': 1937,
+    'apps/vscode/src/session/chat.ts': 1844,
     'apps/vscode/src/shared/protocol.ts': 946,
     'apps/vscode/src/webview/panel.ts': 1381,
     'apps/vscode/webview/Thread.tsx': 847,

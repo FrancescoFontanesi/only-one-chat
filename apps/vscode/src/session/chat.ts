@@ -35,12 +35,10 @@ import {
   type SubagentPolicy,
   type SkillRef,
   type ThreadEvent,
-  type TaskProgress,
-  type TaskJournal,
 } from '@only-one-chat/runtime';
 import { validImplementerHandoff } from './history.js';
 import { WorkspaceVerification } from './verification.js';
-import { readSavedTask, taskUnfinished, type SavedTask } from './task.js';
+import { readSavedTask } from './task.js';
 import type {
   ApprovalAction,
   ApprovalMode,
@@ -56,6 +54,7 @@ import { ignoredPaths, type Ignored } from './ignore.js';
 import { plainRefs, referenceKind } from './mentions.js';
 import { PROVIDERS } from './providers.js';
 import { ChatEvidence } from './chat-evidence.js';
+import { recoveredProgress, TaskState } from './task-state.js';
 import { TurnTracker } from './thread-projection.js';
 import { UserRequests } from './user-requests.js';
 import {
@@ -97,12 +96,11 @@ export class ChatSession {
   private stopRequested = false;
   private requestController = new AbortController();
   private readonly verification: WorkspaceVerification;
-  private task: SavedTask | undefined;
-  private taskInvalid = false;
+  /** The durable task and its recovery state (ADR 0043, 0047). */
+  private readonly taskState: TaskState;
   private resuming = false;
   private readonly recoveredWithoutHistory = new Set<RoleName>();
   private readonly taskEnabled: boolean;
-  private recoveryChanged = false;
   private running = false;
   private nextId = 1;
   private readonly tag = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -142,12 +140,6 @@ export class ChatSession {
   private inRequest: Checkpoint | null = null;
   /** The checkpoints, the changes card and the verified facts around a message. */
   private readonly evidence: ChatEvidence;
-  /**
-   * The task checkpoint last taken, and whether something that could write
-   * to the folder ran since (an agent turn, a verification command): a clean
-   * save reuses it instead of walking the folder again (ADR 0047).
-   */
-  private taskCheckpoint: { id: string; clean: boolean } | undefined;
   /** The latest message between agents the loop showed, for the card of one that went on by itself. */
   private lastIntercepted: Omit<DraftDelegation, 'id'> | undefined;
   /** The reviewer now: the panel switches it on and off during the chat (ADR 0033). */
@@ -180,15 +172,32 @@ export class ChatSession {
         this.events.update({ type: 'verification', evidence });
       },
       onRun: () => {
-        this.folderMayHaveChanged();
+        this.taskState.markDirty();
       },
     });
     this.reviewerConfig = config.reviewer;
     this.roles = { leader: readOnly(config.leader), implementer: config.implementer };
-    this.task = readSavedTask(config.task);
-    this.taskInvalid =
-      config.taskInvalid === true || (config.task !== undefined && this.task === undefined);
-    const lastTask = this.task?.progress.work ? this.task : readSavedTask(config.lastCompletedTask);
+    this.taskState = new TaskState(
+      {
+        enabled: this.taskEnabled,
+        store: config.checkpoints,
+        configuration: () => this.taskConfiguration(),
+        verification: () => this.verification.checkpoint(),
+        session: (role) => this.nativeSessions.get(role) ?? this.config.resume?.[role],
+        id: (prefix) => this.id(prefix),
+        update: (update) => {
+          this.events.update(update);
+        },
+        saveTask: (task) => {
+          this.events.saveTask?.(task);
+        },
+      },
+      config.task,
+      config.taskInvalid === true,
+    );
+    const lastTask = this.taskState.task?.progress.work
+      ? this.taskState.task
+      : readSavedTask(config.lastCompletedTask);
     if (lastTask?.progress.work) {
       const { progress } = lastTask;
       this.lastWork = {
@@ -220,10 +229,10 @@ export class ChatSession {
       leader: [...(config.fileNotes?.leader ?? [])],
       implementer: [...(config.fileNotes?.implementer ?? [])],
     };
-    for (const [role, id] of Object.entries({ ...this.task?.sessions, ...config.resume }) as [
-      RoleName,
-      string,
-    ][]) {
+    for (const [role, id] of Object.entries({
+      ...this.taskState.task?.sessions,
+      ...config.resume,
+    }) as [RoleName, string][]) {
       if (!['leader', 'implementer'].includes(role) || typeof id !== 'string' || id.length > 512)
         continue;
       if (role === 'implementer' && this.handoffBrief !== undefined) continue;
@@ -289,7 +298,7 @@ export class ChatSession {
   /** A role's CLI reported its own session: to resume it, now or in a reopened chat. */
   private noteSession(role: RoleName, id: string): void {
     if (id.trim() === '') return;
-    const originalSession = this.config.resume?.[role] ?? this.task?.sessions?.[role];
+    const originalSession = this.config.resume?.[role] ?? this.taskState.task?.sessions?.[role];
     if (
       this.resuming &&
       originalSession &&
@@ -491,117 +500,21 @@ export class ChatSession {
     });
   }
 
-  private saveTaskProgress(progress: TaskProgress): void {
-    if (!this.taskEnabled) return;
-    const previous = taskUnfinished(this.task) ? this.task : undefined;
-    // Reuse only inside a task, for the checkpoint this task last recorded.
-    const reused =
-      previous?.checkpoint &&
-      this.taskCheckpoint?.clean &&
-      this.taskCheckpoint.id === previous.checkpoint
-        ? this.taskCheckpoint.id
-        : undefined;
-    const checkpoint =
-      progress.step === 'cancelled' || reused
-        ? null
-        : (this.config.checkpoints?.take(this.id('task-ckpt')) ?? null);
-    if (checkpoint) this.taskCheckpoint = { id: checkpoint.id, clean: true };
-    const next: SavedTask = {
-      version: 1,
-      id: previous?.id ?? this.id('task'),
-      configuration: previous?.configuration ?? this.taskConfiguration(),
-      progress,
-      checkpoint:
-        reused ??
-        checkpoint?.id ??
-        (progress.step === 'cancelled' ? (previous?.checkpoint ?? null) : null),
-      verification: this.verification.checkpoint() ?? previous?.verification,
-      sessions: Object.fromEntries(
-        (['leader', 'implementer'] as const).flatMap((role) => {
-          const id =
-            this.nativeSessions.get(role) ??
-            this.config.resume?.[role] ??
-            previous?.sessions?.[role];
-          return typeof id === 'string' && id.length <= 512 ? [[role, id]] : [];
-        }),
-      ),
-    };
-    if (!readSavedTask(next)) throw new Error('Task state cannot be safely persisted');
-    this.events.saveTask?.(next);
-    this.task = next;
-    this.taskInvalid = false;
-  }
-
-  private taskJournal(): TaskJournal | undefined {
-    if (!this.taskEnabled) return undefined;
-    return {
-      resume: this.resuming ? this.task?.progress : undefined,
-      save: (progress) => {
-        this.saveTaskProgress(progress);
-      },
-    };
-  }
-
   recoveryConfigurationMatches(): boolean {
-    return !this.taskInvalid && this.task?.configuration === this.taskConfiguration();
+    return this.taskState.configurationMatches();
   }
 
   recoveryReason(showChanges = true): string | undefined {
-    this.recoveryChanged = false;
-    if (this.taskInvalid)
-      return 'The saved task record is invalid. Inspect the history and cancel the task to continue.';
-    if (!taskUnfinished(this.task) || !this.task) return undefined;
-    if (this.task.configuration !== this.taskConfiguration())
-      return 'The task configuration changed. Restore its recorded roles, providers, and verification settings before resuming.';
-    const store = this.config.checkpoints;
-    const checkpoint = this.task.checkpoint ? store?.load(this.task.checkpoint) : undefined;
-    if (!checkpoint || checkpoint.incomplete || Object.keys(checkpoint.large).length > 0) {
-      this.recoveryChanged = true;
-      return 'The workspace checkpoint is incomplete or unavailable. Review the current files before continuing.';
-    }
-    try {
-      const current = store?.take(this.id('recovery-ckpt'));
-      const review = store?.review(checkpoint);
-      if (!current || current.incomplete || !review) {
-        this.recoveryChanged = true;
-        return 'The current workspace cannot be fully compared. Review the files before continuing.';
-      }
-      if (review.files.length > 0 || review.uncovered.length > 0) {
-        this.recoveryChanged = true;
-        if (showChanges)
-          this.events.update({
-            type: 'changes',
-            id: this.id('changes'),
-            checkpoint: checkpoint.id,
-            ...review,
-          });
-        return 'Files changed after the recorded task boundary. Review the changes before continuing.';
-      }
-    } catch {
-      this.recoveryChanged = true;
-      return 'The recorded workspace cannot be read. Review the files before continuing.';
-    }
-    const baseline = this.task.verification?.baseline;
-    if (baseline && !store?.load(baseline))
-      return 'The original verification baseline is unavailable. Inspect the recorded evidence before continuing.';
-    return this.task.progress.inFlight
-      ? 'The last operation has no committed outcome. Review the current files before continuing.'
-      : undefined;
+    return this.taskState.recoveryReason(showChanges);
   }
 
   cancelTask(): void {
     if (this.running) return;
-    if (!this.taskInvalid && !taskUnfinished(this.task)) return;
-    if (this.task)
-      this.saveTaskProgress({ ...this.task.progress, step: 'cancelled', inFlight: false });
-    else {
-      this.events.saveTask?.(null);
-      this.taskInvalid = false;
-    }
+    this.taskState.cancel();
   }
 
   async resumeTask(confirmed = false): Promise<void> {
-    if (this.taskInvalid) {
+    if (this.taskState.invalid) {
       this.events.update({
         type: 'notice',
         level: 'warn',
@@ -609,8 +522,8 @@ export class ChatSession {
       });
       return;
     }
-    if (this.running || this.resuming || !taskUnfinished(this.task) || !this.task) return;
-    if (this.task.configuration !== this.taskConfiguration())
+    if (this.running || this.resuming || !this.taskState.unfinished || !this.taskState.task) return;
+    if (this.taskState.task.configuration !== this.taskConfiguration())
       throw new Error('Restore the task configuration before resuming');
     const reason = this.recoveryReason(!confirmed);
     if (reason && !confirmed) {
@@ -620,9 +533,9 @@ export class ChatSession {
     this.resuming = true;
     try {
       await this.run(this.evidence.checkpoint(), async (baseline, shown) => {
-        if (!this.task) return;
-        this.verification.restore(this.task.verification);
-        let progress = this.task.progress;
+        if (!this.taskState.task) return;
+        this.verification.restore(this.taskState.task.verification);
+        let progress = this.taskState.task.progress;
         if (
           progress.direct &&
           progress.step === 'implementation' &&
@@ -633,61 +546,12 @@ export class ChatSession {
           return;
         }
         const uncertainDelivery = progress.step === 'delivery' && progress.inFlight;
-        if (progress.inFlight) {
-          const step =
-            progress.step === 'verification' && progress.answer
-              ? 'verification'
-              : progress.step === 'delivery'
-                ? 'delivery'
-                : this.reviewerConfig
-                  ? 'review'
-                  : 'verification';
-          progress = {
-            ...progress,
-            step,
-            inFlight: false,
-            findings: [
-              progress.findings,
-              'Recovery note: the last operation has an uncertain outcome. Inspect current files and treat the prior report as historical context.',
-            ]
-              .filter(Boolean)
-              .join('\n\n'),
-            work:
-              !progress.work && progress.step === 'implementation'
-                ? {
-                    text: 'The implementer was interrupted. Inspect the current files against the approved request and saved findings.',
-                    data: null,
-                  }
-                : (progress.work ?? {
-                    text: 'Interrupted work requires review of the current files.',
-                    data: null,
-                  }),
-          };
-          this.saveTaskProgress(progress);
-        }
-        if (this.recoveryChanged) {
-          progress = {
-            ...progress,
-            step:
-              this.reviewerConfig && progress.work?.data?.outcome !== 'blocked'
-                ? 'review'
-                : 'verification',
-            inFlight: false,
-            answer: undefined,
-            result: undefined,
-            leaderDelivered: false,
-            work: progress.work ?? {
-              text: 'Inspect the current files against the approved request.',
-              data: null,
-            },
-            findings: [
-              progress.findings,
-              'Recovery note: workspace inputs changed. Prior verification and review results are stale; review and verify the current files.',
-            ]
-              .filter(Boolean)
-              .join('\n\n'),
-          };
-          this.saveTaskProgress(progress);
+        for (const next of recoveredProgress(progress, {
+          reviewer: this.reviewerConfig !== undefined,
+          changed: this.taskState.recoveryChanged,
+        })) {
+          progress = next;
+          this.taskState.save(progress);
         }
         if (progress.leaderDelivered) return;
         if (uncertainDelivery && progress.work && progress.result) {
@@ -746,14 +610,14 @@ export class ChatSession {
             'the recovered review',
           );
         } else if (progress.work) {
-          this.saveTaskProgress({ ...progress, step: 'verification', inFlight: true });
+          this.taskState.save({ ...progress, step: 'verification', inFlight: true });
           const verified = await this.verification.finish(
             progress.work.data?.test,
             'implementer',
             this.requestController.signal,
           );
           const facts = [await this.evidence.facts(baseline), verified.summary].join('\n\n');
-          this.saveTaskProgress({
+          this.taskState.save({
             ...progress,
             step: 'delivery',
             inFlight: false,
@@ -777,8 +641,8 @@ export class ChatSession {
 
   private implementerPreface(): string | undefined {
     const recovery =
-      this.resuming && this.task
-        ? `Saved task recovery context\n${frameWorkerAnswer(JSON.stringify({ brief: this.task.progress.brief, report: this.task.progress.work?.text, findings: this.task.progress.findings, correctionsUsed: this.task.progress.used, correctionLimit: this.task.progress.limit }).replace(/\r\n?|[\u2028\u2029]/g, '\n'))}`
+      this.resuming && this.taskState.task
+        ? `Saved task recovery context\n${frameWorkerAnswer(JSON.stringify({ brief: this.taskState.task.progress.brief, report: this.taskState.task.progress.work?.text, findings: this.taskState.task.progress.findings, correctionsUsed: this.taskState.task.progress.used, correctionLimit: this.taskState.task.progress.limit }).replace(/\r\n?|[\u2028\u2029]/g, '\n'))}`
         : undefined;
     if (this.handoffBrief === undefined) return recovery;
     const brief = this.handoffBrief.replace(/\r\n?|[\u2028\u2029]/g, '\n');
@@ -803,7 +667,7 @@ export class ChatSession {
    * Not while a message runs, nor before its first turn.
    */
   async handoff(): Promise<void> {
-    if (this.taskInvalid || taskUnfinished(this.task)) {
+    if (this.taskState.invalid || this.taskState.unfinished) {
       this.events.update({
         type: 'notice',
         level: 'warn',
@@ -897,7 +761,7 @@ export class ChatSession {
     keep: boolean,
     skill?: SkillRef,
   ) {
-    this.folderMayHaveChanged();
+    this.taskState.markDirty();
     const id = this.id('t');
     const commands = new CommandEvidence();
     const observe = commands.nextTurn();
@@ -926,7 +790,7 @@ export class ChatSession {
     );
     this.stopRunning = () => turn.stop();
     const result = await turn.done;
-    this.folderMayHaveChanged();
+    this.taskState.markDirty();
     this.turns.end('implementer');
     const usage = summarize(result.usage);
     const report = readHandoff(result.handoffs, 'report').value;
@@ -963,17 +827,13 @@ export class ChatSession {
    * its next message, since its context still holds the changes.
    */
   noteFiles(note: string): void {
-    this.folderMayHaveChanged();
+    this.taskState.markDirty();
     this.fileNotes.leader.push(note);
     this.fileNotes.implementer.push(note);
     this.events.fileNotes?.(this.pendingNotes());
   }
 
   /** Something that could write to the folder ran: the next task save takes a new checkpoint. */
-  private folderMayHaveChanged(): void {
-    if (this.taskCheckpoint) this.taskCheckpoint.clean = false;
-  }
-
   /** The notes each role has not received yet: kept with the chat (R5). */
   private pendingNotes(): FileNotes {
     return { leader: [...this.fileNotes.leader], implementer: [...this.fileNotes.implementer] };
@@ -1004,7 +864,7 @@ export class ChatSession {
     const recipient: TurnRole = to ?? (DIRECT.test(text) ? 'implementer' : 'leader');
     if (!to && recipient === 'implementer') text = text.replace(DIRECT, '');
     const attachments = attached?.text ?? '';
-    if (this.taskInvalid || taskUnfinished(this.task)) {
+    if (this.taskState.invalid || this.taskState.unfinished) {
       this.events.update({
         type: 'notice',
         level: 'warn',
@@ -1069,9 +929,9 @@ export class ChatSession {
     if (!draft || this.running) return;
     const delegation = action === 'edit' && text !== undefined ? text : draft.text;
     if (action !== 'cancel') {
-      if (!taskUnfinished(this.task)) this.verification.reset();
+      if (!this.taskState.unfinished) this.verification.reset();
       this.verification.begin();
-      this.saveTaskProgress({
+      this.taskState.save({
         brief: delegation,
         direct: false,
         source: 'delegation',
@@ -1108,8 +968,11 @@ export class ChatSession {
       this.log ??= await openEventLog(this.config.logPath, this.config.cwd);
       await this.applyRoleChanges();
       await work(baseline, shown);
-      if (this.task?.progress.step === 'delivery' && !this.task.progress.inFlight) {
-        this.saveTaskProgress({ ...this.task.progress, step: 'completed' });
+      if (
+        this.taskState.task?.progress.step === 'delivery' &&
+        !this.taskState.task.progress.inFlight
+      ) {
+        this.taskState.save({ ...this.taskState.task.progress, step: 'completed' });
       }
     } catch (error) {
       this.events.update({
@@ -1187,7 +1050,7 @@ export class ChatSession {
               guardReviewer: () => {
                 const restore = guardReviewerTurn(store, this.id('rev'));
                 // The restore after the turn writes to the folder too.
-                return restore && (() => (this.folderMayHaveChanged(), restore()));
+                return restore && (() => (this.taskState.markDirty(), restore()));
               },
             }
           : {}),
@@ -1219,7 +1082,7 @@ export class ChatSession {
       request: '',
       handoffServer: config.handoffServer,
       mode: 'review',
-      task: this.taskJournal(),
+      task: this.taskState.journal(this.resuming),
       verification: this.verification,
       reviewOf: of,
       relay: (message) => plainRefs(message, config.cwd),
@@ -1252,7 +1115,7 @@ export class ChatSession {
     });
     this.stopRunning = () => loop.stop();
     const outcome = await loop.done;
-    if (taskUnfinished(this.task) && outcome.status !== 'delegated')
+    if (this.taskState.unfinished && outcome.status !== 'delegated')
       throw new Error(`Task review did not complete: ${outcome.status}`);
     return outcome.status === 'delegated' && outcome.review !== undefined
       ? {
@@ -1265,7 +1128,7 @@ export class ChatSession {
   }
 
   private queueForLeader(pending: PendingReport): void {
-    const taskId = this.task?.id;
+    const taskId = this.taskState.task?.id;
     if (!taskId || !this.unseen.some((item) => item.taskId === taskId)) {
       this.unseen.push({ ...pending, ...(taskId ? { taskId } : {}) });
     } else {
@@ -1298,8 +1161,8 @@ export class ChatSession {
   ): Promise<void> {
     this.verification.begin();
     const initial =
-      this.resuming && this.task
-        ? this.task.progress
+      this.resuming && this.taskState.task
+        ? this.taskState.task.progress
         : {
             brief: text,
             source: 'direct' as const,
@@ -1308,10 +1171,10 @@ export class ChatSession {
             limit: Math.max(0, Math.min(this.reviewerConfig?.rounds ?? 0, 3)),
             used: 0,
           };
-    this.saveTaskProgress({ ...initial, step: 'implementation', inFlight: false });
+    this.taskState.save({ ...initial, step: 'implementation', inFlight: false });
     const session = await this.implementer();
     const notes = this.takeNotes('implementer');
-    this.saveTaskProgress({ ...initial, step: 'implementation', inFlight: true });
+    this.taskState.save({ ...initial, step: 'implementation', inFlight: true });
     const result = await this.implementerTurn(
       session,
       directMessagePrompt(
@@ -1331,8 +1194,8 @@ export class ChatSession {
     // The report call, rendered; a turn that made none is its text.
     const report = result.reportText;
     const { reportCommandEvidence } = result;
-    this.saveTaskProgress({
-      ...(this.task?.progress ?? { brief: text, direct: true, limit: 0, used: 0 }),
+    this.taskState.save({
+      ...(this.taskState.task?.progress ?? { brief: text, direct: true, limit: 0, used: 0 }),
       work: { text: report, data: result.report, commandEvidence: reportCommandEvidence },
       step: this.reviewerConfig && result.report?.outcome !== 'blocked' ? 'review' : 'verification',
       inFlight: false,
@@ -1366,17 +1229,21 @@ export class ChatSession {
       );
       return;
     }
-    if (this.task)
-      this.saveTaskProgress({ ...this.task.progress, step: 'verification', inFlight: true });
+    if (this.taskState.task)
+      this.taskState.save({
+        ...this.taskState.task.progress,
+        step: 'verification',
+        inFlight: true,
+      });
     const comparison = await this.verification.finish(
       result.report?.test,
       'implementer',
       this.requestController.signal,
     );
     const facts = [await this.evidence.facts(baseline), comparison.summary].join('\n\n');
-    if (this.task)
-      this.saveTaskProgress({
-        ...this.task.progress,
+    if (this.taskState.task)
+      this.taskState.save({
+        ...this.taskState.task.progress,
         step: 'delivery',
         inFlight: false,
         result: { facts },
@@ -1405,7 +1272,9 @@ export class ChatSession {
   ): Promise<void> {
     this.verification.beginReview();
     const previous =
-      this.task?.progress.step === 'completed' ? this.task : this.config.lastCompletedTask;
+      this.taskState.task?.progress.step === 'completed'
+        ? this.taskState.task
+        : this.config.lastCompletedTask;
     if (previous?.verification)
       this.verification.restore({
         ...previous.verification,
@@ -1501,7 +1370,7 @@ export class ChatSession {
         this.onEvent(event);
       },
       mode: 'leader',
-      task: this.taskJournal(),
+      task: this.taskState.journal(this.resuming),
       verification: this.verification,
       leaderSession: this.leaderSession,
       referenceKind: referenceKind(config.cwd, this.ignored),
@@ -1567,7 +1436,7 @@ export class ChatSession {
     });
     this.stopRunning = () => loop.stop();
     const outcome = await loop.done;
-    if (taskUnfinished(this.task) && !['delegated', 'completed', 'result'].includes(outcome.status))
+    if (this.taskState.unfinished && !['delegated', 'completed', 'result'].includes(outcome.status))
       throw new Error(`Task did not complete: ${outcome.status}`);
     if (outcome.status === 'delegated') {
       if (this.lastWork && !this.lastWork.direct) {
@@ -1674,12 +1543,12 @@ export class ChatSession {
     switch (event.type) {
       case 'turn_started': {
         // The orchestrator is read-only; the others may write.
-        if (event.role !== 'orchestrator') this.folderMayHaveChanged();
+        if (event.role !== 'orchestrator') this.taskState.markDirty();
         this.turns.start(roleOf(event.role), this.id('t'), event.agent);
         break;
       }
       case 'message': {
-        if (event.role !== 'orchestrator') this.folderMayHaveChanged();
+        if (event.role !== 'orchestrator') this.taskState.markDirty();
         const role = roleOf(event.role);
         const id = this.turns.end(role);
         if (!id) break;

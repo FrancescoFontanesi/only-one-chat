@@ -12,7 +12,6 @@
 import { startPermissionBridge, type PermissionBridge } from '@only-one-chat/adapters';
 import {
   CommandEvidence,
-  DIFF_CHECKS_UNAVAILABLE,
   directMessagePrompt,
   implementerInstructions,
   NO_COMMANDS_NOTE,
@@ -51,11 +50,12 @@ import type {
   TurnRole,
 } from '../shared/protocol.js';
 import type { Checkpoint } from './checkpoints.js';
-import { changes, configuredCommandFact, snapshot, verifiedFacts } from './facts.js';
+import { changes, snapshot } from './facts.js';
 import { guardReviewerTurn } from './guard.js';
 import { ignoredPaths, type Ignored } from './ignore.js';
 import { plainRefs, referenceKind } from './mentions.js';
 import { PROVIDERS } from './providers.js';
+import { ChatEvidence } from './chat-evidence.js';
 import { TurnTracker } from './thread-projection.js';
 import { UserRequests } from './user-requests.js';
 import {
@@ -140,6 +140,8 @@ export class ChatSession {
   private readonly ignored: Ignored;
   /** The folder as it was before the message running now: what the checks on the diff start from. */
   private inRequest: Checkpoint | null = null;
+  /** The checkpoints, the changes card and the verified facts around a message. */
+  private readonly evidence: ChatEvidence;
   /**
    * The task checkpoint last taken, and whether something that could write
    * to the folder ran since (an agent turn, a verification command): a clean
@@ -199,6 +201,17 @@ export class ChatSession {
     }
     this.restored = config.draft;
     this.ignored = ignoredPaths(config.ignoredPaths ?? []);
+    this.evidence = new ChatEvidence({
+      cwd: config.cwd,
+      store: config.checkpoints,
+      ignored: this.ignored,
+      verifyCommand: config.verifyCommand,
+      inRequest: () => this.inRequest,
+      id: (prefix) => this.id(prefix),
+      update: (update) => {
+        this.events.update(update);
+      },
+    });
     this.unseen = [...(config.unseen ?? [])];
     this.handoffBrief = validImplementerHandoff(config.implementerHandoff)
       ? config.implementerHandoff
@@ -606,7 +619,7 @@ export class ChatSession {
     }
     this.resuming = true;
     try {
-      await this.run(this.checkpoint(), async (baseline, shown) => {
+      await this.run(this.evidence.checkpoint(), async (baseline, shown) => {
         if (!this.task) return;
         this.verification.restore(this.task.verification);
         let progress = this.task.progress;
@@ -739,7 +752,7 @@ export class ChatSession {
             'implementer',
             this.requestController.signal,
           );
-          const facts = [await this.facts(baseline), verified.summary].join('\n\n');
+          const facts = [await this.evidence.facts(baseline), verified.summary].join('\n\n');
           this.saveTaskProgress({
             ...progress,
             step: 'delivery',
@@ -977,50 +990,6 @@ export class ChatSession {
     ].join('\n');
   }
 
-  /** The folder recorded before a message (ADR 0014); null without a store or when it cannot be. */
-  private checkpoint(): Checkpoint | null {
-    const store = this.config.checkpoints;
-    if (!store) return null;
-    try {
-      const checkpoint = store.take(this.id('ckpt'));
-      if (!checkpoint) {
-        this.events.update({
-          type: 'notice',
-          level: 'warn',
-          text: 'Checkpoint unavailable. The workspace has too many files or could not be read. Changes from this message cannot be reverted here.',
-        });
-      }
-      return checkpoint;
-    } catch (error) {
-      this.events.update({
-        type: 'notice',
-        level: 'warn',
-        text: `Could not create a checkpoint: ${error instanceof Error ? error.message : String(error)}`,
-      });
-      return null;
-    }
-  }
-
-  /** The changes card of a message; false when it could not be made. */
-  private review(checkpoint: Checkpoint): boolean {
-    try {
-      const review = this.config.checkpoints?.review(checkpoint);
-      if (!review) return false;
-      if (review.files.length > 0 || review.uncovered.length > 0) {
-        this.events.update({
-          type: 'changes',
-          id: this.id('m'),
-          checkpoint: checkpoint.id,
-          files: review.files,
-          uncovered: review.uncovered,
-        });
-      }
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   /**
    * Sends the user's message, one at a time: to the leader, or to the
    * implementer alone. Without `to`, an `@impl` at the start chooses it (the
@@ -1067,7 +1036,7 @@ export class ChatSession {
       });
       return;
     }
-    const checkpoint = this.checkpoint();
+    const checkpoint = this.evidence.checkpoint();
     this.events.update({
       type: 'user',
       id: this.id('u'),
@@ -1117,7 +1086,7 @@ export class ChatSession {
     this.events.update({ type: 'approval_closed', id: draft.id, action });
     this.events.draft?.(null);
     if (action === 'cancel') return;
-    await this.run(this.checkpoint(), (baseline, shown) =>
+    await this.run(this.evidence.checkpoint(), (baseline, shown) =>
       this.toLeader('', baseline, shown, delegation),
     );
   }
@@ -1158,7 +1127,7 @@ export class ChatSession {
       }
       this.verification.reset();
       this.turns.closeRunning('failed');
-      const reviewed = checkpoint ? this.review(checkpoint) : false;
+      const reviewed = checkpoint ? this.evidence.review(checkpoint) : false;
       if (!shown.facts && !reviewed) {
         // Changes made with no delegation: shown, not judged.
         const changed = changes(baseline, snapshot(this.config.cwd, this.ignored));
@@ -1172,32 +1141,6 @@ export class ChatSession {
       }
       this.events.busy(false);
     }
-  }
-
-  /**
-   * What the runtime verified after an implementer's turn (ADR 0010, 0030): the
-   * changed files and the verification command, then the checks on the diff.
-   */
-  private async facts(
-    baseline: ReturnType<typeof snapshot>,
-    turnBase?: ReturnType<typeof snapshot>,
-  ): Promise<string> {
-    const { config } = this;
-    const facts = await verifiedFacts(config.cwd, baseline, [], this.ignored, turnBase);
-    const command = configuredCommandFact(config.verifyCommand);
-    return `${facts}
-
-${command}
-
-${this.diffChecks()}`;
-  }
-
-  /** The checks on the diff since the request began; said so when they cannot be made. */
-  private diffChecks(): string {
-    const { checkpoints } = this.config;
-    return (
-      (this.inRequest ? checkpoints?.diffChecks(this.inRequest) : null) ?? DIFF_CHECKS_UNAVAILABLE
-    );
   }
 
   /**
@@ -1298,7 +1241,7 @@ ${this.diffChecks()}`;
         turnBase = snapshot(config.cwd, this.ignored);
       },
       facts: async () => {
-        const facts = await this.facts(baseline, turnBase);
+        const facts = await this.evidence.facts(baseline, turnBase);
         shown.facts = true;
         this.events.update({ type: 'notice', level: 'info', text: facts });
         return facts;
@@ -1430,7 +1373,7 @@ ${this.diffChecks()}`;
       'implementer',
       this.requestController.signal,
     );
-    const facts = [await this.facts(baseline), comparison.summary].join('\n\n');
+    const facts = [await this.evidence.facts(baseline), comparison.summary].join('\n\n');
     if (this.task)
       this.saveTaskProgress({
         ...this.task.progress,
@@ -1581,7 +1524,7 @@ ${this.diffChecks()}`;
         turnBase = snapshot(config.cwd, this.ignored);
       },
       facts: async () => {
-        const facts = await this.facts(baseline, turnBase);
+        const facts = await this.evidence.facts(baseline, turnBase);
         shown.facts = true;
         this.events.update({ type: 'notice', level: 'info', text: facts });
         return facts;

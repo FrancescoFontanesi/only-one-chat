@@ -7,7 +7,16 @@ import { spawn } from 'node:child_process';
 import { readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { withoutApiKeys } from '@only-one-chat/adapters';
-import { TURN_FILES_HEADER } from '@only-one-chat/runtime';
+import {
+  CONFIGURED_COMMAND_PREFIX,
+  FAILED_TESTS_HEADER,
+  NO_CONFIGURED_COMMAND,
+  FILES_HEADER,
+  FILES_UNAVAILABLE,
+  OUTPUT_HEADER,
+  TURN_FILES_HEADER,
+  VERIFY_PREFIX,
+} from '@only-one-chat/runtime';
 import { MAX_FILE_BYTES, fileHashes, type FileHashes } from './file-hashes.js';
 import { NOTHING_IGNORED, type Ignored } from './ignore.js';
 
@@ -128,10 +137,9 @@ export async function verifiedFacts(
 ): Promise<string> {
   const now = snapshot(dir, ignored);
   const changed = changes(baseline, now);
-  const lines = ['Files changed since the request began:'];
-  if (changed === 'unknown') {
-    lines.push('- unavailable: the workspace has too many files or could not be read');
-  } else lines.push(...(changed.length > 0 ? changed.map((c) => `- ${c}`) : ['- none']));
+  const lines = [FILES_HEADER];
+  if (changed === 'unknown') lines.push(FILES_UNAVAILABLE);
+  else lines.push(...(changed.length > 0 ? changed.map((c) => `- ${c}`) : ['- none']));
   const turn = turnBase ? changes(turnBase, now) : 'unknown';
   if (turn !== 'unknown') {
     lines.push(
@@ -147,9 +155,9 @@ export async function verifiedFacts(
     const failed = output.split('\n').filter((line) => /^(FAIL|ERROR)[: ]/.test(line));
     lines.push(
       '',
-      `Verification run by the runtime: ${verify.join(' ')} → exit ${String(run.code)}${run.timedOut ? ' (timeout)' : ''}`,
-      ...(failed.length > 0 ? ['Failed tests:', ...failed.map((line) => `- ${line}`)] : []),
-      'Last lines of output:',
+      `${VERIFY_PREFIX}${verify.join(' ')} → exit ${String(run.code)}${run.timedOut ? ' (timeout)' : ''}`,
+      ...(failed.length > 0 ? [FAILED_TESTS_HEADER, ...failed.map((line) => `- ${line}`)] : []),
+      OUTPUT_HEADER,
       output.split('\n').slice(-15).join('\n') || '(no output)',
     );
   }
@@ -159,6 +167,6 @@ export async function verifiedFacts(
 /** The line the facts carry about the configured verification command. */
 export function configuredCommandFact(verify: readonly string[]): string {
   return verify.length > 0
-    ? `Configured runtime verification command: ${JSON.stringify(verify)}. The {junit} placeholder receives an extension-owned report path.`
-    : 'No runtime verification command configured.';
+    ? `${CONFIGURED_COMMAND_PREFIX}${JSON.stringify(verify)}. The {junit} placeholder receives an extension-owned report path.`
+    : NO_CONFIGURED_COMMAND;
 }

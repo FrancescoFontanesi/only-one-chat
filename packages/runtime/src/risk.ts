@@ -11,6 +11,7 @@
 
 import { lineCounts } from './line-counts.js';
 import { TEST_FILE } from './contract.js';
+import { RISK_PREFIX } from './fact-headers.js';
 import { shortcutFlags, type TextChange } from './shortcuts.js';
 
 type RiskLevel = 'low' | 'medium' | 'high';
@@ -154,5 +155,5 @@ export function assessRisk(
 
 /** The assessment as a line of the facts. */
 export function riskFact(risk: RiskAssessment): string {
-  return `Change risk estimated by the runtime: ${risk.level} (${risk.score.toFixed(2)}) — ${risk.reasons.join('; ')}.`;
+  return `${RISK_PREFIX}${risk.level} (${risk.score.toFixed(2)}) — ${risk.reasons.join('; ')}.`;
 }

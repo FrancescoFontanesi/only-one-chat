@@ -8,11 +8,19 @@ import { Fragment, type ComponentChildren } from 'preact';
 import { useContext, useState } from 'preact/hooks';
 import type { SessionInfo, TurnHandoff } from '../src/webview/protocol.js';
 import { refTokens } from '../src/shared/refs.js';
-import { FactsTurn, Verification } from './Facts.js';
+import { ContractTurn, FactsTurn, GateTurn, Verification } from './Facts.js';
 import { Markdown } from './markdown.js';
 import { Progress } from './motion.js';
 import type { ThreadItem } from './state.js';
-import { isFacts, opsSummary, readOp, readUserMessage, type Op } from './threadModel.js';
+import {
+  isFacts,
+  opsSummary,
+  readContract,
+  readGate,
+  readOp,
+  readUserMessage,
+  type Op,
+} from './threadModel.js';
 import { duration, kilo, post, ShownNode, useWho } from './ui.js';
 
 type Item<K extends ThreadItem['kind']> = Extract<ThreadItem, { kind: K }>;
@@ -800,15 +808,15 @@ export function Thread({
               item.id,
               <Changes key={item.id} item={item} number={numbers.get(item.id)} busy={busy} />,
             );
-          case 'notice':
-            return isFacts(item.text) ? (
-              enter(
-                item.id,
-                <FactsTurn key={item.id} text={item.text} number={numbers.get(item.id)} />,
-              )
-            ) : (
-              <Notice key={item.id} item={item} retry={retry} />
-            );
+          case 'notice': {
+            if (isFacts(item.text))
+              return <FactsTurn key={item.id} text={item.text} number={numbers.get(item.id)} />;
+            const contract = readContract(item.text);
+            if (contract) return <ContractTurn key={item.id} {...contract} />;
+            const gate = readGate(item.text);
+            if (gate !== null) return <GateTurn key={item.id} result={gate} />;
+            return <Notice key={item.id} item={item} retry={retry} />;
+          }
         }
       })}
     </>

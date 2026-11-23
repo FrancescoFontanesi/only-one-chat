@@ -7,6 +7,7 @@
 // comparisons between the fields of the handoffs (ADR 0035); only the brief
 // stays text, because the user can edit it before it is sent.
 
+import { CONTRACT_SUFFIX, TURN_FILES_HEADER } from './fact-headers.js';
 import type { Delegate, Report, Review, ReviewVerdict } from './handoff.js';
 
 /** A test file, by the conventions of the usual languages and tools. */
@@ -56,9 +57,6 @@ export function criteriaOf(brief: string): string[] {
   }
   return [...ids];
 }
-
-/** Heads the files one implementer turn changed, in the runtime's facts (ADR 0041). */
-export const TURN_FILES_HEADER = "Files changed by the implementer's last turn:";
 
 /** The files in the facts (`- modified path`): the whole request's, and this turn's when listed. */
 function filesIn(facts: string): { all: string[]; turn: string[] | undefined } {
@@ -373,5 +371,5 @@ export function checkReview(
 export function contractFacts(title: string, issues: readonly ContractIssue[]): string {
   return issues.length === 0
     ? ''
-    : [`${title}, made by the runtime:`, ...issues.map((issue) => `- ${issue.message}`)].join('\n');
+    : [`${title}${CONTRACT_SUFFIX}`, ...issues.map((issue) => `- ${issue.message}`)].join('\n');
 }

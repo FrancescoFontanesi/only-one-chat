@@ -5,6 +5,7 @@
 // shows as a test removed. Pure: no `vscode`, no disk.
 
 import { TEST_FILE } from './contract.js';
+import { DIFF_CHECKS_HEADER, DIFF_CHECKS_SKIPPED_PREFIX, NO_FLAGS } from './fact-headers.js';
 
 /** A file the request changed, with its text before and after; null: it did not exist. */
 export interface TextChange {
@@ -152,10 +153,8 @@ export function shortcutFacts(
 ): string {
   const flags = shortcutFlags(changes);
   return [
-    'Runtime diff checks (flags for review):',
-    ...(flags.length > 0 ? flags.map((flag) => `- ${flag}`) : ['- no flags']),
-    ...(uncovered.length > 0
-      ? [`Skipped because they were too large: ${uncovered.join(', ')}`]
-      : []),
+    DIFF_CHECKS_HEADER,
+    ...(flags.length > 0 ? flags.map((flag) => `- ${flag}`) : [NO_FLAGS]),
+    ...(uncovered.length > 0 ? [`${DIFF_CHECKS_SKIPPED_PREFIX}${uncovered.join(', ')}`] : []),
   ].join('\n');
 }

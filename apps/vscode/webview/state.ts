@@ -60,8 +60,11 @@ export type ThreadItem =
       readonly to: string;
       readonly text: string;
       readonly refs?: readonly string[];
-      /** `@` paths that look like files and do not exist. */
+      /** `@` paths that look like files and do not exist, and brief paths not found. */
       readonly missing?: readonly string[];
+      /** The delegate call's paths and references (ADR 0048). */
+      readonly paths?: readonly string[];
+      readonly references?: readonly string[];
       /** The user's decision, once taken; `sent` when it went on by itself. */
       readonly closed?: string;
     }
@@ -215,6 +218,8 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
           text: update.text,
           ...(update.refs ? { refs: update.refs } : {}),
           ...(update.missing ? { missing: update.missing } : {}),
+          ...(update.paths ? { paths: update.paths } : {}),
+          ...(update.references ? { references: update.references } : {}),
         },
       ];
     case 'approval_closed':

@@ -316,8 +316,11 @@ export type ThreadUpdate =
       readonly to: string;
       readonly text: string;
       readonly refs?: readonly string[];
-      /** `@` paths that look like files and do not exist: pointed out, not blocking. */
+      /** `@` paths that look like files and do not exist, and brief paths not found. */
       readonly missing?: readonly string[];
+      /** The delegate call's own fields, shown as links (ADR 0048). */
+      readonly paths?: readonly string[];
+      readonly references?: readonly string[];
     }
   /** approve, edit, cancel; `sent`, without the user; `interrupted`, a chat closed before. */
   | { readonly type: 'approval_closed'; readonly id: string; readonly action: string }

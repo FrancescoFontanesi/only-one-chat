@@ -16,6 +16,8 @@ import {
 } from '@only-one-chat/adapters';
 import {
   CommandEvidence,
+  DIFF_CHECKS_UNAVAILABLE,
+  GATE_SENT_BACK_HEADER,
   directMessagePrompt,
   implementerInstructions,
   NO_COMMANDS_NOTE,
@@ -170,7 +172,16 @@ export interface DraftDelegation {
   readonly text: string;
   readonly from: string;
   readonly to: string;
+  /** The delegate call's paths and references, for the card's links (ADR 0048). */
+  readonly paths?: readonly string[];
+  readonly references?: readonly string[];
 }
+
+/** A message's paths and references, the fields only when present. */
+const scopeOf = (m: { paths?: readonly string[]; references?: readonly string[] }) => ({
+  ...(m.paths ? { paths: m.paths } : {}),
+  ...(m.references ? { references: m.references } : {}),
+});
 
 /**
  * The leader never writes (ADR 0018), nor does the reviewer (ADR 0029):
@@ -289,7 +300,7 @@ export class ChatSession {
    */
   private taskCheckpoint: { id: string; clean: boolean } | undefined;
   /** The latest message between agents the loop showed, for the card of one that went on by itself. */
-  private lastIntercepted: { from: string; to: string; text: string } | undefined;
+  private lastIntercepted: Omit<DraftDelegation, 'id'> | undefined;
   /** The reviewer now: the panel switches it on and off during the chat (ADR 0033). */
   private reviewerConfig: ReviewerConfig | undefined;
   /** The last implementer work, what a review the user asks for looks at (ADR 0033). */
@@ -1341,8 +1352,7 @@ ${this.diffChecks()}`;
   private diffChecks(): string {
     const { checkpoints } = this.config;
     return (
-      (this.inRequest ? checkpoints?.diffChecks(this.inRequest) : null) ??
-      'The runtime skipped diff checks because there was no workspace checkpoint.'
+      (this.inRequest ? checkpoints?.diffChecks(this.inRequest) : null) ?? DIFF_CHECKS_UNAVAILABLE
     );
   }
 
@@ -1736,7 +1746,13 @@ ${this.diffChecks()}`;
         new Promise<InterceptDecision>((resolve, reject) => {
           const id = this.id('a');
           this.pending.set(id, resolve);
-          const held = { id, text: message.text, from: message.from, to: message.to };
+          const held: DraftDelegation = {
+            id,
+            text: message.text,
+            from: message.from,
+            to: message.to,
+            ...scopeOf(message),
+          };
           this.held = held;
           signal.addEventListener('abort', () => {
             this.pending.delete(id);
@@ -1752,6 +1768,7 @@ ${this.diffChecks()}`;
             from: message.from,
             to: message.to,
             text: message.text,
+            ...scopeOf(message),
           });
           if (message.kind === 'delegation') this.events.draft?.(held);
         }),
@@ -2059,10 +2076,18 @@ ${this.diffChecks()}`;
           from: message.from,
           to: message.to,
           text: message.text,
+          ...scopeOf(message),
         });
         update({ type: 'approval_closed', id, action: 'sent' });
         break;
       }
+      case 'gate_sent_back':
+        update({
+          type: 'notice',
+          level: 'warn',
+          text: `${GATE_SENT_BACK_HEADER}\n${event.status} — ${event.summary}`,
+        });
+        break;
       case 'reviewed': {
         const verdict = event.verdict
           ? event.verdict.replace('_', ' ').toUpperCase()

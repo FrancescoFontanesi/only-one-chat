@@ -90,9 +90,11 @@ describe('the chat thread as the Chat board reads it (ADR 0016)', () => {
     expect(isFacts(`${heading.shortTitle}\n- modified src/a.ts`)).toBe(true);
     expect(readFacts(text)).toEqual({
       files: ['modified src/a.ts', 'added src/a.test.ts'],
+      unavailable: false,
       verify: 'npm test · exit 1',
       failed: ['FAIL: rifiuta email senza dominio'],
       output: 'Tests: 1 failed\nFailed tests:',
+      checksUnavailable: false,
     });
   });
 

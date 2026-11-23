@@ -89,6 +89,9 @@ export interface InterceptedMessage {
   readonly text: string;
   /** 1-based exchange number. */
   readonly exchange: number;
+  /** A delegation's `paths` and `references` as the leader's call gave them (ADR 0042, 0044). */
+  readonly paths?: readonly string[];
+  readonly references?: readonly string[];
 }
 
 export type InterceptDecision =
@@ -163,6 +166,8 @@ export type ThreadEvent =
     }
   | { readonly type: 'delegation_invalid'; readonly errors: readonly string[] }
   | { readonly type: 'intercepted'; readonly message: InterceptedMessage }
+  /** The runtime's check before a review failed: the work goes back without a review (ADR 0041). */
+  | { readonly type: 'gate_sent_back'; readonly status: string; readonly summary: string }
   | {
       readonly type: 'decision';
       readonly kind: 'delegation' | 'review' | 'malformed';
@@ -914,6 +919,7 @@ export function runLoop(options: LoopOptions): Loop {
         (r.status === 'inconclusive' && typeof r.exitCode === 'number' && r.exitCode !== 0);
       let result = await check();
       if (sendsBack(result)) {
+        await emit({ type: 'gate_sent_back', status: result.status, summary: result.summary });
         const failure = gatePrompt(
           [`Runtime verification: ${result.status}`, result.summary, result.detail ?? '']
             .join('\n')
@@ -1175,6 +1181,8 @@ export function runLoop(options: LoopOptions): Loop {
     let fixes = 0;
     for (;;) {
       let delegation: string;
+      /** The call's paths and references; none for a brief the user wrote or edited. */
+      let scope: Pick<InterceptedMessage, 'paths' | 'references'> = {};
       const fromDraft = draft !== undefined;
       if (draft !== undefined) {
         delegation = draft;
@@ -1228,6 +1236,8 @@ export function runLoop(options: LoopOptions): Loop {
           delegation = decision.text;
         } else {
           delegation = renderBrief(call.value);
+          const { paths, references } = call.value;
+          scope = { ...(paths ? { paths } : {}), ...(references ? { references } : {}) };
         }
       }
 
@@ -1236,7 +1246,14 @@ export function runLoop(options: LoopOptions): Loop {
       const approved = fromDraft
         ? delegation
         : await intercept(
-            { kind: 'delegation', from: leader.name, to: worker.name, text: delegation, exchange },
+            {
+              kind: 'delegation',
+              from: leader.name,
+              to: worker.name,
+              text: delegation,
+              exchange,
+              ...scope,
+            },
             brief !== undefined,
           );
       if (fromDraft) await options.log.append('draft_delegation', { text: delegation });

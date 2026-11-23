@@ -2,6 +2,22 @@
 // numbered in order, a turn's activity counted by kind, the facts of a
 // delegation and a user message split into its parts. Pure functions.
 
+import {
+  CONFIGURED_COMMAND_PREFIX,
+  CONTRACT_SUFFIX,
+  DIFF_CHECKS_HEADER,
+  DIFF_CHECKS_SKIPPED_PREFIX,
+  DIFF_CHECKS_UNAVAILABLE,
+  FAILED_TESTS_HEADER,
+  FILES_UNAVAILABLE,
+  GATE_SENT_BACK_HEADER,
+  NO_CONFIGURED_COMMAND,
+  NO_FLAGS,
+  OUTPUT_HEADER,
+  RISK_PREFIX,
+  TURN_FILES_HEADER,
+  VERIFY_PREFIX,
+} from '../../../packages/runtime/src/fact-headers.js';
 import type { ThreadItem } from './state.js';
 
 /** D01, D02 for delegations; a report and the facts after a delegation take its number. */
@@ -90,44 +106,114 @@ export function isFacts(text: string): boolean {
   );
 }
 
-interface Facts {
+export interface Facts {
   readonly files: readonly string[];
+  /** The workspace could not be compared: too many files, or unreadable (ADR 0047). */
+  readonly unavailable: boolean;
+  /** What the implementer's last turn changed, when listed (ADR 0041). */
+  readonly turn?: readonly string[];
   readonly verify?: string;
   readonly failed: readonly string[];
   readonly output?: string;
+  /** The diff checks' flags, empty for `no flags`; absent when the text has none (ADR 0046). */
+  readonly flags?: readonly string[];
+  /** Changed files too large to check. */
+  readonly skipped?: string;
+  readonly checksUnavailable: boolean;
+  readonly risk?: { readonly level: string; readonly score: string; readonly reasons: string[] };
 }
 
-/** The facts' text read back into its parts (facts.ts writes it). */
+/** Lines that end the verification output: the blocks written after it. */
+const AFTER_OUTPUT = [
+  CONFIGURED_COMMAND_PREFIX,
+  NO_CONFIGURED_COMMAND,
+  DIFF_CHECKS_HEADER,
+  DIFF_CHECKS_UNAVAILABLE,
+  RISK_PREFIX,
+];
+/** The verification heading; older chats wrote it in Italian. */
+const VERIFY_HEADING = new RegExp(
+  `^(?:${VERIFY_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|Verifica eseguita dal runtime: )`,
+);
+
+/** The facts' text read back into its parts, by the headers its producers write (ADR 0048). */
 export function readFacts(text: string): Facts {
-  const lines = text.split('\n');
   const files: string[] = [];
   const failed: string[] = [];
-  let verify: string | undefined;
-  let section: 'files' | 'failed' | 'output' | null = 'files';
   const output: string[] = [];
-  for (const line of lines.slice(1)) {
+  let turn: string[] | undefined;
+  let flags: string[] | undefined;
+  let verify: string | undefined;
+  let skipped: string | undefined;
+  let risk: Facts['risk'];
+  let unavailable = false;
+  let checksUnavailable = false;
+  let section: 'files' | 'turn' | 'failed' | 'output' | 'flags' | null = 'files';
+  for (const line of text.split(/\r?\n/).slice(1)) {
     if (section === 'output') {
-      output.push(line);
-      continue;
+      if (!AFTER_OUTPUT.some((start) => line.startsWith(start))) {
+        output.push(line);
+        continue;
+      }
+      section = null;
     }
-    const heading = /^(?:Verification run by the runtime|Verifica eseguita dal runtime): /.exec(
-      line,
-    );
+    const heading = VERIFY_HEADING.exec(line);
     if (heading) {
       verify = line.slice(heading[0].length).replace(' → exit ', ' · exit ');
       section = null;
-    } else if (line === 'Failed tests:' || line === 'Test falliti:') section = 'failed';
-    else if (line === 'Last lines of output:' || line === 'Ultime righe dell’output:')
-      section = 'output';
-    else if (line.startsWith('- ') && section === 'files') files.push(line.slice(2));
-    else if (line.startsWith('- ') && section === 'failed') failed.push(line.slice(2));
+    } else if (line === TURN_FILES_HEADER) [section, turn] = ['turn', []];
+    else if (line === FAILED_TESTS_HEADER || line === 'Test falliti:') section = 'failed';
+    else if (line === OUTPUT_HEADER || line === 'Ultime righe dell’output:') section = 'output';
+    else if (line === DIFF_CHECKS_HEADER) [section, flags] = ['flags', []];
+    else if (line === DIFF_CHECKS_UNAVAILABLE) checksUnavailable = true;
+    else if (line.startsWith(DIFF_CHECKS_SKIPPED_PREFIX))
+      skipped = line.slice(DIFF_CHECKS_SKIPPED_PREFIX.length);
+    else if (line.startsWith(RISK_PREFIX)) risk = readRisk(line.slice(RISK_PREFIX.length));
+    else if (!line.startsWith('- ')) section = line === '' ? null : section;
+    else if (section === 'files' && line === FILES_UNAVAILABLE) unavailable = true;
+    else if (section === 'files') files.push(line.slice(2));
+    else if (section === 'turn') turn?.push(line.slice(2));
+    else if (section === 'failed') failed.push(line.slice(2));
+    else if (section === 'flags' && line !== NO_FLAGS) flags?.push(line.slice(2));
   }
+  while (output.at(-1) === '') output.pop();
   return {
     files,
+    unavailable,
+    ...(turn ? { turn } : {}),
     ...(verify ? { verify } : {}),
     failed,
     ...(output.length > 0 ? { output: output.join('\n') } : {}),
+    ...(flags ? { flags } : {}),
+    ...(skipped ? { skipped } : {}),
+    checksUnavailable,
+    ...(risk ? { risk } : {}),
   };
+}
+
+/** `medium (0.42) — 3 files changed; no tests changed.` */
+function readRisk(text: string): Facts['risk'] {
+  const match = /^(\w+) \((-?[\d.]+)\)(?: — (.*?))?\.?$/.exec(text);
+  if (!match) return undefined;
+  const [, level = '', score = '', reasons = ''] = match;
+  return { level, score, reasons: reasons.split('; ').filter(Boolean) };
+}
+
+/** The checks of a report or a review against the brief, as the runtime writes them (ADR 0031, 0042). */
+export function readContract(text: string): { title: string; items: string[] } | null {
+  const [first = '', ...rest] = text.split(/\r?\n/);
+  if (!/^Checks on the \w+/.test(first) || !first.endsWith(CONTRACT_SUFFIX)) return null;
+  return {
+    title: first.slice(0, -CONTRACT_SUFFIX.length),
+    items: rest.filter((line) => line.startsWith('- ')).map((line) => line.slice(2)),
+  };
+}
+
+/** A check before the review that sent the work back (ADR 0041): its result line. */
+export function readGate(text: string): string | null {
+  return text.startsWith(GATE_SENT_BACK_HEADER)
+    ? text.slice(GATE_SENT_BACK_HEADER.length).trim()
+    : null;
 }
 
 interface UserMessage {

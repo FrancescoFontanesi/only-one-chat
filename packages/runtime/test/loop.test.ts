@@ -465,6 +465,24 @@ describe('brief references, checked before the brief is sent (ADR 0044)', () => 
     );
   });
 
+  it('hands the card the call’s paths and the references left after the filter (ADR 0048)', async () => {
+    const codex = fakeAgent('Codex', [
+      delegates({ paths: ['src/'], references: ['AGENTS.md', 'docs/spec.md#L2-4'] }),
+      { answer: 'Done.' },
+    ]);
+    const claude = fakeAgent('Claude', [reports()]);
+    const { running, harness } = await loop(codex, claude, [], [], { ...auto, referenceKind });
+    await running.done;
+    expect(harness.events).toContainEqual({
+      type: 'intercepted',
+      message: expect.objectContaining({
+        kind: 'delegation',
+        paths: ['src/'],
+        references: ['docs/spec.md#L2-4'],
+      }) as unknown,
+    });
+  });
+
   it('omits the section when everything is filtered', async () => {
     const { codex, claude } = await run(['AGENTS.md', 'claude.md']);
     expect(codex.prompts[1]).not.toContain('not valid');
@@ -1687,6 +1705,10 @@ describe('leader mode with a reviewer (ADR 0029, 0035)', () => {
         type: 'intercepted',
         message: expect.objectContaining({ from: 'Runtime verification', to: 'Claude' }) as unknown,
       });
+      // The thread is told it went back without a review (ADR 0048), once.
+      expect(harness.events.filter((e) => e.type === 'gate_sent_back')).toEqual([
+        { type: 'gate_sent_back', status: 'failed', summary: 'GATE-SUMMARY' },
+      ]);
       expect(saved).toContainEqual(
         expect.objectContaining({
           step: 'implementation',

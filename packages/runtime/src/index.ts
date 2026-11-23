@@ -57,7 +57,6 @@ export type {
 export { openEventLog, type EventLog, type LoggedEvent } from './event-log.js';
 export {
   TEST_FILE,
-  TURN_FILES_HEADER,
   changedFiles,
   checkReferences,
   checkReport,
@@ -107,6 +106,7 @@ export {
   subagentRules,
   type PendingReport,
 } from './prompts.js';
+export * from './fact-headers.js';
 export { lineCounts } from './line-counts.js';
 export { assessRisk, riskFact } from './risk.js';
 export { shortcutFacts, shortcutFlags, type TextChange } from './shortcuts.js';

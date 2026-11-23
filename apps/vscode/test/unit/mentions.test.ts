@@ -173,6 +173,21 @@ describe('@ paths in any text (ADR 0018)', () => {
         cwd,
       ),
     ).toMatchObject({ refs: ['src/calc.py'], missing: ['src/x.ts'] });
+    // The brief's own paths (ADR 0048): a folder that exists stays a link, a new one is missing.
+    expect(
+      withRefs(
+        {
+          type: 'approval',
+          id: 'a',
+          kind: 'delegation',
+          from: 'L',
+          to: 'I',
+          text: 'brief',
+          paths: ['src/', 'src/new.py', '../outside.py'],
+        },
+        cwd,
+      ),
+    ).toMatchObject({ missing: ['src/new.py', '../outside.py'] });
   });
 });
 

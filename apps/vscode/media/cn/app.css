@@ -1716,6 +1716,18 @@ input:focus-visible {
   margin: 0;
   color: var(--ink);
 }
+/* The brief's paths and references as links (ADR 0048). */
+.apr .apr__scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+  margin: 8px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
 /* Paths of the brief that look like files and do not exist: told, not blocking. */
 .apr .apr__miss {
   margin: 8px 0 0;
@@ -1822,6 +1834,12 @@ input:focus-visible {
 }
 .cn-spec.facts {
   grid-template-columns: 160px minmax(0, 1fr);
+}
+/* A row of several entries (the diff checks' flags): one per line. */
+.cn-spec.facts dd.facts__list {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 
 /* The tools an agent uses, as a terminal log inside its turn. */

@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { PermitDecision } from '../src/webview/protocol.js';
+import { linkPath } from '../src/shared/refs.js';
 import { flash } from './motion.js';
 import type { ThreadItem } from './state.js';
 import { post, useWho } from './ui.js';
@@ -265,6 +266,56 @@ export function QuestionFrame({ item }: { item: Item<'question'> }) {
 }
 
 /**
+ * The brief's paths or references (ADR 0042, 0044) as links to the editor: a
+ * folder (`src/`) is revealed in the explorer by the host, `file#L10-40` opens
+ * at those lines. One the folder does not have yet stays plain text.
+ */
+function ScopeLinks({
+  label,
+  entries,
+  missing,
+}: {
+  label: string;
+  entries: readonly string[] | undefined;
+  missing: readonly string[] | undefined;
+}) {
+  if (!entries || entries.length === 0) return null;
+  return (
+    <p class="apr__scope">
+      <span class="cn-tag">{label}</span>{' '}
+      {entries.map((entry) => {
+        const target = linkPath(entry);
+        if (!target || missing?.includes(entry)) {
+          return (
+            <span key={entry} class="t-data" title="Not in the folder yet">
+              {entry}{' '}
+            </span>
+          );
+        }
+        const { path, lines } = target;
+        return (
+          <button
+            key={entry}
+            class="lnk"
+            type="button"
+            title={path.endsWith('/') ? 'Show in the explorer' : 'Open in the editor'}
+            onClick={() => {
+              post({
+                type: 'openFile',
+                path,
+                ...(lines ? { from: lines.from, to: lines.to } : {}),
+              });
+            }}
+          >
+            {entry}
+          </button>
+        );
+      })}
+    </p>
+  );
+}
+
+/**
  * A delegation the manual delivery holds (ADR 0018): the brief as free text,
  * editable, sent as it is or as edited, or cancelled. The chat waits for it.
  * Paths that look like files and do not exist are pointed out, not blocking.
@@ -305,6 +356,8 @@ export function ApprovalFrame({ item, number }: { item: Item<'approval'>; number
             />
           </div>
         </div>
+        <ScopeLinks label="PATHS" entries={item.paths} missing={item.missing} />
+        <ScopeLinks label="REFERENCES" entries={item.references} missing={item.missing} />
         {item.missing && item.missing.length > 0 && (
           <p class="apr__miss">
             ▲ {item.missing.length === 1 ? 'Path not found' : 'Paths not found'}:{' '}

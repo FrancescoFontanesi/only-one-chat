@@ -86,15 +86,35 @@ function pendingReports(value: unknown): PendingReport[] {
 /** The draft of a record read from disk, if it has the right shape. */
 function draftOf(value: unknown): DraftDelegation | null {
   const d = value as Partial<Record<keyof DraftDelegation, unknown>> | null;
-  return typeof d === 'object' &&
-    d !== null &&
-    typeof d.id === 'string' &&
-    ID.test(d.id) &&
-    typeof d.text === 'string' &&
-    typeof d.from === 'string' &&
-    typeof d.to === 'string'
-    ? { id: d.id, text: d.text, from: d.from, to: d.to }
-    : null;
+  if (
+    typeof d !== 'object' ||
+    d === null ||
+    typeof d.id !== 'string' ||
+    !ID.test(d.id) ||
+    typeof d.text !== 'string' ||
+    typeof d.from !== 'string' ||
+    typeof d.to !== 'string'
+  )
+    return null;
+  const paths = pathList(d.paths);
+  const references = pathList(d.references);
+  return {
+    id: d.id,
+    text: d.text,
+    from: d.from,
+    to: d.to,
+    ...(paths ? { paths } : {}),
+    ...(references ? { references } : {}),
+  };
+}
+
+/** A saved list of brief paths: kept only when every entry is a short string. */
+function pathList(value: unknown): string[] | undefined {
+  return Array.isArray(value) &&
+    value.length <= 64 &&
+    value.every((p) => typeof p === 'string' && p !== '' && p.length <= 1024)
+    ? (value as string[])
+    : undefined;
 }
 
 /** The file notes of a record read from disk; anything but strings is dropped. */

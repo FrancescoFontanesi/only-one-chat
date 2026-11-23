@@ -185,6 +185,13 @@ export function withRefs(update: ThreadUpdate, cwd: string): ThreadUpdate {
         : '';
   if (text === '') return update;
   const { found, missing } = resolveRefs(text, cwd);
+  // The brief's own paths (ADR 0042) have no `@`: one not in the folder is shown as missing.
+  if (update.type === 'approval') {
+    for (const path of update.paths ?? []) {
+      if (!insideFolder(cwd, path.replace(/\/+$/, '')) && !missing.includes(path))
+        missing.push(path);
+    }
+  }
   // An agent's links and inline paths that name a file of the folder, as written.
   if (update.type === 'turn') {
     for (const raw of pathCandidates(text)) {

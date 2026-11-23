@@ -8,7 +8,7 @@ import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync
 import { join } from 'node:path';
 import type { PendingReport } from '@only-one-chat/runtime';
 import { isVerificationEvidence } from '../../../../packages/runtime/src/verification.js';
-import type { AgentChoice, DraftDelegation, FileNotes } from './chat.js';
+import type { AgentChoice, DraftDelegation, FileNotes } from './chat-types.js';
 import { readSavedTask, type SavedTask } from './task.js';
 import type { Cli, ContextInfo, ThreadUpdate, TurnRole } from '../shared/protocol.js';
 

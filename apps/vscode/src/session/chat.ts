@@ -9,23 +9,17 @@
 // no `vscode`: the panel passes the configuration in, so the session can be
 // tested against the fake CLIs.
 
-import { startPermissionBridge, type PermissionBridge } from '@only-one-chat/adapters';
 import {
   CommandEvidence,
   directMessagePrompt,
-  implementerInstructions,
   NO_COMMANDS_NOTE,
   agentLabel,
-  agentSessionOptions,
-  leaderInstructions,
   openEventLog,
-  handoffTools,
   pendingReportsPreface,
   frameWorkerAnswer,
   readHandoff,
   renderReport,
   runLoop,
-  type AgentFactory,
   type LoopOptions,
   type AgentSession,
   type EventLog,
@@ -54,6 +48,7 @@ import { ignoredPaths, type Ignored } from './ignore.js';
 import { plainRefs, referenceKind } from './mentions.js';
 import { PROVIDERS } from './providers.js';
 import { ChatEvidence } from './chat-evidence.js';
+import { RoleSessions } from './role-sessions.js';
 import { recoveredProgress, TaskState } from './task-state.js';
 import { TurnTracker } from './thread-projection.js';
 import { UserRequests } from './user-requests.js';
@@ -63,6 +58,9 @@ import {
   HANDOFF_REQUEST,
   readOnly,
   roleOf,
+  policyOf,
+  hasJunit,
+  withUserInstructions,
   scopeOf,
   StoppedBeforeTurn,
   summarize,
@@ -86,11 +84,6 @@ export type {
 export class ChatSession {
   private mode: ApprovalMode;
   private log: EventLog | undefined;
-  private leaderSession: AgentSession | undefined;
-  /** Kept across delegations and direct messages: a follow-up costs it little (calc-small). */
-  private implementerSession: AgentSession | undefined;
-  /** The pending handoff, until the replacement session ID is saved. */
-  private handoffBrief: string | undefined;
   /** Stops what is running now: a leader loop or a direct implementer turn. */
   private stopRunning: (() => Promise<void>) | undefined;
   private stopRequested = false;
@@ -99,7 +92,6 @@ export class ChatSession {
   /** The durable task and its recovery state (ADR 0043, 0047). */
   private readonly taskState: TaskState;
   private resuming = false;
-  private readonly recoveredWithoutHistory = new Set<RoleName>();
   private readonly taskEnabled: boolean;
   private running = false;
   private nextId = 1;
@@ -108,8 +100,6 @@ export class ChatSession {
     this.events.update(update);
   });
   private readonly pending = new Map<string, (decision: InterceptDecision) => void>();
-  /** The permission bridges of the Claude roles, for the chat. */
-  private readonly bridges = new Map<RoleName, PermissionBridge>();
   /** Agents' permission requests and questions waiting for the user (R9, ADR 0019). */
   private readonly requests = new UserRequests(
     (prefix) => this.id(prefix),
@@ -119,16 +109,10 @@ export class ChatSession {
   );
   /** Implementer work the leader has not seen yet. */
   private unseen: PendingReport[] = [];
-  /** Sessions of a reopened chat not resumed yet. */
-  private readonly resumable = new Map<RoleName, string>();
-  /** The CLIs' own session of each role, as last reported. */
-  private readonly nativeSessions = new Map<RoleName, string>();
   /** Files the user put back, not told yet to each role. */
   private readonly fileNotes: Record<RoleName, string[]>;
-  /** Roles whose session is reopened with new rules before their next turn. */
-  private readonly reopen = new Set<RoleName>();
-  /** The roles as configured, with the effort the user chose during the chat. */
-  private readonly roles: { leader: AgentChoice; implementer: AgentChoice };
+  /** The roles and their sessions, bridges and pending handoff (ADR 0011, 0017, 0027). */
+  private readonly sessions: RoleSessions;
   /** The delegation of a reopened chat still waiting for the user; sent from here. */
   private restored: DraftDelegation | undefined;
   /** The message held for the user now, as the loop showed it. */
@@ -176,14 +160,13 @@ export class ChatSession {
       },
     });
     this.reviewerConfig = config.reviewer;
-    this.roles = { leader: readOnly(config.leader), implementer: config.implementer };
     this.taskState = new TaskState(
       {
         enabled: this.taskEnabled,
         store: config.checkpoints,
         configuration: () => this.taskConfiguration(),
         verification: () => this.verification.checkpoint(),
-        session: (role) => this.nativeSessions.get(role) ?? this.config.resume?.[role],
+        session: (role) => this.sessions.native(role) ?? this.config.resume?.[role],
         id: (prefix) => this.id(prefix),
         update: (update) => {
           this.events.update(update);
@@ -222,49 +205,31 @@ export class ChatSession {
       },
     });
     this.unseen = [...(config.unseen ?? [])];
-    this.handoffBrief = validImplementerHandoff(config.implementerHandoff)
-      ? config.implementerHandoff
-      : undefined;
     this.fileNotes = {
       leader: [...(config.fileNotes?.leader ?? [])],
       implementer: [...(config.fileNotes?.implementer ?? [])],
     };
-    for (const [role, id] of Object.entries({
-      ...this.taskState.task?.sessions,
-      ...config.resume,
-    }) as [RoleName, string][]) {
-      if (!['leader', 'implementer'].includes(role) || typeof id !== 'string' || id.length > 512)
-        continue;
-      if (role === 'implementer' && this.handoffBrief !== undefined) continue;
-      this.resumable.set(role, id);
-    }
+    this.sessions = new RoleSessions(
+      {
+        config,
+        events,
+        requests: this.requests,
+        stopRequested: () => this.stopRequested,
+        closing: () => this.closing,
+        resuming: () => this.resuming,
+        savedSession: (role) => this.taskState.task?.sessions?.[role],
+      },
+      { ...this.taskState.task?.sessions, ...config.resume },
+      validImplementerHandoff(config.implementerHandoff) ? config.implementerHandoff : undefined,
+    );
   }
 
   /**
    * The user's choice for a role during the chat (ADR 0012), from the role's
-   * next turn and always in the role's own CLI session: model and effort go to
-   * the same session; another permission level reopens that session with the
-   * new rules. Another CLI is not applied: the chat keeps its providers, since
-   * moving the work to another provider is a handoff (to be designed). The
-   * leader keeps its model too: without a handoff of the leader, its
-   * conversation stays with the model it began with.
-   * Returns false when the choice was not applied in full.
+   * next turn. Returns false when the choice was not applied in full.
    */
   setRole(role: RoleName, choice: AgentChoice): boolean {
-    if (role === 'leader') choice = readOnly(choice);
-    const before = this.roles[role];
-    if (choice.cli !== before.cli) return false;
-    const locked = role === 'leader' && choice.model !== before.model;
-    if (locked) choice = { ...choice, model: before.model };
-    this.roles[role] = choice;
-    const session = role === 'leader' ? this.leaderSession : this.implementerSession;
-    if (choice.permission !== before.permission && session) {
-      this.reopen.add(role);
-      return !locked;
-    }
-    if (choice.model !== before.model) session?.setModel?.(choice.model);
-    if (choice.effort !== before.effort) session?.setEffort?.(choice.effort);
-    return !locked;
+    return this.sessions.setRole(role, choice);
   }
 
   /**
@@ -277,58 +242,7 @@ export class ChatSession {
 
   /** The roles of this chat, with the user's changes. */
   get currentRoles(): { readonly leader: AgentChoice; readonly implementer: AgentChoice } {
-    return { ...this.roles };
-  }
-
-  /** Sessions reopened with new rules: before a message, never during a turn. */
-  private async applyRoleChanges(): Promise<void> {
-    for (const role of this.reopen) {
-      this.reopen.delete(role);
-      const session = role === 'leader' ? this.leaderSession : this.implementerSession;
-      if (role === 'leader') this.leaderSession = undefined;
-      else this.implementerSession = undefined;
-      await session?.close();
-      await this.bridges.get(role)?.close();
-      this.bridges.delete(role);
-      const native = this.nativeSessions.get(role);
-      if (native) this.resumable.set(role, native);
-    }
-  }
-
-  /** A role's CLI reported its own session: to resume it, now or in a reopened chat. */
-  private noteSession(role: RoleName, id: string): void {
-    if (id.trim() === '') return;
-    const originalSession = this.config.resume?.[role] ?? this.taskState.task?.sessions?.[role];
-    if (
-      this.resuming &&
-      originalSession &&
-      originalSession !== id &&
-      !this.recoveredWithoutHistory.has(role)
-    ) {
-      this.recoveredWithoutHistory.add(role);
-      this.events.update({
-        type: 'notice',
-        level: 'warn',
-        text: `The ${role} provider started a fresh session. Saved task context was supplied for recovery.`,
-      });
-    }
-    if (role === 'implementer' && this.handoffBrief !== undefined) {
-      try {
-        this.events.saveImplementerHandoff(id, null);
-      } catch (error) {
-        this.events.update({
-          type: 'notice',
-          level: 'warn',
-          text: `The handoff remains pending because the replacement session could not be saved: ${error instanceof Error ? error.message : String(error)}`,
-        });
-        return;
-      }
-      this.handoffBrief = undefined;
-      this.nativeSessions.set(role, id);
-      return;
-    }
-    this.nativeSessions.set(role, id);
-    this.events.sessionId?.(role, id);
+    return this.sessions.currentRoles;
   }
 
   get busy(): boolean {
@@ -344,146 +258,10 @@ export class ChatSession {
     return `${prefix}-${this.tag}-${String(this.nextId++)}`;
   }
 
-  /** A role's sessions, from its provider (ADR 0022): the leader read-only (ADR 0018). */
-  private factory(
-    role: RoleName,
-    choice: AgentChoice,
-    bridge: PermissionBridge | undefined,
-  ): AgentFactory {
-    return PROVIDERS[choice.cli].factory(
-      this.config,
-      { choice, leader: role === 'leader' },
-      bridge,
-    );
-  }
-
-  /**
-   * The permission bridge of a role that may write, when its provider asks
-   * through it (R9): one per role, for the chat. A read-only role has none.
-   */
-  private async bridgeFor(role: RoleName): Promise<PermissionBridge | undefined> {
-    const choice = this.roles[role];
-    const hook = this.config.permissionHook;
-    const provider = PROVIDERS[choice.cli];
-    if (!provider.bridged || !hook || role === 'leader' || choice.permission === 'read-only') {
-      return undefined;
-    }
-    let bridge = this.bridges.get(role);
-    if (!bridge) {
-      bridge = await startPermissionBridge(
-        (request) =>
-          this.requests.askPermission(
-            role,
-            `${provider.name} (${this.roles[role].model})`,
-            request.summary,
-          ),
-        hook,
-      );
-      if (this.closing) {
-        await bridge.close();
-        throw new StoppedBeforeTurn();
-      }
-      this.bridges.set(role, bridge);
-    }
-    return bridge;
-  }
-
-  private policy(choice: AgentChoice): SubagentPolicy {
-    return {
-      ...this.config.subagents[choice.cli],
-      maxConcurrent: 2,
-      forbiddenNames: PROVIDERS[choice.cli].subagentForbiddenNames,
-    };
-  }
-
-  /** The verification command has a {junit} placeholder: the roles may select a test (ADR 0045). */
-  private hasJunit(): boolean {
-    return this.config.verifyCommand.some((part) => part.includes('{junit}'));
-  }
-
-  /** The role's instructions, followed by the user's own for it, if any (ADR 0013). */
-  private withUserInstructions(role: TurnRole, instructions: string): string {
-    const own = this.config.instructions?.[role]?.trim();
-    return own ? `${instructions}\n\nUser instructions for this role:\n${own}` : instructions;
-  }
-
-  /**
-   * A role's session: the one a reopened chat saved, resumed; when that one no
-   * longer opens (deleted or expired in its CLI), a new one, and the user is
-   * told it does not remember the conversation (ADR 0027).
-   */
-  private async openSession(
-    role: RoleName,
-    factory: AgentFactory,
-    options: Parameters<AgentFactory>[0],
-  ): Promise<AgentSession> {
-    this.checkStop();
-    const { resume } = this.resumeOf(role);
-    let session: AgentSession | undefined;
-    if (resume) {
-      try {
-        session = await factory({ ...options, resume });
-      } catch (error) {
-        if (this.stopRequested) this.resumable.set(role, resume);
-        this.checkStop();
-        this.events.sessionId?.(role, '');
-        this.events.update({
-          type: 'notice',
-          level: 'warn',
-          text: `Could not resume the saved ${role} session (${error instanceof Error ? error.message : String(error)}). A new session will start without the conversation history.`,
-        });
-      }
-    }
-    session ??= await factory(options);
-    if (this.closing) {
-      await session.close();
-      throw new StoppedBeforeTurn();
-    }
-    return session;
-  }
-
-  private resumeOf(role: RoleName): { resume?: string } {
-    const id = this.resumable.get(role);
-    this.resumable.delete(role);
-    return id ? { resume: id } : {};
-  }
-
-  /**
-   * The implementer's session, opened once and continued (ADR 0011); after a
-   * handoff, a new one that starts from it (ADR 0017).
-   */
-  private async implementer(): Promise<AgentSession> {
-    this.checkStop();
-    if (this.implementerSession?.closed) {
-      const closed = this.implementerSession;
-      this.implementerSession = undefined;
-      const native = this.nativeSessions.get('implementer');
-      if (native) this.resumable.set('implementer', native);
-      await closed.close();
-    }
-    if (!this.implementerSession) {
-      const instructions = this.withUserInstructions(
-        'implementer',
-        implementerInstructions({ junit: this.hasJunit() }),
-      );
-      this.implementerSession = await this.openSession(
-        'implementer',
-        this.factory('implementer', this.roles.implementer, await this.bridgeFor('implementer')),
-        agentSessionOptions(
-          instructions,
-          { ...this.policy(this.roles.implementer), proactive: true },
-          handoffTools('implementer', this.config.handoffServer),
-        ),
-      );
-    }
-    this.checkStop();
-    return this.implementerSession;
-  }
-
   private taskConfiguration(): string {
     return JSON.stringify({
       cwd: this.config.cwd,
-      roles: this.roles,
+      roles: this.sessions.roles,
       reviewer: this.reviewerConfig?.choice ?? null,
       instructions: this.config.instructions ?? {},
       verifyCommand: this.config.verifyCommand,
@@ -644,20 +422,11 @@ export class ChatSession {
       this.resuming && this.taskState.task
         ? `Saved task recovery context\n${frameWorkerAnswer(JSON.stringify({ brief: this.taskState.task.progress.brief, report: this.taskState.task.progress.work?.text, findings: this.taskState.task.progress.findings, correctionsUsed: this.taskState.task.progress.used, correctionLimit: this.taskState.task.progress.limit }).replace(/\r\n?|[\u2028\u2029]/g, '\n'))}`
         : undefined;
-    if (this.handoffBrief === undefined) return recovery;
-    const brief = this.handoffBrief.replace(/\r\n?|[\u2028\u2029]/g, '\n');
+    if (this.sessions.handoffBrief === undefined) return recovery;
+    const brief = this.sessions.handoffBrief.replace(/\r\n?|[\u2028\u2029]/g, '\n');
     return [`${HANDOFF_PREFACE}\n\n${frameWorkerAnswer(brief)}`, recovery]
       .filter(Boolean)
       .join('\n\n');
-  }
-
-  /** Whether the implementer has a session to hand off: open, or one a reopened chat continues. */
-  private hasImplementerSession(): boolean {
-    return (
-      this.implementerSession !== undefined ||
-      this.resumable.has('implementer') ||
-      this.nativeSessions.has('implementer')
-    );
   }
 
   /**
@@ -683,7 +452,7 @@ export class ChatSession {
       });
       return;
     }
-    if (this.handoffBrief !== undefined) {
+    if (this.sessions.handoffBrief !== undefined) {
       this.events.update({
         type: 'notice',
         level: 'info',
@@ -691,7 +460,7 @@ export class ChatSession {
       });
       return;
     }
-    if (!this.hasImplementerSession()) {
+    if (!this.sessions.hasImplementerSession()) {
       this.events.update({
         type: 'notice',
         level: 'info',
@@ -703,8 +472,8 @@ export class ChatSession {
     this.running = true;
     this.events.busy(true);
     try {
-      await this.applyRoleChanges();
-      const session = await this.implementer();
+      await this.sessions.applyChanges();
+      const session = await this.sessions.implementer();
       const result = await this.implementerTurn(session, HANDOFF_REQUEST, false);
       if (result.text.trim() === '') {
         throw new Error(
@@ -716,15 +485,7 @@ export class ChatSession {
           'The handoff exceeds 32,768 characters. The current session is still active.',
         );
       }
-      this.events.saveImplementerHandoff('', result.text);
-      this.handoffBrief = result.text;
-      this.implementerSession = undefined;
-      this.nativeSessions.delete('implementer');
-      this.resumable.delete('implementer');
-      const bridge = this.bridges.get('implementer');
-      this.bridges.delete('implementer');
-      const closed = await Promise.allSettled([session.close(), bridge?.close()]);
-      if (closed.some((result) => result.status === 'rejected')) {
+      if (!(await this.sessions.completeHandoff(session, result.text))) {
         this.events.update({
           type: 'notice',
           level: 'warn',
@@ -735,7 +496,7 @@ export class ChatSession {
       this.events.update({
         type: 'notice',
         level: 'info',
-        text: `The next implementer session (${this.roles.implementer.model}) will continue from this handoff.`,
+        text: `The next implementer session (${this.sessions.roles.implementer.model}) will continue from this handoff.`,
       });
     } catch (error) {
       this.events.update({
@@ -818,7 +579,7 @@ export class ChatSession {
     });
     this.events.turnUsage?.(result.identity.provider, usage, result.quota ?? null);
     if (result.context) this.events.context?.('implementer', result.context);
-    if (keep) this.noteSession('implementer', result.identity.sessionId);
+    if (keep) this.sessions.noteSession('implementer', result.identity.sessionId);
     return { ...result, report, reportText, reportCommandEvidence };
   }
 
@@ -966,7 +727,7 @@ export class ChatSession {
     const shown = { facts: false };
     try {
       this.log ??= await openEventLog(this.config.logPath, this.config.cwd);
-      await this.applyRoleChanges();
+      await this.sessions.applyChanges();
       await work(baseline, shown);
       if (
         this.taskState.task?.progress.step === 'delivery' &&
@@ -1040,10 +801,10 @@ export class ChatSession {
         reviewer: (options) =>
           factory({
             ...options,
-            instructions: this.withUserInstructions('reviewer', options.instructions),
+            instructions: withUserInstructions(this.config, 'reviewer', options.instructions),
           }),
         reviewRounds: current.rounds,
-        junit: this.hasJunit(),
+        junit: hasJunit(this.config),
         ...(reviewerNote ? { reviewerNote } : {}),
         ...(store && guardable
           ? {
@@ -1057,7 +818,12 @@ export class ChatSession {
       },
       // Antigravity has no sub-agents to rule (ADR 0023).
       ...(reviewer.cli !== 'antigravity'
-        ? { policy: { ...this.policy({ ...reviewer, cli: reviewer.cli }), proactive: true } }
+        ? {
+            policy: {
+              ...policyOf(this.config, { ...reviewer, cli: reviewer.cli }),
+              proactive: true,
+            },
+          }
         : {}),
     };
   }
@@ -1090,12 +856,12 @@ export class ChatSession {
       onEvent: (event) => {
         this.onEvent(event);
       },
-      workerSession: await this.implementer(),
+      workerSession: await this.sessions.implementer(),
       workerPreface: () => this.implementerPreface(),
       ...reviewer.options,
       worker: () => Promise.reject(new Error('the implementer session is given')),
       subagents: {
-        worker: { ...this.policy(this.roles.implementer), proactive: true },
+        worker: { ...policyOf(this.config, this.sessions.roles.implementer), proactive: true },
         ...(reviewer.policy ? { reviewer: reviewer.policy } : {}),
       },
       onApproval: ({ role, agent, request }, signal) =>
@@ -1172,7 +938,7 @@ export class ChatSession {
             used: 0,
           };
     this.taskState.save({ ...initial, step: 'implementation', inFlight: false });
-    const session = await this.implementer();
+    const session = await this.sessions.implementer();
     const notes = this.takeNotes('implementer');
     this.taskState.save({ ...initial, step: 'implementation', inFlight: true });
     const result = await this.implementerTurn(
@@ -1330,21 +1096,8 @@ export class ChatSession {
     skill?: SkillRef,
   ): Promise<void> {
     const { config } = this;
-    const leaderPolicy = { ...this.policy(this.roles.leader), proactive: true };
-    // Read-only (ADR 0018): it reasons, searches and delegates; it never writes.
-    this.leaderSession ??= await this.openSession(
-      'leader',
-      this.factory('leader', this.roles.leader, await this.bridgeFor('leader')),
-      agentSessionOptions(
-        this.withUserInstructions(
-          'leader',
-          // Every leader has the questions tool, Codex's or Claude's (ADR 0019, 0022).
-          leaderInstructions(this.roles.implementer.cli),
-        ),
-        leaderPolicy,
-        handoffTools('leader', config.handoffServer),
-      ),
-    );
+    const leaderPolicy = { ...policyOf(config, this.sessions.roles.leader), proactive: true };
+    const leaderSession = await this.sessions.leader(leaderPolicy);
     // A draft sent later has no message of the user: what the leader has not seen waits for one.
     const unseen = draft === undefined ? this.unseen : [];
     if (draft === undefined) this.unseen = [];
@@ -1372,9 +1125,9 @@ export class ChatSession {
       mode: 'leader',
       task: this.taskState.journal(this.resuming),
       verification: this.verification,
-      leaderSession: this.leaderSession,
+      leaderSession,
       referenceKind: referenceKind(config.cwd, this.ignored),
-      workerSession: () => this.implementer(),
+      workerSession: () => this.sessions.implementer(),
       workerPreface: () => this.implementerPreface(),
       review: config.review,
       ...(reviewer?.options ?? {}),
@@ -1382,7 +1135,7 @@ export class ChatSession {
       worker: () => Promise.reject(new Error('the implementer session is given')),
       subagents: {
         orchestrator: leaderPolicy,
-        worker: { ...this.policy(this.roles.implementer), proactive: true },
+        worker: { ...policyOf(this.config, this.sessions.roles.implementer), proactive: true },
         ...(reviewer?.policy ? { reviewer: reviewer.policy } : {}),
       },
       onApproval: ({ role, agent, request }, signal) =>
@@ -1506,10 +1259,6 @@ export class ChatSession {
       this.events.update({ type: 'approval_closed', id, action });
   }
 
-  private checkStop(): void {
-    if (this.stopRequested || this.closing) throw new StoppedBeforeTurn();
-  }
-
   async stop(): Promise<void> {
     this.stopRequested = true;
     this.requestController.abort();
@@ -1520,12 +1269,7 @@ export class ChatSession {
   /** Ends the leader's and the implementer's sessions: the next message starts new ones. */
   async reset(): Promise<void> {
     await this.stop();
-    await this.leaderSession?.close();
-    await this.implementerSession?.close();
-    this.leaderSession = undefined;
-    this.implementerSession = undefined;
-    await Promise.allSettled([...this.bridges.values()].map((bridge) => bridge.close()));
-    this.bridges.clear();
+    await this.sessions.closeAll();
     this.unseen = [];
     this.turns.clear();
   }
@@ -1578,7 +1322,7 @@ export class ChatSession {
         // The reviewer's session lasts one review: nothing of it is kept to resume.
         if (role === 'reviewer') break;
         if (event.context) this.events.context?.(role, event.context);
-        this.noteSession(role, event.identity.sessionId);
+        this.sessions.noteSession(role, event.identity.sessionId);
         break;
       }
       case 'intercepted':

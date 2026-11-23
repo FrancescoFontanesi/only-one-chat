@@ -1,6 +1,6 @@
 // The chat session's types, constants and pure helpers, apart from the
 // session itself. chat.ts re-exports the public ones, so its importers do not
-// change. Types only from the session's collaborators: no value import cycle.
+// change. Only the providers' table as a value: no value import cycle.
 
 import type { PermissionBridgeOptions } from '@only-one-chat/adapters';
 import type {
@@ -8,6 +8,7 @@ import type {
   HandoffServer,
   PendingReport,
   QuotaSnapshot,
+  SubagentPolicy,
   TurnUsage,
 } from '@only-one-chat/runtime';
 import type {
@@ -18,7 +19,7 @@ import type {
   TurnUsageSummary,
 } from '../shared/protocol.js';
 import type { CheckpointStore } from './checkpoints.js';
-import type { ProviderChoice } from './providers.js';
+import { PROVIDERS, type ProviderChoice } from './providers.js';
 import type { SavedTask } from './task.js';
 /** A role's choice: the leader and the implementer run on Codex or Claude (ADR 0022, 0023). */
 export interface AgentChoice extends ProviderChoice {
@@ -188,4 +189,28 @@ export class StoppedBeforeTurn extends Error {
   constructor() {
     super('Request stopped before the next turn.');
   }
+}
+
+/** A role's sub-agent policy, from its CLI's settings (D13). */
+export function policyOf(config: ChatConfig, choice: AgentChoice): SubagentPolicy {
+  return {
+    ...config.subagents[choice.cli],
+    maxConcurrent: 2,
+    forbiddenNames: PROVIDERS[choice.cli].subagentForbiddenNames,
+  };
+}
+
+/** The verification command has a {junit} placeholder: the roles may select a test (ADR 0045). */
+export function hasJunit(config: ChatConfig): boolean {
+  return config.verifyCommand.some((part) => part.includes('{junit}'));
+}
+
+/** The role's instructions, followed by the user's own for it, if any (ADR 0013). */
+export function withUserInstructions(
+  config: ChatConfig,
+  role: TurnRole,
+  instructions: string,
+): string {
+  const own = config.instructions?.[role]?.trim();
+  return own ? `${instructions}\n\nUser instructions for this role:\n${own}` : instructions;
 }

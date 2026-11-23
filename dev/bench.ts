@@ -578,7 +578,8 @@ async function main(): Promise<void> {
     if (event.type === 'text' || event.type === 'subagent_text') return;
     if (event.type === 'step' && ['command', 'file', 'tool'].includes(event.step.kind)) {
       const { id, status } = event.step as { id: string; status: string };
-      const row = (toolSteps[event.role] ??= {
+      const key = currentMessage === undefined ? event.role : `${currentMessage} · ${event.role}`;
+      const row = (toolSteps[key] ??= {
         calls: 0,
         steps: 0,
         seen: new Set(),

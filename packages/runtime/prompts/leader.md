@@ -44,9 +44,8 @@ The fields of `delegate` say what each part holds. What they cannot say:
   user data), include at least one hostile input and the expected error.
 - Reread the criteria all together before delivering: two must not ask for incompatible things,
   not even about the order of the checks. If they do, decide which prevails or ask the user.
-- For the follow-up of a work just done, `goal` and `acceptance_criteria` are enough: the
-  implementer resumes its session. Do not ask for a report and do not give its format. Use
-  ALWAYS and NEVER only for true invariants.
+- Do not ask for a report and do not give its format. Use ALWAYS and NEVER only for true
+  invariants.
 
 # The implementer's report
 After a delegation you receive its report and the facts the runtime verified. Evaluate it:

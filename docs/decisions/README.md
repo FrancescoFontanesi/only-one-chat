@@ -46,6 +46,7 @@ Each decision has its own `NNNN-title.md` file with Status, Context, Decision, a
 | [0040](0040-handoff-integrity.md)                   | Handoff integrity: unique identifiers and a verdict that drives the loop   | Accepted                                        |
 | [0041](0041-runtime-evidence-before-review.md)      | Runtime evidence before the review: a gate, per-turn attribution, one path | Accepted                                        |
 | [0042](0042-brief-paths.md)                         | Brief paths: the files a delegation may change, checked per turn           | Accepted                                        |
+| [0043](0043-implementer-session-reuse.md)           | The implementer session is reused across delegations                       | Accepted                                        |
 | [0044](0044-brief-references.md)                    | Brief references: the files to read first, as checked pointers             | Accepted                                        |
 | [0045](0045-prompt-token-hygiene.md)                | Role prompt hygiene: one source for fields, rare modules on demand         | Accepted                                        |
 | [0046](0046-review-cases-and-shared-diff-checks.md) | A versioned review case suite, and the same diff checks everywhere         | Accepted                                        |

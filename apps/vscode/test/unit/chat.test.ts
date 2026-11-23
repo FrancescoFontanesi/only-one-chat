@@ -1,6 +1,7 @@
 // The chat session against the adapters' fake CLIs: no model turn, no quota.
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -2217,4 +2218,242 @@ describe('chat session: the turn as it happens (ADR 0019)', () => {
     expect(steps.map((u) => u.step.kind)).toContain('command');
     expect(doneTurns(updates).find((t) => t.role === 'leader')?.text).toBe('Fatto.');
   });
+});
+
+// Characterization of the roles' sessions as they behave today: what the CLIs
+// were asked and what the chat reported, around resume, stop, reset and reopen.
+describe('chat session: the roles’ sessions (ADR 0017, 0027)', () => {
+  const hook = {
+    nodeExecutable: process.execPath,
+    hookScript: join(FIXTURES, '..', '..', 'hooks', 'permission-request.mjs'),
+  };
+  const codexImplementer = {
+    cli: 'codex',
+    model: 'gpt-6.1-sol',
+    effort: 'low',
+    permission: 'auto',
+  } as const;
+  const codexArgs = (...more: string[]) => ({
+    codexLauncherArgs: [
+      join(FIXTURES, 'fake-app-server.mjs'),
+      '--account=chatgpt',
+      `--log=${join(root, 'codex.jsonl')}`,
+      ...more,
+    ],
+  });
+  const codexLog = () =>
+    existsSync(join(root, 'codex.jsonl'))
+      ? readFileSync(join(root, 'codex.jsonl'), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> })
+      : [];
+  const threads = () =>
+    codexLog().flatMap((m) =>
+      m.method === 'thread/resume' || m.method === 'thread/start'
+        ? [[m.method, m.params?.['threadId'] ?? null]]
+        : [],
+    );
+  /** The permission bridge's port each Claude turn was given. */
+  const bridgePorts = () =>
+    readFileSync(join(root, 'claude.jsonl'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { argv?: string[]; env?: Record<string, string> })
+      .flatMap((entry) =>
+        entry.argv?.includes('-p') && entry.env?.['OOC_PERMISSION_PORT']
+          ? [Number(entry.env['OOC_PERMISSION_PORT'])]
+          : [],
+      );
+  const listening = (port: number) =>
+    new Promise<boolean>((resolve) => {
+      const socket = connect(port, '127.0.0.1');
+      socket.once('connect', () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.once('error', () => {
+        resolve(false);
+      });
+    });
+
+  // The adapters fall back by themselves when a thread is gone; the chat's fallback is for
+  // a CLI that fails while resuming.
+  it('starts a new session, and says so, when the CLI fails to resume the saved one', async () => {
+    const { chat, updates, sessionIds } = session(
+      'auto',
+      'always',
+      { leader: 'gone-1' },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      codexArgs('--exit-on-thread-resume'),
+    );
+    try {
+      await chat.send('ciao');
+    } finally {
+      await chat.dispose();
+    }
+    expect(threads()).toEqual([
+      ['thread/resume', 'gone-1'],
+      ['thread/start', null],
+    ]);
+    // The saved id is forgotten before the new session reports its own.
+    expect(sessionIds).toEqual([
+      ['leader', ''],
+      ['leader', 'thread-1'],
+    ]);
+    const notice = updates.findIndex(
+      (u) =>
+        u.type === 'notice' && u.text.startsWith('Could not resume the saved leader session ('),
+    );
+    expect(updates[notice]).toMatchObject({
+      level: 'warn',
+      text: expect.stringContaining(
+        'A new session will start without the conversation history.',
+      ) as string,
+    });
+    expect(notice).toBeLessThan(updates.findIndex((u) => u.type === 'turn'));
+    expect(doneTurns(updates).map((t) => t.role)).toEqual(['leader']);
+  });
+
+  it('keeps the saved session to resume when Stop comes while it fails to open', async () => {
+    const gate = join(root, 'release-thread-resume');
+    const { chat, updates, sessionIds } = session(
+      'auto',
+      'always',
+      { leader: 'gone-1' },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      codexArgs(`--thread-resume-gate=${gate}`, '--exit-on-thread-resume'),
+    );
+    const stopped = chat.send('ciao');
+    try {
+      await expect
+        .poll(() => threads().some(([method]) => method === 'thread/resume'), { timeout: 5000 })
+        .toBe(true);
+      await chat.stop();
+      writeFileSync(gate, '');
+      await stopped;
+      // Stopped before the fallback: nothing forgotten, no new session, no warning.
+      expect(sessionIds).toEqual([]);
+      expect(threads()).toEqual([['thread/resume', 'gone-1']]);
+      expect(updates).toContainEqual({
+        type: 'notice',
+        level: 'info',
+        text: 'Request stopped before the next turn.',
+      });
+      expect(updates.some((u) => u.type === 'notice' && u.level === 'warn')).toBe(false);
+      await chat.send('di nuovo');
+    } finally {
+      writeFileSync(gate, '');
+      await stopped;
+      await chat.dispose();
+    }
+    // The next message tries the same saved session again, then falls back as usual.
+    expect(threads()).toEqual([
+      ['thread/resume', 'gone-1'],
+      ['thread/resume', 'gone-1'],
+      ['thread/start', null],
+    ]);
+    expect(sessionIds).toEqual([
+      ['leader', ''],
+      ['leader', 'thread-1'],
+    ]);
+  }, 20_000);
+
+  it.each(['reset', 'dispose'] as const)(
+    'closes the implementer’s permission bridge on %s',
+    async (how) => {
+      const { chat } = session(
+        'auto',
+        'always',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { permissionHook: hook },
+      );
+      try {
+        await chat.send('@impl primo');
+        const port = bridgePorts()[0] ?? 0;
+        expect(await listening(port)).toBe(true);
+        await chat[how]();
+        expect(await listening(port)).toBe(false);
+        if (how === 'reset') await chat.send('@impl secondo');
+      } finally {
+        await chat.dispose();
+      }
+      if (how === 'reset') {
+        // A new session with a new bridge: the old session is not resumed.
+        expect(claudeRuns()[1]).not.toContain('--resume');
+        expect(bridgePorts()).toHaveLength(2);
+      }
+    },
+    20_000,
+  );
+
+  it('reopens a closed implementer session from the CLI’s own session id', async () => {
+    const { chat, updates, sessionIds } = session(
+      'auto',
+      'always',
+      { implementer: 'kept-7' },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { implementer: codexImplementer, ...codexArgs() },
+    );
+    try {
+      await chat.send('@impl primo');
+      await chat.send('@impl [exit-after-turn-start]');
+      await chat.send('@impl terzo');
+    } finally {
+      await chat.dispose();
+    }
+    expect(threads()).toEqual([
+      ['thread/resume', 'kept-7'],
+      ['thread/resume', 'kept-7'],
+    ]);
+    expect(doneTurns(updates).map((t) => t.text)).toEqual([
+      expect.stringContaining('primo'),
+      expect.stringContaining('terzo'),
+    ]);
+    expect(sessionIds).toEqual([
+      ['implementer', 'kept-7'],
+      ['implementer', 'kept-7'],
+    ]);
+  }, 20_000);
+
+  it('a permission change closes the old bridge at the next message and resumes the session', async () => {
+    const { chat } = session(
+      'auto',
+      'always',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { permissionHook: hook },
+    );
+    try {
+      await chat.send('@impl primo');
+      const first = bridgePorts()[0] ?? 0;
+      expect(
+        chat.setRole('implementer', { ...chat.currentRoles.implementer, permission: 'ask' }),
+      ).toBe(true);
+      // Nothing closes while the chat waits: only before the next message.
+      expect(await listening(first)).toBe(true);
+      await chat.send('@impl secondo');
+      expect(await listening(first)).toBe(false);
+    } finally {
+      await chat.dispose();
+    }
+    expect(claudeRuns()[1]).toContain('--resume');
+    expect(bridgePorts()).toHaveLength(2);
+  }, 20_000);
 });

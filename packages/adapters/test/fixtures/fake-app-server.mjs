@@ -11,6 +11,8 @@
 // Flags: app-server (required) | --ignore-eof | --exit-at-start | --fail-initialize
 //        --account=<kind> (see ACCOUNTS) | --log=<file> (received messages, JSONL)
 //        --provider=<id> --provider-name=<name> (config/read; `readError` fails it)
+//        --thread-start-gate=<file> --thread-resume-gate=<file> (hold the answer until it exists)
+//        --exit-on-thread-resume (exits with code 3 on thread/resume)
 // Prompts with [delegation], [spec] or [light] get a `delegate` call (see the handoff
 // calls below) whose context makes a fake implementer report and a fake reviewer approve; a
 // verdict prompt ("Rispondi solo SUCCESS o FAIL") gets SUCCESS. Prompts with
@@ -185,7 +187,15 @@ const handlers = {
   // [subagent-name=…] change what it reports; [subagent-hang] keeps it (and
   // the parent) running until turn/interrupt. [mcp] calls an MCP tool.
   // A thread the fake "has on disk": any id starting with "kept-"; others are unknown.
-  'thread/resume': (params, id) => {
+  // --thread-resume-gate=<file>: the answer waits until the file exists;
+  // --exit-on-thread-resume: the process exits instead of answering.
+  'thread/resume': async (params, id) => {
+    const gate = option('thread-resume-gate');
+    if (gate) while (!existsSync(gate)) await sleep(10);
+    if (flags.has('--exit-on-thread-resume')) {
+      writeSync(2, 'fatal: fake failure while resuming\n');
+      process.exit(3);
+    }
     if (typeof params.threadId !== 'string' || !params.threadId.startsWith('kept-')) {
       return send({
         id,

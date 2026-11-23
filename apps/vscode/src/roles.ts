@@ -15,7 +15,7 @@ import {
   type RoleInfo,
   type RoleName,
   type RolesState,
-} from './webview/protocol.js';
+} from './shared/protocol.js';
 
 export interface Roles {
   readonly leader: AgentChoice;

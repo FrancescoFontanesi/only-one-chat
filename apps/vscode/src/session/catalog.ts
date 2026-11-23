@@ -4,7 +4,7 @@
 // `vscode`: the sources are passed in.
 
 import type { ModelInfo } from '@only-one-chat/adapters';
-import type { Cli, ModelOption, ProviderCatalog } from '../webview/protocol.js';
+import type { Cli, ModelOption, ProviderCatalog } from '../shared/protocol.js';
 
 type ModelSource = () => Promise<readonly ModelInfo[]>;
 

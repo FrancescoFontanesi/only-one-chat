@@ -59,7 +59,7 @@ import type {
   ThreadUpdate,
   TurnRole,
   TurnUsageSummary,
-} from '../webview/protocol.js';
+} from '../shared/protocol.js';
 import type { Checkpoint, CheckpointStore } from './checkpoints.js';
 import { changes, configuredCommandFact, snapshot, verifiedFacts } from './facts.js';
 import { guardReviewerTurn } from './guard.js';
@@ -282,6 +282,12 @@ export class ChatSession {
   private readonly ignored: Ignored;
   /** The folder as it was before the message running now: what the checks on the diff start from. */
   private inRequest: Checkpoint | null = null;
+  /**
+   * The task checkpoint last taken, and whether something that could write
+   * to the folder ran since (an agent turn, a verification command): a clean
+   * save reuses it instead of walking the folder again (ADR 0047).
+   */
+  private taskCheckpoint: { id: string; clean: boolean } | undefined;
   /** The latest message between agents the loop showed, for the card of one that went on by itself. */
   private lastIntercepted: { from: string; to: string; text: string } | undefined;
   /** The reviewer now: the panel switches it on and off during the chat (ADR 0033). */
@@ -312,6 +318,9 @@ export class ChatSession {
       id: () => this.id('v'),
       update: (evidence) => {
         this.events.update({ type: 'verification', evidence });
+      },
+      onRun: () => {
+        this.folderMayHaveChanged();
       },
     });
     this.reviewerConfig = config.reviewer;
@@ -610,17 +619,27 @@ export class ChatSession {
   private saveTaskProgress(progress: TaskProgress): void {
     if (!this.taskEnabled) return;
     const previous = taskUnfinished(this.task) ? this.task : undefined;
+    // Reuse only inside a task, for the checkpoint this task last recorded.
+    const reused =
+      previous?.checkpoint &&
+      this.taskCheckpoint?.clean &&
+      this.taskCheckpoint.id === previous.checkpoint
+        ? this.taskCheckpoint.id
+        : undefined;
     const checkpoint =
-      progress.step === 'cancelled'
+      progress.step === 'cancelled' || reused
         ? null
         : (this.config.checkpoints?.take(this.id('task-ckpt')) ?? null);
+    if (checkpoint) this.taskCheckpoint = { id: checkpoint.id, clean: true };
     const next: SavedTask = {
       version: 1,
       id: previous?.id ?? this.id('task'),
       configuration: previous?.configuration ?? this.taskConfiguration(),
       progress,
       checkpoint:
-        checkpoint?.id ?? (progress.step === 'cancelled' ? (previous?.checkpoint ?? null) : null),
+        reused ??
+        checkpoint?.id ??
+        (progress.step === 'cancelled' ? (previous?.checkpoint ?? null) : null),
       verification: this.verification.checkpoint() ?? previous?.verification,
       sessions: Object.fromEntries(
         (['leader', 'implementer'] as const).flatMap((role) => {
@@ -1003,6 +1022,7 @@ export class ChatSession {
     keep: boolean,
     skill?: SkillRef,
   ) {
+    this.folderMayHaveChanged();
     const id = this.id('t');
     const commands = new CommandEvidence();
     const observe = commands.nextTurn();
@@ -1038,6 +1058,7 @@ export class ChatSession {
     );
     this.stopRunning = () => turn.stop();
     const result = await turn.done;
+    this.folderMayHaveChanged();
     this.currentTurn.delete('implementer');
     const usage = summarize(result.usage);
     const report = readHandoff(result.handoffs, 'report').value;
@@ -1074,9 +1095,15 @@ export class ChatSession {
    * its next message, since its context still holds the changes.
    */
   noteFiles(note: string): void {
+    this.folderMayHaveChanged();
     this.fileNotes.leader.push(note);
     this.fileNotes.implementer.push(note);
     this.events.fileNotes?.(this.pendingNotes());
+  }
+
+  /** Something that could write to the folder ran: the next task save takes a new checkpoint. */
+  private folderMayHaveChanged(): void {
+    if (this.taskCheckpoint) this.taskCheckpoint.clean = false;
   }
 
   /** The notes each role has not received yet: kept with the chat (R5). */
@@ -1359,7 +1386,13 @@ ${this.diffChecks()}`;
         junit: this.hasJunit(),
         ...(reviewerNote ? { reviewerNote } : {}),
         ...(store && guardable
-          ? { guardReviewer: () => guardReviewerTurn(store, this.id('rev')) }
+          ? {
+              guardReviewer: () => {
+                const restore = guardReviewerTurn(store, this.id('rev'));
+                // The restore after the turn writes to the folder too.
+                return restore && (() => (this.folderMayHaveChanged(), restore()));
+              },
+            }
           : {}),
       },
       // Antigravity has no sub-agents to rule (ADR 0023).
@@ -1907,6 +1940,8 @@ ${this.diffChecks()}`;
     };
     switch (event.type) {
       case 'turn_started': {
+        // The orchestrator is read-only; the others may write.
+        if (event.role !== 'orchestrator') this.folderMayHaveChanged();
         const id = this.id('t');
         const role = roleOf(event.role);
         this.currentTurn.set(role, id);
@@ -1919,6 +1954,7 @@ ${this.diffChecks()}`;
         break;
       }
       case 'message': {
+        if (event.role !== 'orchestrator') this.folderMayHaveChanged();
         const role = roleOf(event.role);
         const id = this.currentTurn.get(role);
         if (!id) break;

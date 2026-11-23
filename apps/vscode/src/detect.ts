@@ -8,7 +8,7 @@ import { readdirSync } from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { getEnv, resolveNativeExecutable } from '@only-one-chat/adapters';
-import type { Cli } from './webview/protocol.js';
+import type { Cli } from './shared/protocol.js';
 
 /** Each CLI's command, its name for the messages, the extension that may bundle it. */
 const CLIS: Readonly<Record<Cli, { command: string; label: string; bundled: () => string[] }>> = {

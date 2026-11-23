@@ -12,7 +12,7 @@ import {
   withRefs,
 } from '../../src/session/mentions.js';
 import { ignoredPaths } from '../../src/session/ignore.js';
-import { linkPath, pathCandidates, refTokens } from '../../src/webview/refs.js';
+import { linkPath, pathCandidates, refTokens } from '../../src/shared/refs.js';
 import type { ThreadUpdate } from '../../src/webview/protocol.js';
 import { matchPaths, mentionAt, pickMention } from '../../webview/mentions.js';
 

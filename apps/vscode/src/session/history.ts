@@ -10,7 +10,7 @@ import type { PendingReport } from '@only-one-chat/runtime';
 import { isVerificationEvidence } from '../../../../packages/runtime/src/verification.js';
 import type { AgentChoice, DraftDelegation, FileNotes } from './chat.js';
 import { readSavedTask, type SavedTask } from './task.js';
-import type { Cli, ContextInfo, ThreadUpdate, TurnRole } from '../webview/protocol.js';
+import type { Cli, ContextInfo, ThreadUpdate, TurnRole } from '../shared/protocol.js';
 
 export interface ChatRecord {
   task?: SavedTask | null | undefined;

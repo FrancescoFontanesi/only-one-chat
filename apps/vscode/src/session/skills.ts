@@ -5,7 +5,7 @@
 // passed in.
 
 import type { SkillInfo } from '@only-one-chat/adapters';
-import type { Cli } from '../webview/protocol.js';
+import type { Cli } from '../shared/protocol.js';
 
 type SkillSource = (cwd: string) => Promise<readonly SkillInfo[]>;
 

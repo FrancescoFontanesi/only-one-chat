@@ -7,8 +7,8 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, isAbsolute, relative, resolve } from 'node:path';
 import type { ReferenceKind } from '@only-one-chat/runtime';
-import type { ThreadUpdate } from '../webview/protocol.js';
-import { linkPath, looksLikeFile, pathCandidates, refTokens } from '../webview/refs.js';
+import type { ThreadUpdate } from '../shared/protocol.js';
+import { linkPath, looksLikeFile, pathCandidates, refTokens } from '../shared/refs.js';
 import type { Ignored } from './ignore.js';
 
 /** A range of lines this short is included in the message; a longer one is named only. */

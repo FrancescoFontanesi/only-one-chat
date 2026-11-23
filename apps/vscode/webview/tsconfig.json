@@ -5,5 +5,5 @@
     "jsx": "react-jsx",
     "jsxImportSource": "preact"
   },
-  "include": [".", "../src/webview/protocol.ts"]
+  "include": [".", "../src/shared"]
 }

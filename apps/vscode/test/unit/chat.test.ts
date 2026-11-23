@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PendingReport } from '@only-one-chat/runtime';
 import {
   ChatSession,
@@ -348,6 +348,89 @@ describe('durable task recovery (ADR 0039)', () => {
       );
     return { first, history, record, store, reopen };
   }
+
+  it('reuses the task checkpoint until something could write to the folder (ADR 0047)', async () => {
+    writeFileSync(join(cwd, 'input.txt'), 'ok');
+    const store = new CheckpointStore(join(root, 'checkpoints'), cwd);
+    const take = vi.spyOn(store, 'take');
+    const saves: SavedTask[] = [];
+    const { chat } = durable({ checkpoints: store }, (task) => {
+      if (task) saves.push(task);
+    });
+    try {
+      await chat.send('@impl check input');
+    } finally {
+      await chat.dispose();
+    }
+    const taken = take.mock.calls.filter(([id]) => id.startsWith('task-ckpt')).length;
+    const ids = saves.map((task) => task.checkpoint);
+    // Two saves around the implementer's turn share one checkpoint; the turn and the
+    // verification run each start a new one.
+    expect(ids[0]).toBe(ids[1]);
+    expect(ids[2]).not.toBe(ids[1]);
+    expect(ids[2]).toBe(ids[3]);
+    expect(ids[4]).not.toBe(ids[3]);
+    expect(taken).toBe(new Set(ids).size);
+    expect(taken).toBeLessThan(saves.length);
+  });
+
+  it('resumes after a restart on a save that reused the checkpoint (ADR 0047)', async () => {
+    writeFileSync(join(cwd, 'input.txt'), 'ok');
+    const history = new ChatHistory(join(root, 'history'));
+    const record: ChatRecord = {
+      version: 1,
+      id: 'chat-reuse',
+      title: 'Task',
+      createdAt: 1,
+      updatedAt: 1,
+      sessions: {},
+      updates: [],
+    };
+    const saves: SavedTask[] = [];
+    const first = durable(
+      { checkpoints: new CheckpointStore(join(root, 'checkpoints'), cwd) },
+      (task) => {
+        history.saveTask(record, task);
+        if (task) saves.push(task);
+        // The second save reuses the first one's checkpoint: the restart happens right there.
+        if (saves.length === 2) throw new Error('Simulated restart on a reused checkpoint');
+      },
+    );
+    try {
+      await first.chat.send('@impl check input');
+    } finally {
+      await first.chat.dispose();
+    }
+    const saved = history.load(record.id)?.task;
+    if (!saved?.checkpoint) throw new Error('Expected an interrupted task with a checkpoint');
+    expect(saves[1]?.checkpoint).toBe(saves[0]?.checkpoint);
+    expect(saved).toMatchObject({
+      checkpoint: saves[0]?.checkpoint,
+      progress: { step: 'implementation', inFlight: true },
+    });
+    // A new store, as after a restart: no blob known in memory, the recorded files intact on disk.
+    const store = new CheckpointStore(join(root, 'checkpoints'), cwd);
+    const recorded = store.load(saved.checkpoint);
+    if (!recorded) throw new Error('Expected the recorded checkpoint');
+    store.materialize(recorded, join(root, 'restored'));
+    expect(readFileSync(join(root, 'restored', 'input.txt'), 'utf8')).toBe('ok');
+    const reopened = durable(
+      { checkpoints: store, task: saved, resume: saved.sessions ?? {}, unseen: [] },
+      (task) => {
+        history.saveTask(record, task);
+      },
+    );
+    try {
+      expect(reopened.chat.recoveryReason()).toContain('no committed outcome');
+      writeFileSync(join(cwd, 'input.txt'), 'manual change');
+      expect(reopened.chat.recoveryReason()).toContain('Files changed');
+      await reopened.chat.resumeTask(true);
+    } finally {
+      await reopened.chat.dispose();
+    }
+    expect(history.load(record.id)?.task?.progress.step).not.toBe('implementation');
+    expect(readFileSync(join(cwd, 'input.txt'), 'utf8')).toBe('manual change');
+  }, 20000);
 
   it('invalidates a saved green delivery after manual changes and verifies current files', async () => {
     writeFileSync(join(cwd, 'input.txt'), 'ok');

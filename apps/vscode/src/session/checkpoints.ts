@@ -8,7 +8,7 @@
 // anything outside the folder (a shell command's effects there included).
 // Node only, no `vscode`.
 
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -27,12 +27,13 @@ import {
   shortcutFacts,
   type TextChange,
 } from '@only-one-chat/runtime';
-import type { ChangedFile } from '../webview/protocol.js';
+import type { ChangedFile } from '../shared/protocol.js';
 import { MAX_FILES, SKIPPED } from './facts.js';
+import { MAX_FILE_BYTES, fileHashes, sha256, type FileHashes } from './file-hashes.js';
 import { NOTHING_IGNORED, type Ignored } from './ignore.js';
 
-/** Larger files are not recorded: their changes cannot be undone. */
-export const MAX_FILE_BYTES = 2 * 1024 * 1024;
+// Larger files are not recorded: their changes cannot be undone.
+export { MAX_FILE_BYTES };
 
 export interface Checkpoint {
   readonly incomplete?: boolean;
@@ -53,10 +54,6 @@ interface Review {
 const ID = /^[a-z0-9-]{1,64}$/;
 const HASH = /^[0-9a-f]{64}$/;
 
-function hash(content: Buffer): string {
-  return createHash('sha256').update(content).digest('hex');
-}
-
 function isBinary(content: Buffer): boolean {
   return content.subarray(0, 8000).includes(0);
 }
@@ -68,11 +65,20 @@ export class CheckpointStore {
   private readonly cwd: string;
   /** Paths left out of every checkpoint (ADR 0021). */
   private readonly ignored: Ignored;
+  private readonly hashes: FileHashes;
+  /** Blobs known to be on disk, written or verified by this instance (ADR 0047). */
+  private readonly known = new Set<string>();
 
   /** `root`: this chat's folder in the extension's storage; `cwd`: the folder the agents work in. */
-  constructor(root: string, cwd: string, ignored: Ignored = NOTHING_IGNORED) {
+  constructor(
+    root: string,
+    cwd: string,
+    ignored: Ignored = NOTHING_IGNORED,
+    hashes: FileHashes = fileHashes,
+  ) {
     this.cwd = cwd;
     this.ignored = ignored;
+    this.hashes = hashes;
     this.blobs = join(root, 'blobs');
     this.manifests = join(root, 'checkpoints');
   }
@@ -94,33 +100,70 @@ export class CheckpointStore {
 
   /** Stores a content once, atomically. */
   private keep(content: Buffer): string {
-    const id = hash(content);
-    const path = this.blobPath(id);
-    if (!existsSync(path)) {
+    const id = sha256(content);
+    if (!this.has(id)) {
+      const path = this.blobPath(id);
       mkdirSync(dirname(path), { recursive: true });
       const temporary = `${path}.${randomBytes(4).toString('hex')}.tmp`;
       writeFileSync(temporary, content);
       renameSync(temporary, path);
+      this.known.add(id);
     }
     return id;
   }
 
+  /**
+   * Forgets the known blobs when their folder is gone (the chat's checkpoints
+   * deleted, storage cleaned), so they are written again instead of referenced.
+   */
+  private forgetIfGone(): void {
+    if (this.known.size > 0 && !existsSync(this.blobs)) this.known.clear();
+  }
+
+  /** Whether the blob is on disk; asked of the disk once per blob and instance. */
+  private has(id: string): boolean {
+    if (this.known.has(id)) return true;
+    if (!existsSync(this.blobPath(id))) return false;
+    this.known.add(id);
+    return true;
+  }
+
+  /** A file of the folder as it is now; null when it vanished since the walk. */
+  private fileContent(path: string): Buffer | null {
+    try {
+      return readFileSync(resolve(this.cwd, path));
+    } catch {
+      return null;
+    }
+  }
+
   /** A content recorded earlier. */
   content(id: string): Buffer {
-    return readFileSync(this.blobPath(id));
+    try {
+      return readFileSync(this.blobPath(id));
+    } catch (error) {
+      // Still an error here; the next checkpoint writes the blob again instead of trusting it.
+      this.known.delete(id);
+      throw error;
+    }
   }
 
   keepArtifact(content: string): string {
+    this.forgetIfGone();
     return this.keep(Buffer.from(content, 'utf8'));
   }
 
-  /** The folder's files now: path → content, the large ones apart. Null when it cannot be read. */
+  /**
+   * The folder's files now: path → hash (and the content, when it was read to
+   * hash it), the large ones apart. Null when it cannot be read.
+   */
   private read(): {
-    files: Map<string, Buffer>;
+    files: Map<string, { hash: string; content?: Buffer | undefined }>;
     large: Map<string, string>;
     incomplete: boolean;
   } | null {
-    const files = new Map<string, Buffer>();
+    const scanStart = Date.now();
+    const files = new Map<string, { hash: string; content?: Buffer | undefined }>();
     const large = new Map<string, string>();
     let incomplete = false;
     const walk = (folder: string): boolean => {
@@ -136,7 +179,7 @@ export class CheckpointStore {
           const stat = statSync(full);
           if (stat.size > MAX_FILE_BYTES)
             large.set(path, `${String(stat.size)}:${String(stat.mtimeMs)}`);
-          else files.set(path, readFileSync(full));
+          else files.set(path, this.hashes.hash(full, stat, scanStart));
         } else incomplete = true;
       }
       return true;
@@ -153,8 +196,18 @@ export class CheckpointStore {
     if (!ID.test(id)) throw new Error(`invalid checkpoint id ${JSON.stringify(id)}`);
     const now = this.read();
     if (!now) return null;
+    this.forgetIfGone();
     const files: Record<string, string> = {};
-    for (const [path, content] of now.files) files[path] = this.keep(content);
+    for (const [path, file] of now.files) {
+      if (file.content) files[path] = this.keep(file.content);
+      else if (this.has(file.hash)) files[path] = file.hash;
+      else {
+        // Unchanged since it was hashed, but this store has no blob of it yet.
+        const content = this.fileContent(path);
+        if (!content) return null;
+        files[path] = this.keep(content);
+      }
+    }
     const checkpoint: Checkpoint = {
       id,
       at,
@@ -246,10 +299,15 @@ export class CheckpointStore {
       });
     };
     const uncovered = new Set<string>();
-    for (const [path, content] of now.files) {
+    for (const [path, file] of now.files) {
       // Too large to record before: it existed, so it is neither added nor revertible.
       if (checkpoint.large[path] !== undefined) uncovered.add(path);
-      else change(path, checkpoint.files[path] ?? null, content);
+      else if (checkpoint.files[path] !== file.hash) {
+        // Only a file whose hash changed is read, if it was not already.
+        const content = file.content ?? this.fileContent(path);
+        if (!content) return null;
+        change(path, checkpoint.files[path] ?? null, content);
+      }
     }
     for (const path of Object.keys(checkpoint.files)) {
       if (!now.files.has(path) && !now.large.has(path)) {
@@ -273,8 +331,9 @@ export class CheckpointStore {
   texts(): Map<string, string> {
     const now = this.read();
     const out = new Map<string, string>();
-    for (const [path, content] of now?.files ?? []) {
-      if (!isBinary(content)) out.set(path, content.toString('utf8'));
+    for (const [path, file] of now?.files ?? []) {
+      const content = file.content ?? this.fileContent(path);
+      if (content && !isBinary(content)) out.set(path, content.toString('utf8'));
     }
     return out;
   }
@@ -300,7 +359,7 @@ export class CheckpointStore {
   /** The file's content hash now; null when it does not exist. */
   current(path: string): string | null {
     const full = this.inside(path);
-    return existsSync(full) ? hash(readFileSync(full)) : null;
+    return existsSync(full) ? sha256(readFileSync(full)) : null;
   }
 
   /** Puts a file back to a recorded content, or removes it (null). */

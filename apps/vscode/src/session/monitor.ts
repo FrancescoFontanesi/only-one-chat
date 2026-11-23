@@ -12,7 +12,7 @@ import type {
   ThreadUpdate,
   RoleName,
   TurnRole,
-} from '../webview/protocol.js';
+} from '../shared/protocol.js';
 
 /** At most this many log entries, the latest. */
 const MAX_EVENTS = 200;

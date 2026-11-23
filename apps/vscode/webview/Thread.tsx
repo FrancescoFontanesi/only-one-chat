@@ -7,7 +7,7 @@
 import { Fragment, type ComponentChildren } from 'preact';
 import { useContext, useState } from 'preact/hooks';
 import type { SessionInfo, TurnHandoff } from '../src/webview/protocol.js';
-import { refTokens } from '../src/webview/refs.js';
+import { refTokens } from '../src/shared/refs.js';
 import { Markdown } from './markdown.js';
 import { Progress } from './motion.js';
 import type { ThreadItem } from './state.js';

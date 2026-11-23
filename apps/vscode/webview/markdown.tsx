@@ -10,7 +10,7 @@
 import { createContext, Fragment, type ComponentChildren } from 'preact';
 import { useContext } from 'preact/hooks';
 import katex from 'katex';
-import { linkPath } from '../src/webview/refs.js';
+import { linkPath } from '../src/shared/refs.js';
 import { parseBlocks, parseInline, type Inline } from './markdownModel.js';
 import { post } from './ui.js';
 

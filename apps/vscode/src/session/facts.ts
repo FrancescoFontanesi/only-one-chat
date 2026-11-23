@@ -4,11 +4,11 @@
 // `vscode`, so it can be unit-tested.
 
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { withoutApiKeys } from '@only-one-chat/adapters';
 import { TURN_FILES_HEADER } from '@only-one-chat/runtime';
+import { MAX_FILE_BYTES, fileHashes, type FileHashes } from './file-hashes.js';
 import { NOTHING_IGNORED, type Ignored } from './ignore.js';
 
 /** Folders never walked: dependencies, caches, version control. */
@@ -27,16 +27,24 @@ export const MAX_FILES = 5_000;
 /** `unavailable`: too many files, or the folder could not be read. */
 type Snapshot = ReadonlyMap<string, string> | 'unavailable';
 
-/** Content hash of every file under `dir`, by relative path; `ignored` paths left out (ADR 0021). */
-export function snapshot(dir: string, ignored: Ignored = NOTHING_IGNORED): Snapshot {
+/**
+ * Content hash of every file under `dir`, by relative path; `ignored` paths left out (ADR 0021).
+ * A file over 2 MiB is not read: its size and mtime stand for it (ADR 0047).
+ */
+export function snapshot(
+  dir: string,
+  ignored: Ignored = NOTHING_IGNORED,
+  hashes: FileHashes = fileHashes,
+): Snapshot {
   try {
-    return walkFolder(dir, ignored);
+    return walkFolder(dir, ignored, hashes);
   } catch {
     return 'unavailable';
   }
 }
 
-function walkFolder(dir: string, ignored: Ignored): Snapshot {
+function walkFolder(dir: string, ignored: Ignored, hashes: FileHashes): Snapshot {
+  const scanStart = Date.now();
   const out = new Map<string, string>();
   const walk = (folder: string): boolean => {
     for (const entry of readdirSync(folder, { withFileTypes: true })) {
@@ -48,7 +56,13 @@ function walkFolder(dir: string, ignored: Ignored): Snapshot {
       } else if (entry.isFile()) {
         if (ignored(rel.split(sep).join('/'), false)) continue;
         if (out.size >= MAX_FILES) return false;
-        out.set(rel, createHash('sha256').update(readFileSync(path)).digest('hex'));
+        const stat = statSync(path);
+        out.set(
+          rel,
+          stat.size > MAX_FILE_BYTES
+            ? `large:${String(stat.size)}:${String(stat.mtimeMs)}`
+            : hashes.hash(path, stat, scanStart).hash,
+        );
       }
     }
     return true;

@@ -11,7 +11,7 @@ import {
   type PermissionBridgeOptions,
 } from '@only-one-chat/adapters';
 import { agentLabel, agentSessionOptions, type AgentSession } from '@only-one-chat/runtime';
-import { NODE_NAME_LENGTH, type PermitDecision, type ThreadUpdate } from '../webview/protocol.js';
+import { NODE_NAME_LENGTH, type PermitDecision, type ThreadUpdate } from '../shared/protocol.js';
 import { summarize } from './chat.js';
 import { changes, snapshot } from './facts.js';
 import { ignoredPaths, type Ignored } from './ignore.js';

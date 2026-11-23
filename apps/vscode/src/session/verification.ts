@@ -36,6 +36,8 @@ interface Options {
   readonly store?: CheckpointStore | undefined;
   readonly id: () => string;
   readonly update: (evidence: VerificationEvidence) => void;
+  /** The command is about to run in the working folder, where it may write. */
+  readonly onRun?: () => void;
   readonly timeoutMs?: number;
 }
 
@@ -263,7 +265,7 @@ export class WorkspaceVerification implements WorkVerification {
         if (!at || !this.options.store) throw new Error('Workspace checkpoint unavailable');
         this.options.store.materialize(at, root);
         await copyVerificationDependencies(this.options.cwd, root, at, signal);
-      }
+      } else this.options.onRun?.();
       const report = join(root, '.ooc-junit.xml');
       // Ignore any old or agent-produced report copied with the workspace.
       rmSync(report, { force: true });

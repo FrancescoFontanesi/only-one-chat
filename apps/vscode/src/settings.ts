@@ -5,7 +5,7 @@
 // checked against its kind.
 
 import * as vscode from 'vscode';
-import type { Cli, SettingItem, SettingsSection, SettingsTarget } from './webview/protocol.js';
+import type { Cli, SettingItem, SettingsSection, SettingsTarget } from './shared/protocol.js';
 
 interface Definition {
   readonly key: string;

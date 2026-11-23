@@ -12,7 +12,7 @@ import {
   type AgyOptions,
   type QuotaSnapshot,
 } from '@only-one-chat/adapters';
-import type { Cli, ProviderUsage } from '../webview/protocol.js';
+import type { Cli, ProviderUsage } from '../shared/protocol.js';
 
 type Provider = Cli;
 

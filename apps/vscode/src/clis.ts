@@ -10,7 +10,7 @@ import {
   resolveNativeExecutable,
 } from '@only-one-chat/adapters';
 import { detectCli } from './detect.js';
-import type { Cli } from './webview/protocol.js';
+import type { Cli } from './shared/protocol.js';
 
 interface CliLaunch {
   readonly executable: string;

@@ -13,7 +13,7 @@ import {
   type PermissionBridge,
 } from '@only-one-chat/adapters';
 import type { AgentFactory } from '@only-one-chat/runtime';
-import type { Cli, PermissionLevel } from '../webview/protocol.js';
+import type { Cli, PermissionLevel } from '../shared/protocol.js';
 import type { ChatConfig } from './chat.js';
 
 /** An agent's provider, model, reasoning and permission: a role's or a node's (ADR 0023). */

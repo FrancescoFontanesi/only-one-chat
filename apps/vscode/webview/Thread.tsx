@@ -8,10 +8,11 @@ import { Fragment, type ComponentChildren } from 'preact';
 import { useContext, useState } from 'preact/hooks';
 import type { SessionInfo, TurnHandoff } from '../src/webview/protocol.js';
 import { refTokens } from '../src/shared/refs.js';
+import { FactsTurn, Verification } from './Facts.js';
 import { Markdown } from './markdown.js';
 import { Progress } from './motion.js';
 import type { ThreadItem } from './state.js';
-import { isFacts, opsSummary, readFacts, readOp, readUserMessage, type Op } from './threadModel.js';
+import { isFacts, opsSummary, readOp, readUserMessage, type Op } from './threadModel.js';
 import { duration, kilo, post, ShownNode, useWho } from './ui.js';
 
 type Item<K extends ThreadItem['kind']> = Extract<ThreadItem, { kind: K }>;
@@ -615,42 +616,6 @@ function Permission({ item }: { item: Item<'permission'> }) {
   );
 }
 
-function FactsTurn({ text, number }: { text: string; number: string | undefined }) {
-  const facts = readFacts(text);
-  return (
-    <section class="turn">
-      <div class="who">
-        <b>EXTENSION</b>
-        <span>VERIFIED FACTS</span>
-        {number && <span>D{number}</span>}
-      </div>
-      <div class="tb">
-        <dl class="cn-spec facts">
-          <dt>FILES CHANGED</dt>
-          <dd class="t-data">
-            {facts.files.length > 0
-              ? facts.files.map((f) => f.replace(/^(added|modified|deleted) /, '')).join(' · ')
-              : 'none'}
-          </dd>
-          {facts.verify && (
-            <>
-              <dt>VERIFICATION</dt>
-              <dd class="t-data">{facts.verify}</dd>
-            </>
-          )}
-          {facts.failed.length > 0 && (
-            <>
-              <dt>FAILED TESTS</dt>
-              <dd class="t-data">{facts.failed.join(' · ')}</dd>
-            </>
-          )}
-        </dl>
-        {facts.output && <pre class="outp">{facts.output}</pre>}
-      </div>
-    </section>
-  );
-}
-
 const KIND = { added: '+', modified: '~', deleted: '−' } as const;
 
 function Changes({
@@ -811,44 +776,7 @@ export function Thread({
       {items.map((item) => {
         switch (item.kind) {
           case 'verification':
-            return (
-              <section class="turn" key={item.id}>
-                <div class="who">
-                  <b>EXTENSION</b>
-                  <span>VERIFICATION</span>
-                </div>
-                <div class="tb">
-                  <span class="t-data">
-                    {item.evidence.comparison === 'pending' && item.evidence.budget !== undefined
-                      ? `Corrections ${String(item.evidence.round ?? 0)}/${String(item.evidence.budget)} · `
-                      : ''}
-                    {item.evidence.status} · Red-green{' '}
-                    {item.evidence.comparison.replaceAll('_', ' ')}
-                  </span>{' '}
-                  <button
-                    type="button"
-                    class="cn-btn cn-btn--sm"
-                    onClick={() => {
-                      post({ type: 'openVerification', id: item.id });
-                    }}
-                  >
-                    Open evidence
-                  </button>
-                  {item.evidence.selection?.files[0] && (
-                    <button
-                      type="button"
-                      class="cn-btn cn-btn--sm"
-                      onClick={() => {
-                        const path = item.evidence.selection?.files[0];
-                        if (path) post({ type: 'openFile', path });
-                      }}
-                    >
-                      Open test
-                    </button>
-                  )}
-                </div>
-              </section>
-            );
+            return <Verification key={item.id} item={item} />;
           case 'user':
             users++;
             return enter(item.id, <User key={item.id} item={item} index={users} busy={busy} />);

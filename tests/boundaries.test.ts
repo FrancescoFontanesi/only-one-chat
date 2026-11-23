@@ -149,7 +149,7 @@ describe('structure (ADR 0047)', () => {
     'apps/vscode/src/session/chat.ts': 2126,
     'apps/vscode/src/shared/protocol.ts': 946,
     'apps/vscode/src/webview/panel.ts': 1381,
-    'apps/vscode/webview/Thread.tsx': 919,
+    'apps/vscode/webview/Thread.tsx': 847,
   };
 
   it('keeps every source file under its line ceiling', () => {

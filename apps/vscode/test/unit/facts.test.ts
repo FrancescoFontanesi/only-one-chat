@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { changedFiles } from '@only-one-chat/runtime';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { snapshot, verifiedFacts } from '../../src/session/facts.js';
+import { changes, snapshot, verifiedFacts } from '../../src/session/facts.js';
 
 let dir: string;
 beforeEach(() => {
@@ -35,5 +35,24 @@ describe('verifiedFacts', () => {
   it('has no turn list without a snapshot of the turn', async () => {
     const facts = await verifiedFacts(dir, snapshot(dir), []);
     expect(facts).not.toContain('last turn');
+  });
+
+  it('writes every path with /, whatever the platform’s separator', async () => {
+    mkdirSync(join(dir, 'src', 'deep'), { recursive: true });
+    writeFileSync(join(dir, 'src', 'deep', 'a.py'), 'a');
+    const baseline = snapshot(dir);
+    if (baseline === 'unavailable') throw new Error('no snapshot');
+    writeFileSync(join(dir, 'src', 'deep', 'a.py'), 'b');
+    writeFileSync(join(dir, 'src', 'deep', 'b.py'), 'b');
+    const after = snapshot(dir);
+    if (after === 'unavailable') throw new Error('no snapshot');
+    const facts = await verifiedFacts(dir, baseline, [], undefined, baseline);
+    const backslash = String.fromCharCode(92);
+    expect([...baseline.keys(), ...after.keys()].some((key) => key.includes(backslash))).toBe(
+      false,
+    );
+    expect(changes(baseline, after)).toEqual(['modified src/deep/a.py', 'added src/deep/b.py']);
+    expect(facts.includes(backslash)).toBe(false);
+    expect(facts).toContain('- added src/deep/b.py');
   });
 });

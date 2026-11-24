@@ -6,6 +6,13 @@ import { assessRisk, fanIn, riskFact } from '../src/risk.js';
 const lines = (n: number, text = 'x = x + 1') => Array.from({ length: n }, () => text).join('\n');
 
 describe('assessRisk', () => {
+  it('no code file changed (tests only, or nothing) scores 0, never below', () => {
+    expect(assessRisk([], new Map()).score).toBe(0);
+    const docs = assessRisk([{ path: 'tests/test_a.py', before: 'a', after: 'b' }], new Map());
+    expect(docs.score).toBe(0);
+    expect(riskFact(docs)).toContain('low (0.00)');
+  });
+
   it('a small change in one file, with its test, is low', () => {
     const risk = assessRisk(
       [

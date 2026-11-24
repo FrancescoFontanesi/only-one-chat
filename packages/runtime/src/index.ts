@@ -2,9 +2,8 @@
 // optional reviewer, the handoff tools between them and the JSONL event log (see
 // docs/architecture.md).
 //
-// TODO(orchestrator): persistent tasks, failover and mediated approvals come in
-// later iterations. This package must stay free of any `vscode` import so it
-// can be tested in plain Node and reused outside the extension host.
+// This package must stay free of any `vscode` import so it can be tested in
+// plain Node and reused outside the extension host.
 
 import pkg from '../package.json' with { type: 'json' };
 

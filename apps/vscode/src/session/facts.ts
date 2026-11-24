@@ -58,12 +58,13 @@ function walkFolder(dir: string, ignored: Ignored, hashes: FileHashes): Snapshot
   const walk = (folder: string): boolean => {
     for (const entry of readdirSync(folder, { withFileTypes: true })) {
       const path = join(folder, entry.name);
-      const rel = relative(dir, path);
+      // With '/' on every platform, as the checkpoints and the contract checks write it.
+      const rel = relative(dir, path).split(sep).join('/');
       if (entry.isDirectory()) {
-        if (SKIPPED.has(entry.name) || ignored(rel.split(sep).join('/'), true)) continue;
+        if (SKIPPED.has(entry.name) || ignored(rel, true)) continue;
         if (!walk(path)) return false;
       } else if (entry.isFile()) {
-        if (ignored(rel.split(sep).join('/'), false)) continue;
+        if (ignored(rel, false)) continue;
         if (out.size >= MAX_FILES) return false;
         const stat = statSync(path);
         out.set(

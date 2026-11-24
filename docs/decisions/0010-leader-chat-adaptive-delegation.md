@@ -1,6 +1,6 @@
 # 0010. Leader chat and adaptive delegation across subscriptions
 
-Status: Accepted (iteration 3). Partially supersedes [ADR 0009](0009-chatgpt-web-and-three-turn-layer.md). The leader chat replaces ChatGPT on the web as the main workflow. The clipboard bridge, focus-triggered capture, and brief format still apply.
+Status: Accepted (iteration 3). Partially superseded by [ADR 0018](0018-delegation-cycle.md), which makes the leader read-only. Partially supersedes [ADR 0009](0009-chatgpt-web-and-three-turn-layer.md). The leader chat replaces ChatGPT on the web as the main workflow. The clipboard bridge, focus-triggered capture, and brief format still apply.
 
 ## Context
 

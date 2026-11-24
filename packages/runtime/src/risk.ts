@@ -150,7 +150,8 @@ export function assessRisk(
   if (touched.length > 0) raise('high', `touches ${touched.join(', ')}`);
   const flags = shortcutFlags(changes).length;
   if (flags > 0) raise('medium', `${String(flags)} diff check flag${flags === 1 ? '' : 's'}`);
-  return { level, score: Math.round(score * 100) / 100, reasons };
+  // No code file changed makes the spread term negative: the score never goes below 0.
+  return { level, score: Math.round(Math.max(0, score) * 100) / 100, reasons };
 }
 
 /** The assessment as a line of the facts. */

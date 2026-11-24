@@ -1,6 +1,6 @@
 # 0011. Panels, roles, approvals, and implementer continuity
 
-Status: Partially accepted (iteration 3).
+Status: Partially accepted (iteration 3). Partially superseded by [ADR 0012](0012-layout-roles-catalog.md) (the Views section) and [ADR 0018](0018-delegation-cycle.md) (report approval removed).
 
 - The experiment below decided who makes small changes, how the implementer session continues, how to use `@impl`, and how to queue reports.
 - Switching workstreams remains an open design question.

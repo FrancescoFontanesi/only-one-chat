@@ -1,9 +1,6 @@
 // Provider adapters: drive the official CLIs (Codex, Claude Code, Antigravity)
 // through the user's existing subscriptions, never through paid API keys.
 // Like the runtime, this package must not import `vscode`.
-//
-// TODO(adapters): only the Codex App Server connection exists so far; threads,
-// turns and the Claude/Antigravity adapters come in later milestones.
 
 export {
   AppServerError,

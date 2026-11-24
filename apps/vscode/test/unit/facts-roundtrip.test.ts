@@ -37,9 +37,6 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-/** The facts list paths with the platform's separator. */
-const slashes = (list: readonly string[] | undefined) => list?.map((f) => f.replaceAll('\\', '/'));
-
 /** What ChatSession.facts() sends to the thread: the files, the command line, the diff checks. */
 function sessionFacts(store: CheckpointStore, verify: readonly string[] = []) {
   const checkpoint = store.take('request');
@@ -69,7 +66,7 @@ describe('facts written by the session and read by the thread (ADR 0048)', () =>
     const text = await facts.text();
     expect(isFacts(text)).toBe(true);
     const read = readFacts(text);
-    expect(slashes(read.files)).toEqual(['modified src/calc.test.ts', 'modified src/calc.ts']);
+    expect(read.files).toEqual(['modified src/calc.test.ts', 'modified src/calc.ts']);
     expect(read.flags).toEqual([
       'src/calc.test.ts: assertions that compare an expression with itself: 1',
     ]);
@@ -90,8 +87,8 @@ describe('facts written by the session and read by the thread (ADR 0048)', () =>
     writeFileSync(join(cwd, 'src', 'extra.ts'), 'export {};\n');
     const read = readFacts(await facts.text(turnBase));
     expect(read.flags).toEqual([]);
-    expect(slashes(read.files)).toEqual(['modified src/calc.ts', 'added src/extra.ts']);
-    expect(slashes(read.turn)).toEqual(['added src/extra.ts']);
+    expect(read.files).toEqual(['modified src/calc.ts', 'added src/extra.ts']);
+    expect(read.turn).toEqual(['added src/extra.ts']);
     expect(read.risk?.reasons.length).toBeGreaterThan(0);
   });
 

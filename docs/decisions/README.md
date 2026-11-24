@@ -52,3 +52,4 @@ Each decision has its own `NNNN-title.md` file with Status, Context, Decision, a
 | [0046](0046-review-cases-and-shared-diff-checks.md) | A versioned review case suite, and the same diff checks everywhere            | Accepted                                        |
 | [0047](0047-workspace-io-and-structural-guards.md)  | Workspace reads with a stat cache, and structural guards                      | Accepted                                        |
 | [0048](0048-frontend-alignment.md)                  | The thread shows the runtime's evidence apart, and the brief's scope as links | Accepted                                        |
+| [0049](0049-v01-scope.md)                           | The scope of v0.1                                                             | Accepted                                        |

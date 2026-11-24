@@ -4,7 +4,7 @@
 // `vscode`: the sources are passed in.
 
 import type { ModelInfo } from '@only-one-chat/adapters';
-import type { Cli, ModelOption, ProviderCatalog } from '../shared/protocol.js';
+import { isModel, type Cli, type ModelOption, type ProviderCatalog } from '../shared/protocol.js';
 
 type ModelSource = () => Promise<readonly ModelInfo[]>;
 
@@ -68,6 +68,19 @@ export class ModelCatalog {
   rejects(cli: Cli, model: string): boolean {
     const entry = this.entries.get(cli);
     return entry?.status === 'ready' && !entry.models.some((m) => m.id === model);
+  }
+
+  /**
+   * The model a role's setting names, checked before it reaches a CLI's
+   * arguments (security.md T13): the views' pattern, and offered by the CLI once
+   * its catalog is read. Else the setting's default if it passes, else '' (the
+   * CLI's own); `rejected` when the setting was set aside.
+   */
+  settled(cli: Cli, value: unknown, fallback: unknown): { model: string; rejected: boolean } {
+    const accepts = (model: unknown): model is string =>
+      isModel(model) && !this.rejects(cli, model);
+    if (accepts(value)) return { model: value, rejected: false };
+    return { model: accepts(fallback) ? fallback : '', rejected: true };
   }
 
   onChange(listener: () => void): () => void {

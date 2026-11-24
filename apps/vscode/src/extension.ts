@@ -50,12 +50,15 @@ export function activate(context: vscode.ExtensionContext): OnlyOneChatExports {
     antigravity: async () => listAntigravityModels(await cliLaunch(context, 'antigravity')),
   });
   // The skills of the open folder, from the CLIs as well (ADR 0019): no turn, no quota.
-  const skills = new SkillCatalog({
-    codex: async (cwd) => listCodexSkills({ ...(await cliLaunch(context, 'codex')), cwd }),
-    claude: async (cwd) => listClaudeSkills({ ...(await cliLaunch(context, 'claude')), cwd }),
-    // TODO(nodes): Antigravity's skills are not read; a node takes none (ADR 0023).
-    antigravity: () => Promise.reject(new Error('Antigravity skills are unavailable.')),
-  });
+  const skills = new SkillCatalog(
+    {
+      codex: async (cwd) => listCodexSkills({ ...(await cliLaunch(context, 'codex')), cwd }),
+      claude: async (cwd) => listClaudeSkills({ ...(await cliLaunch(context, 'claude')), cwd }),
+      // TODO(nodes): Antigravity's skills are not read; a node takes none (ADR 0023).
+      antigravity: () => Promise.reject(new Error('Antigravity skills are unavailable.')),
+    },
+    () => vscode.workspace.isTrusted,
+  );
   const roles = new RoleSettings(catalog);
   const verificationProvider = new VerificationContentProvider(context);
   const usageReader = new UsageReader(context, usage, () =>

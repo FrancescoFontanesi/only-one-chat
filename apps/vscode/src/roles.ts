@@ -30,12 +30,21 @@ export interface ChatRoles {
 
 const KEYS = ['cli', 'model', 'effort', 'permission'] as const;
 
-function choiceOf(settings: vscode.WorkspaceConfiguration, role: RoleName): AgentChoice {
-  const cli = settings.get<string>(`${role}.cli`);
+function choiceOf(
+  settings: vscode.WorkspaceConfiguration,
+  role: RoleName,
+  catalog: ModelCatalog,
+  warn: (key: string, value: unknown) => void,
+): AgentChoice {
+  const cli = settings.get<string>(`${role}.cli`) === 'claude' ? 'claude' : 'codex';
   const permission = settings.get<string>(`${role}.permission`);
+  const key = `${role}.model`;
+  const value = settings.get<unknown>(key);
+  const { model, rejected } = catalog.settled(cli, value, settings.inspect(key)?.defaultValue);
+  if (rejected) warn(key, value);
   return {
-    cli: cli === 'claude' ? 'claude' : 'codex',
-    model: settings.get<string>(`${role}.model`) ?? '',
+    cli,
+    model,
     effort: settings.get<string>(`${role}.effort`) ?? 'low',
     // The leader never writes (ADR 0018): read-only, not a setting.
     permission: (role === 'leader'
@@ -54,6 +63,8 @@ export class RoleSettings implements vscode.Disposable {
   private writing = 0;
   private readonly subscription: vscode.Disposable;
   private readonly unsubscribeCatalog: () => void;
+  /** Model settings already said to be set aside: each is said once per window. */
+  private readonly warned = new Set<string>();
 
   constructor(private readonly catalog: ModelCatalog) {
     this.subscription = vscode.workspace.onDidChangeConfiguration((event) => {
@@ -70,7 +81,18 @@ export class RoleSettings implements vscode.Disposable {
 
   get(): Roles {
     const settings = vscode.workspace.getConfiguration('onlyOneChat');
-    return { leader: choiceOf(settings, 'leader'), implementer: choiceOf(settings, 'implementer') };
+    const warn = (key: string, value: unknown) => {
+      const said = `${key}=${JSON.stringify(value)}`;
+      if (this.warned.has(said)) return;
+      this.warned.add(said);
+      void vscode.window.showWarningMessage(
+        `The setting onlyOneChat.${key} (${JSON.stringify(value)}) is not a model its CLI accepts: the default is used.`,
+      );
+    };
+    return {
+      leader: choiceOf(settings, 'leader', this.catalog, warn),
+      implementer: choiceOf(settings, 'implementer', this.catalog, warn),
+    };
   }
 
   /** A role as the views show it, with its model's name when the catalog is read. */

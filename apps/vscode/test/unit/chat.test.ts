@@ -1623,6 +1623,47 @@ describe('chat session', () => {
     expect(contexts.map(([role]) => role)).not.toContain('reviewer');
   });
 
+  it('does not start the reviewer when its guard cannot record the folder, and says so', async () => {
+    // The message's checkpoint is taken; the one before the reviewer's turn fails.
+    class GuardFails extends CheckpointStore {
+      override take(id: string, at?: number) {
+        return id.startsWith('rev-') ? null : super.take(id, at);
+      }
+    }
+    const store = new GuardFails(join(root, 'checkpoints'), cwd);
+    const { chat, updates, busy } = session(
+      'auto',
+      'always',
+      undefined,
+      undefined,
+      undefined,
+      store,
+      undefined,
+      {
+        reviewer: {
+          choice: { cli: 'claude', model: 'haiku', effort: 'low', permission: 'read-only' },
+          rounds: 1,
+        },
+      },
+    );
+    try {
+      await chat.send('[spec] aggiungi una funzione');
+      // The reviewer's CLI never ran a turn.
+      expect(claudeRuns().filter((argv) => argv.includes('haiku'))).toEqual([]);
+      expect(doneTurns(updates).map((t) => t.role)).not.toContain('reviewer');
+      expect(updates).toContainEqual({
+        type: 'notice',
+        level: 'warn',
+        text: 'Review skipped: the workspace snapshot for the reviewer’s guard failed, so the reviewer did not run.',
+      });
+      // The chat is free again.
+      expect(chat.busy).toBe(false);
+      expect(busy.at(-1)).toBe(false);
+    } finally {
+      await chat.dispose();
+    }
+  });
+
   it('with the folder recorded, the reviewer may write tests, and each of its turns is guarded', async () => {
     const store = new CheckpointStore(join(root, 'checkpoints'), cwd);
     const { chat, updates } = session(

@@ -14,14 +14,24 @@ type SkillList =
   | { readonly status: 'ready'; readonly skills: readonly SkillInfo[] }
   | { readonly status: 'unavailable'; readonly note: string };
 
+const UNTRUSTED: SkillList = {
+  status: 'unavailable',
+  note: 'Trust the folder to list its skills.',
+};
+
 export class SkillCatalog {
   private readonly lists = new Map<string, SkillList>();
   private readonly reading = new Map<string, Promise<SkillList>>();
 
-  constructor(private readonly sources: Readonly<Record<Cli, SkillSource>>) {}
+  constructor(
+    private readonly sources: Readonly<Record<Cli, SkillSource>>,
+    /** Workspace Trust (security.md T3): no CLI starts in an untrusted folder, not even to list. */
+    private readonly trusted: () => boolean = () => true,
+  ) {}
 
-  /** The skills of a CLI for a folder: read once, unless `again`. */
+  /** The skills of a CLI for a folder: read once, unless `again`; none, and nothing kept, while untrusted. */
   load(cli: Cli, cwd: string, again = false): Promise<SkillList> {
+    if (!this.trusted()) return Promise.resolve(UNTRUSTED);
     const key = `${cli}\n${cwd}`;
     const known = this.lists.get(key);
     if (known && known.status !== 'loading' && !again) return Promise.resolve(known);

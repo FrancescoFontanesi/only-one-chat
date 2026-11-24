@@ -81,6 +81,8 @@ import { checkSubagent, subagentLabel, type SubagentState } from './subagents.js
 type Role = 'orchestrator' | 'worker' | 'reviewer';
 
 export const APPROVAL_DENIED_MESSAGE = 'approval declined: not supported in this version';
+export const REVIEW_UNGUARDED =
+  'Review skipped: the workspace could not be recorded before the reviewer’s turn.';
 
 export interface InterceptedMessage {
   readonly kind: 'delegation' | 'review';
@@ -397,7 +399,8 @@ export interface LoopOptions {
   /**
    * Called before each reviewer turn (ADR 0029): the function it returns runs
    * after the turn, puts back what the reviewer changed outside the tests and
-   * says what, or ''. The runtime tells the leader and the implementer.
+   * says what, or ''. The runtime tells the leader and the implementer. Null:
+   * the folder could not be recorded, and the turn does not start (the loop fails).
    */
   guardReviewer?(): (() => string) | null;
   /** A note on the reviewer's session, in its first prompt (see NO_COMMANDS_NOTE). */
@@ -805,7 +808,9 @@ export function runLoop(options: LoopOptions): Loop {
     let restored = '';
     const commands = new CommandEvidence();
     const guarded = async (text: string) => {
-      const undo = options.guardReviewer?.() ?? null;
+      const undo = options.guardReviewer ? options.guardReviewer() : null;
+      // Fail closed: a guard that cannot record the folder must not let the reviewer write.
+      if (options.guardReviewer && !undo) throw new Error(REVIEW_UNGUARDED);
       try {
         return await turn(reviewer, 'reviewer', text, undefined, commands);
       } finally {

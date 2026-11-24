@@ -32,4 +32,25 @@ describe('skill catalog', () => {
       note: 'Claude non risponde',
     });
   });
+
+  it('starts no CLI while the folder is untrusted, and keeps nothing for when it is', async () => {
+    const calls: string[] = [];
+    let trusted = false;
+    const source = (cwd: string) => {
+      calls.push(cwd);
+      return Promise.resolve([{ name: 'tdd', description: '', path: '/s/tdd/SKILL.md' }]);
+    };
+    const catalog = new SkillCatalog(
+      { codex: source, claude: source, antigravity: source },
+      () => trusted,
+    );
+    const untrusted = await catalog.load('claude', 'F:/x');
+    expect(untrusted).toMatchObject({ status: 'unavailable' });
+    expect(await catalog.load('codex', 'F:/x', true)).toMatchObject({ status: 'unavailable' });
+    expect(calls).toEqual([]);
+    expect(catalog.find('claude', 'F:/x', 'tdd')).toBeUndefined();
+    trusted = true;
+    expect(await catalog.load('claude', 'F:/x')).toMatchObject({ status: 'ready' });
+    expect(calls).toEqual(['F:/x']);
+  });
 });

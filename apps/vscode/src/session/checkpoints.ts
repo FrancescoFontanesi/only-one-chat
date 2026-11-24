@@ -13,7 +13,9 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  lstatSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -89,6 +91,37 @@ export class CheckpointStore {
     const rel = relative(this.cwd, full);
     if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
       throw new Error(`path outside the folder: ${path}`);
+    }
+    return full;
+  }
+
+  /**
+   * inside(), for a write or a removal: no existing link on the way leads out
+   * of the folder, and the path itself is not a link (a broken one included).
+   */
+  private writable(path: string): string {
+    const full = this.inside(path);
+    const root = realpathSync.native(this.cwd);
+    const parts = relative(this.cwd, full).split(sep);
+    let at = this.cwd;
+    for (const [index, part] of parts.entries()) {
+      at = join(at, part);
+      let link: boolean;
+      try {
+        link = lstatSync(at).isSymbolicLink();
+      } catch {
+        break; // Missing: nothing below it exists either.
+      }
+      if (!link) continue;
+      let real: string | null = null;
+      try {
+        if (index < parts.length - 1) real = realpathSync.native(at);
+      } catch {
+        // A broken link on the way: refused below.
+      }
+      if (real === null || (real !== root && !real.startsWith(root + sep))) {
+        throw new Error(`path outside the folder: ${path}`);
+      }
     }
     return full;
   }
@@ -364,7 +397,7 @@ export class CheckpointStore {
 
   /** Puts a file back to a recorded content, or removes it (null). */
   put(path: string, content: string | null): void {
-    const full = this.inside(path);
+    const full = this.writable(path);
     if (content === null) {
       rmSync(full, { force: true });
       return;

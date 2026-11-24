@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -96,5 +104,32 @@ describe('checkpoints (ADR 0014)', () => {
       store.put('../outside.txt', null);
     }).toThrow(/outside the folder/);
     expect(() => store.current('../../etc/passwd')).toThrow(/outside the folder/);
+  });
+
+  it('never writes or removes through a junction that leads out of the folder', () => {
+    const outside = join(root, 'outside');
+    mkdirSync(outside);
+    writeFileSync(join(outside, 'kept.txt'), 'theirs');
+    writeFileSync(join(cwd, 'a.txt'), 'ours');
+    const checkpoint = store.take('ckpt-1');
+    const content = checkpoint?.files['a.txt'] ?? '';
+    // A junction needs no privileges on Windows; elsewhere it is a plain directory link.
+    symlinkSync(outside, join(cwd, 'link'), 'junction');
+    expect(() => {
+      store.put('link/pwn.txt', content);
+    }).toThrow(/outside the folder/);
+    expect(() => {
+      store.put('link/kept.txt', null);
+    }).toThrow(/outside the folder/);
+    // The link itself is not followed nor replaced.
+    expect(() => {
+      store.put('link', content);
+    }).toThrow(/outside the folder/);
+    expect(existsSync(join(outside, 'pwn.txt'))).toBe(false);
+    expect(readFileSync(join(outside, 'kept.txt'), 'utf8')).toBe('theirs');
+    // A link that stays inside the folder still works.
+    symlinkSync(join(cwd, 'src'), join(cwd, 'inner'), 'junction');
+    store.put('inner/b.txt', content);
+    expect(readFileSync(join(cwd, 'src', 'b.txt'), 'utf8')).toBe('ours');
   });
 });

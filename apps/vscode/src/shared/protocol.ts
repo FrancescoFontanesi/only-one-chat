@@ -599,7 +599,8 @@ const isCli = (value: unknown): value is Cli =>
 const isId = (value: unknown): value is string =>
   typeof value === 'string' && ID_PATTERN.test(value);
 
-const isModel = (value: unknown): value is string =>
+/** A model name as the CLIs take it: no leading `-`, no spaces (security.md T13). */
+export const isModel = (value: unknown): value is string =>
   typeof value === 'string' && MODEL_PATTERN.test(value);
 
 /** Validates a message received from a webview; anything unexpected is dropped. */

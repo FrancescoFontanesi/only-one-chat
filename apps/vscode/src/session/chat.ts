@@ -810,6 +810,13 @@ export class ChatSession {
           ? {
               guardReviewer: () => {
                 const restore = guardReviewerTurn(store, this.id('rev'));
+                if (!restore) {
+                  this.events.update({
+                    type: 'notice',
+                    level: 'warn',
+                    text: 'Review skipped: the workspace snapshot for the reviewer’s guard failed, so the reviewer did not run.',
+                  });
+                }
                 // The restore after the turn writes to the folder too.
                 return restore && (() => (this.taskState.markDirty(), restore()));
               },

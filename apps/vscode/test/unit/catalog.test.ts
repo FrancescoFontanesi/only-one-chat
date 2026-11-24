@@ -40,4 +40,43 @@ describe('model catalog (ADR 0012)', () => {
     await catalog.load(true);
     expect(reads).toBe(2);
   });
+
+  it('sets aside a role’s model setting a CLI must not receive, for its default or none (security.md T13)', async () => {
+    const catalog = new ModelCatalog({
+      codex: () => Promise.resolve([SOL]),
+      claude: () => Promise.reject(new Error('not read')),
+      antigravity: () => Promise.resolve([]),
+    });
+    // Before the catalog is read, the pattern alone.
+    expect(catalog.settled('codex', '--dangerously-skip-permissions', 'gpt-6.1-sol')).toEqual({
+      model: 'gpt-6.1-sol',
+      rejected: true,
+    });
+    await catalog.load();
+    expect(catalog.settled('codex', 'gpt-6.1-sol', 'x')).toEqual({
+      model: 'gpt-6.1-sol',
+      rejected: false,
+    });
+    for (const bad of [
+      '--dangerously-skip-permissions',
+      '-m',
+      'model with spaces',
+      'a\u0007b',
+      '',
+      42,
+    ]) {
+      expect(catalog.settled('codex', bad, 'gpt-6.1-sol')).toEqual({
+        model: 'gpt-6.1-sol',
+        rejected: true,
+      });
+    }
+    // Not offered by the CLI, and a default it does not offer either: none, the CLI's own.
+    expect(catalog.settled('codex', 'gpt-0', 'sonnet')).toEqual({ model: '', rejected: true });
+    // Claude's catalog is unavailable: its names pass on the pattern alone.
+    expect(catalog.settled('claude', 'sonnet', 'haiku')).toEqual({
+      model: 'sonnet',
+      rejected: false,
+    });
+    expect(catalog.settled('claude', '-p', 'haiku')).toEqual({ model: 'haiku', rejected: true });
+  });
 });

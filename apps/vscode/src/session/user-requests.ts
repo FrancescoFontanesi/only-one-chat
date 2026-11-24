@@ -5,9 +5,18 @@
 import type { AgentQuestion, QuestionAnswers } from '@only-one-chat/runtime';
 import type { PermitDecision, ThreadUpdate, TurnRole } from '../shared/protocol.js';
 
+/** "For the session" where it is not offered: allowed once (ADR 0050). */
+export const onceIfNoSession = (
+  decision: PermitDecision,
+  sessionAllowed: boolean,
+): PermitDecision => (decision === 'acceptForSession' && !sessionAllowed ? 'accept' : decision);
+
 export class UserRequests {
   /** Agents' permission requests waiting for the user (R9). */
-  private readonly permissions = new Map<string, (decision: PermitDecision) => void>();
+  private readonly permissions = new Map<
+    string,
+    { resolve: (decision: PermitDecision) => void; sessionAllowed: boolean }
+  >();
   /** The leader's questions waiting for the user (ADR 0019), with their secret ids. */
   private readonly questions = new Map<
     string,
@@ -19,20 +28,30 @@ export class UserRequests {
     private readonly update: (update: ThreadUpdate) => void,
   ) {}
 
-  /** Shows an agent's permission request and waits for the user; stopping declines it. */
+  /**
+   * Shows an agent's permission request and waits for the user; stopping
+   * declines it. `sessionAllowed` false: "for the session" counts as once (ADR 0050).
+   */
   askPermission(
     role: TurnRole,
     agent: string,
-    summary: string,
+    { summary, sessionAllowed = true }: { summary: string; sessionAllowed?: boolean },
     signal?: AbortSignal,
   ): Promise<PermitDecision> {
     return new Promise((resolve) => {
       const id = this.id('p');
-      this.permissions.set(id, resolve);
+      this.permissions.set(id, { resolve, sessionAllowed });
       signal?.addEventListener('abort', () => {
         this.permit(id, 'decline');
       });
-      this.update({ type: 'permission', id, role, agent, summary });
+      this.update({
+        type: 'permission',
+        id,
+        role,
+        agent,
+        summary,
+        ...(sessionAllowed ? {} : { sessionAllowed: false as const }),
+      });
     });
   }
 
@@ -75,11 +94,12 @@ export class UserRequests {
   }
 
   /** The user's answer to a permission request. */
-  permit(id: string, decision: PermitDecision): void {
-    const resolve = this.permissions.get(id);
-    if (!resolve) return;
+  permit(id: string, answer: PermitDecision): void {
+    const pending = this.permissions.get(id);
+    if (!pending) return;
     this.permissions.delete(id);
-    resolve(decision);
+    const decision = onceIfNoSession(answer, pending.sessionAllowed);
+    pending.resolve(decision);
     this.update({ type: 'permission_closed', id, decision });
   }
 

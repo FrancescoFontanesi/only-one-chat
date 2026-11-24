@@ -8,6 +8,7 @@ import type { AgentChoice } from './session/chat.js';
 import type { ModelCatalog } from './session/catalog.js';
 import { nodesOf, type NodeChoice } from './session/node.js';
 import { PROVIDERS, type ProviderChoice } from './session/providers.js';
+import { reviewerOf, subagentsOf, type Setting } from './session/setting-choices.js';
 import {
   EFFORTS,
   type NodeInfo,
@@ -29,6 +30,15 @@ export interface ChatRoles {
 }
 
 const KEYS = ['cli', 'model', 'effort', 'permission'] as const;
+
+/** The settings read with their declared defaults, for setting-choices.ts. */
+function setting(): Setting {
+  const settings = vscode.workspace.getConfiguration('onlyOneChat');
+  return (key) => ({
+    value: settings.get<unknown>(key),
+    fallback: settings.inspect(key)?.defaultValue,
+  });
+}
 
 function choiceOf(
   settings: vscode.WorkspaceConfiguration,
@@ -79,20 +89,27 @@ export class RoleSettings implements vscode.Disposable {
     });
   }
 
+  /** A model setting set aside (security.md T13): said once per value and window. */
+  private readonly warn = (key: string, value: unknown) => {
+    const said = `${key}=${JSON.stringify(value)}`;
+    if (this.warned.has(said)) return;
+    this.warned.add(said);
+    void vscode.window.showWarningMessage(
+      `The setting onlyOneChat.${key} (${JSON.stringify(value)}) is not a model its CLI accepts: the default is used.`,
+    );
+  };
+
   get(): Roles {
     const settings = vscode.workspace.getConfiguration('onlyOneChat');
-    const warn = (key: string, value: unknown) => {
-      const said = `${key}=${JSON.stringify(value)}`;
-      if (this.warned.has(said)) return;
-      this.warned.add(said);
-      void vscode.window.showWarningMessage(
-        `The setting onlyOneChat.${key} (${JSON.stringify(value)}) is not a model its CLI accepts: the default is used.`,
-      );
-    };
     return {
-      leader: choiceOf(settings, 'leader', this.catalog, warn),
-      implementer: choiceOf(settings, 'implementer', this.catalog, warn),
+      leader: choiceOf(settings, 'leader', this.catalog, this.warn),
+      implementer: choiceOf(settings, 'implementer', this.catalog, this.warn),
     };
+  }
+
+  /** The sub-agents' models and effort (D13), each model checked. */
+  subagents(): ReturnType<typeof subagentsOf> {
+    return subagentsOf(setting(), this.warn);
   }
 
   /** A role as the views show it, with its model's name when the catalog is read. */
@@ -141,24 +158,8 @@ export class RoleSettings implements vscode.Disposable {
    * code, whatever `permission` says. `rounds` is how many times its findings
    * may go back to the implementer.
    */
-  reviewer(): {
-    enabled: boolean;
-    choice: ProviderChoice;
-    rounds: number;
-  } {
-    const settings = vscode.workspace.getConfiguration('onlyOneChat');
-    const cli = settings.get<string>('reviewer.cli');
-    const rounds = settings.get<number>('reviewer.rounds') ?? 2;
-    return {
-      enabled: settings.get<boolean>('reviewer.enabled') === true,
-      choice: {
-        cli: cli === 'codex' || cli === 'antigravity' ? cli : 'claude',
-        model: settings.get<string>('reviewer.model') ?? '',
-        effort: settings.get<string>('reviewer.effort') ?? 'low',
-        permission: 'read-only',
-      },
-      rounds: Number.isFinite(rounds) ? Math.max(0, Math.min(3, Math.trunc(rounds))) : 2,
-    };
+  reviewer(): ReturnType<typeof reviewerOf> {
+    return reviewerOf(this.catalog, setting(), this.warn);
   }
 
   /** The reviewer switched on or off from Squad (ADR 0033): where it is set, else the user's. */
@@ -226,7 +227,11 @@ export class RoleSettings implements vscode.Disposable {
 
   /** The nodes on Squad's board, from the settings (ADR 0023). */
   nodes(): NodeChoice[] {
-    return nodesOf(vscode.workspace.getConfiguration('onlyOneChat').get('nodes'));
+    return nodesOf(
+      vscode.workspace.getConfiguration('onlyOneChat').get('nodes'),
+      this.catalog,
+      this.warn,
+    );
   }
 
   /**

@@ -41,6 +41,7 @@ import type {
   ThreadUpdate,
   TurnRole,
 } from '../shared/protocol.js';
+import type { RevokeApproval, SessionApproval } from '../shared/approvals.js';
 import type { Checkpoint } from './checkpoints.js';
 import { changes, snapshot } from './facts.js';
 import { guardReviewerTurn } from './guard.js';
@@ -241,6 +242,16 @@ export class ChatSession {
   }
 
   /** The roles of this chat, with the user's changes. */
+  /** What the roles' bridges keep approved for the session (ADR 0050). */
+  approvals(): SessionApproval[] {
+    return this.sessions.approvals();
+  }
+
+  /** Forgets one approval kept for the session, or all of them; the bridges stay open. */
+  revokeApproval(message: RevokeApproval): void {
+    this.sessions.revokeApproval(message);
+  }
+
   get currentRoles(): { readonly leader: AgentChoice; readonly implementer: AgentChoice } {
     return this.sessions.currentRoles;
   }
@@ -534,7 +545,7 @@ export class ChatSession {
           this.events.update({ type: 'chunk', turnId: id, text: chunk });
         },
         onApprovalRequest: (request) =>
-          this.requests.askPermission('implementer', session.name, request.summary),
+          this.requests.askPermission('implementer', session.name, request),
         onActivity: ({ kind, detail }) => {
           this.events.update({
             type: 'activity',
@@ -872,7 +883,7 @@ export class ChatSession {
         ...(reviewer.policy ? { reviewer: reviewer.policy } : {}),
       },
       onApproval: ({ role, agent, request }, signal) =>
-        this.requests.askPermission(roleOf(role), agent, request.summary, signal),
+        this.requests.askPermission(roleOf(role), agent, request, signal),
       onWorkerTurn: () => {
         turnBase = snapshot(config.cwd, this.ignored);
       },
@@ -1146,7 +1157,7 @@ export class ChatSession {
         ...(reviewer?.policy ? { reviewer: reviewer.policy } : {}),
       },
       onApproval: ({ role, agent, request }, signal) =>
-        this.requests.askPermission(roleOf(role), agent, request.summary, signal),
+        this.requests.askPermission(roleOf(role), agent, request, signal),
       onQuestion: ({ role, agent, questions }, signal) =>
         this.requests.ask(roleOf(role), agent, questions, signal),
       onWorkerTurn: () => {

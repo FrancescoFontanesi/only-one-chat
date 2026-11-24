@@ -556,13 +556,20 @@ const handlers = {
     } else if (text.includes('[question]')) {
       answer = 'Non posso chiedere: rispondo a parole.';
     }
-    if (text.includes('[approval]')) {
+    // [approval-force]: the same request for a destructive command (ADR 0050).
+    if (text.includes('[approval]') || text.includes('[approval-force]')) {
       const serverId = nextServerRequestId++;
       const reply = new Promise((resolve) => awaitingClient.set(serverId, resolve));
       send({
         id: serverId,
         method: 'item/commandExecution/requestApproval',
-        params: { threadId, turnId, itemId: 'cmd-1', command: 'git push', reason: 'needs network' },
+        params: {
+          threadId,
+          turnId,
+          itemId: 'cmd-1',
+          command: text.includes('[approval-force]') ? 'git push --force' : 'git push',
+          reason: 'needs network',
+        },
       });
       answer = `decision=${JSON.stringify((await reply).result ?? (await reply).error)}`;
     }

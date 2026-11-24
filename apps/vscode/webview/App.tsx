@@ -12,6 +12,7 @@ import {
   type RolesState,
   type SessionInfo,
 } from '../src/webview/protocol.js';
+import type { SessionApproval } from '../src/shared/approvals.js';
 import { Dock, NotReady } from './Dock.js';
 import { Squad } from './Squad.js';
 import { applyUpdate, type ThreadItem } from './state.js';
@@ -250,6 +251,7 @@ export function App() {
   const [roles, setRoles] = useState<RolesState>();
   const [monitor, setMonitor] = useState<MonitorState>({ agents: [], events: [] });
   const [usage, setUsage] = useState<readonly ProviderUsage[]>([]);
+  const [approvals, setApprovals] = useState<readonly SessionApproval[]>([]);
   const [squad, setSquad] = useState(false);
   const end = useRef<HTMLDivElement>(null);
   const thread = useRef<HTMLElement>(null);
@@ -285,6 +287,9 @@ export function App() {
           break;
         case 'usage':
           setUsage(message.providers);
+          break;
+        case 'approvals':
+          setApprovals(message.approvals);
           break;
         default:
           break;
@@ -464,6 +469,7 @@ export function App() {
           roles={roles}
           monitor={monitor}
           usage={usage}
+          approvals={approvals}
           openSquad={() => {
             setSquad(true);
           }}

@@ -73,14 +73,17 @@ export class ModelCatalog {
   /**
    * The model a role's setting names, checked before it reaches a CLI's
    * arguments (security.md T13): the views' pattern, and offered by the CLI once
-   * its catalog is read. Else the setting's default if it passes, else '' (the
-   * CLI's own); `rejected` when the setting was set aside.
+   * its catalog is read. Else the setting's default if the read catalog offers
+   * it, else '' (the CLI's own); `rejected` when the setting was set aside.
    */
   settled(cli: Cli, value: unknown, fallback: unknown): { model: string; rejected: boolean } {
     const accepts = (model: unknown): model is string =>
       isModel(model) && !this.rejects(cli, model);
     if (accepts(value)) return { model: value, rejected: false };
-    return { model: accepts(fallback) ? fallback : '', rejected: true };
+    // The default only when the CLI's catalog is read and offers it: a default is one
+    // setting's for every CLI (`haiku` for a Codex reviewer), so unread means none.
+    const offered = typeof fallback === 'string' && isModel(fallback) && this.find(cli, fallback);
+    return { model: offered ? fallback : '', rejected: true };
   }
 
   onChange(listener: () => void): () => void {

@@ -11,6 +11,7 @@ import type {
   SessionInfo,
   TurnRole,
 } from '../src/webview/protocol.js';
+import type { SessionApproval } from '../src/shared/approvals.js';
 import { RoleHud, UsageHud } from './Hud.js';
 import { Composer, setMode } from './Composer.js';
 import { ApprovalFrame, QuestionFrame, PermissionSlab, type Item } from './Requests.js';
@@ -49,6 +50,7 @@ export function Dock({
   roles,
   monitor,
   usage,
+  approvals,
   openSquad,
   waiting,
   to,
@@ -62,6 +64,8 @@ export function Dock({
   roles: RolesState | undefined;
   monitor: MonitorState;
   usage: readonly ProviderUsage[];
+  /** The requests allowed for the session, by the roles and the nodes (ADR 0050). */
+  approvals: readonly SessionApproval[];
   openSquad: () => void;
   /** Requests waiting for you, in the chat and its nodes: the badge on SQUAD (ADR 0021). */
   waiting: number;
@@ -155,6 +159,7 @@ export function Dock({
             usage={usage}
             threshold={session?.usageThreshold ?? 0}
             active={recipient?.cli ?? 'codex'}
+            approvals={approvals}
           />
         </aside>
       </div>

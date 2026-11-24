@@ -161,6 +161,8 @@ export interface ChatEvents {
   fileNotes?(notes: FileNotes): void;
   /** A delegation now waits for the user, or no longer does: to keep it with the chat. */
   draft?(draft: DraftDelegation | null): void;
+  /** The approvals the roles' bridges keep for the session changed (ADR 0050). */
+  approvals?(): void;
   /** A role's session context after a turn: how full it is. */
   context?(role: RoleName, context: ContextUsage): void;
   /** A turn ended: its CLI, what it used, and the usage windows it reported, if any. */

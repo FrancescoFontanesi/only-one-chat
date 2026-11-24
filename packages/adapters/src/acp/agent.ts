@@ -111,7 +111,11 @@ export function acpToolStep(call: Json): Extract<AgentTurnStep, { kind: 'command
   };
 }
 
-/** The permission option the user's decision picks, by ACP's option kinds. */
+/**
+ * The permission option the user's decision picks, by ACP's option kinds.
+ * Never `allow_always` (ADR 0050): how long the agent keeps it is its own
+ * choice, so "for the session" is not offered and counts as once.
+ */
 export function acpOption(
   options: unknown,
   decision: 'accept' | 'acceptForSession' | 'decline',
@@ -119,12 +123,7 @@ export function acpOption(
   if (!Array.isArray(options)) return null;
   const byKind = (kind: string) =>
     options.find((o): o is Json => isRecord(o) && o['kind'] === kind)?.['optionId'];
-  const picked =
-    decision === 'decline'
-      ? byKind('reject_once')
-      : decision === 'acceptForSession'
-        ? (byKind('allow_always') ?? byKind('allow_once'))
-        : byKind('allow_once');
+  const picked = decision === 'decline' ? byKind('reject_once') : byKind('allow_once');
   return typeof picked === 'string' ? picked : null;
 }
 
@@ -268,6 +267,7 @@ export function createAcpAgentFactory(config: AcpAgentConfig): AgentFactory {
       const decision = await turn.handlers.onApprovalRequest({
         kind: text(call['kind']) || 'tool',
         summary: text(call['title']) || text(call['name']) || 'tool',
+        sessionAllowed: false,
       });
       // Stopped while the user was deciding: the request is cancelled.
       return picked(stoppedNow(turn) ? null : acpOption(params['options'], decision));

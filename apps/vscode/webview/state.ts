@@ -84,6 +84,8 @@ export type ThreadItem =
       readonly role: TurnRole;
       readonly agent: string;
       readonly summary: string;
+      /** False: "for the session" is not offered (ADR 0050). */
+      readonly sessionAllowed?: false;
       /** The user's answer, once given. */
       readonly closed?: string;
     }
@@ -258,6 +260,7 @@ export function applyUpdate(items: readonly ThreadItem[], update: ThreadUpdate):
           role: update.role,
           agent: update.agent,
           summary: update.summary,
+          ...(update.sessionAllowed === false ? { sessionAllowed: false as const } : {}),
         },
       ];
     case 'permission_closed':

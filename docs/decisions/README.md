@@ -53,3 +53,4 @@ Each decision has its own `NNNN-title.md` file with Status, Context, Decision, a
 | [0047](0047-workspace-io-and-structural-guards.md)  | Workspace reads with a stat cache, and structural guards                      | Accepted                                        |
 | [0048](0048-frontend-alignment.md)                  | The thread shows the runtime's evidence apart, and the brief's scope as links | Accepted                                        |
 | [0049](0049-v01-scope.md)                           | The scope of v0.1                                                             | Accepted                                        |
+| [0050](0050-security-boundary-closure.md)           | Closing the security boundary for v0.1                                        | Accepted                                        |

@@ -27,10 +27,19 @@ import {
 } from './chat-types.js';
 import { PROVIDERS } from './providers.js';
 import type { UserRequests } from './user-requests.js';
+import { revokeIn, type RevokeApproval, type SessionApproval } from '../shared/approvals.js';
+
+const ROLE_LABEL: Readonly<Record<RoleName, string>> = {
+  leader: 'Leader',
+  implementer: 'Implementer',
+};
 
 export interface RoleSessionsDeps {
   readonly config: ChatConfig;
-  readonly events: Pick<ChatEvents, 'update' | 'sessionId' | 'saveImplementerHandoff'>;
+  readonly events: Pick<
+    ChatEvents,
+    'update' | 'sessionId' | 'saveImplementerHandoff' | 'approvals'
+  >;
   /** Where a role's permission request waits for the user (R9). */
   readonly requests: UserRequests;
   /** The user stopped the request running now. */
@@ -135,8 +144,10 @@ export class RoleSessions {
       if (role === 'leader') this.leaderSessionNow = undefined;
       else this.implementerSession = undefined;
       await session?.close();
-      await this.bridges.get(role)?.close();
+      const bridge = this.bridges.get(role);
+      await bridge?.close();
       this.bridges.delete(role);
+      if (bridge) this.deps.events.approvals?.();
       const native = this.nativeSessions.get(role);
       if (native) this.resumable.set(role, native);
     }
@@ -257,6 +268,7 @@ export class RoleSessions {
     const bridge = this.bridges.get('implementer');
     this.bridges.delete('implementer');
     const closed = await Promise.allSettled([session.close(), bridge?.close()]);
+    if (bridge) this.deps.events.approvals?.();
     return !closed.some((result) => result.status === 'rejected');
   }
 
@@ -266,8 +278,34 @@ export class RoleSessions {
     await this.implementerSession?.close();
     this.leaderSessionNow = undefined;
     this.implementerSession = undefined;
+    const open = this.bridges.size > 0;
     await Promise.allSettled([...this.bridges.values()].map((bridge) => bridge.close()));
     this.bridges.clear();
+    if (open) this.deps.events.approvals?.();
+  }
+
+  /** What the roles' bridges keep approved for the session (ADR 0050). */
+  approvals(): SessionApproval[] {
+    return [...this.bridges].flatMap(([role, bridge]) =>
+      bridge
+        .list()
+        .map((a) => ({ ownerKind: 'role' as const, owner: role, label: ROLE_LABEL[role], ...a })),
+    );
+  }
+
+  /** Forgets one approval of a role kept for the session; without an owner, all of them. */
+  revokeApproval(message: RevokeApproval): void {
+    revokeIn(
+      [...this.bridges].map(([role, bridge]) => ({
+        ownerKind: 'role' as const,
+        owner: role,
+        revoke: (key: string) => bridge.revoke(key),
+        clear: () => {
+          bridge.clear();
+        },
+      })),
+      message,
+    );
   }
 
   checkStop(): void {
@@ -305,9 +343,10 @@ export class RoleSessions {
           this.deps.requests.askPermission(
             role,
             `${provider.name} (${this.rolesNow[role].model})`,
-            request.summary,
+            request,
           ),
         hook,
+        () => this.deps.events.approvals?.(),
       );
       if (this.deps.closing()) {
         await bridge.close();

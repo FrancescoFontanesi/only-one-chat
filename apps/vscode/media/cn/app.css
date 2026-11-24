@@ -2156,6 +2156,25 @@ input:focus-visible {
     animation: none;
   }
 }
+/* The requests allowed for the session (ADR 0050), under the usage dial. */
+.approvals__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  text-transform: none;
+}
+.approvals__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  overflow-wrap: anywhere;
+}
 /* A request in the Squad panel's waiting list, with its answers beside it. */
 .wlist__a {
   display: flex;

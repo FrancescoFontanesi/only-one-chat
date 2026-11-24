@@ -6,6 +6,7 @@ import { cliLabel, detectCli, findInFolder } from '../detect.js';
 import { settingsSections, writeSetting } from '../settings.js';
 import { createNonce, renderWebviewHtml, STYLESHEETS } from './html.js';
 import { parseWebviewMessage, type WebviewToHostMessage } from './protocol.js';
+import { webviewOptions } from './security-gates.js';
 
 const EXTENSION_ID = 'francesco-fontanesi.only-one-chat';
 
@@ -33,12 +34,7 @@ export class SettingsPanel {
       SettingsPanel.viewType,
       'Only One Chat · Settings',
       vscode.ViewColumn.Active,
-      {
-        enableScripts: true,
-        enableForms: false,
-        enableCommandUris: false,
-        localResourceRoots: [webviewRoot, mediaRoot],
-      },
+      webviewOptions([webviewRoot, mediaRoot]),
     );
     panel.webview.html = renderWebviewHtml({
       cspSource: panel.webview.cspSource,

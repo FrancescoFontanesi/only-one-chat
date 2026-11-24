@@ -208,9 +208,10 @@ function WaitingRow({ item, go }: { item: Waiting; go: (id: string) => void }) {
             {action('ALLOW', () => {
               post({ type: 'permit', id: item.id, decision: 'accept' });
             })}
-            {action('ALLOW FOR SESSION', () => {
-              post({ type: 'permit', id: item.id, decision: 'acceptForSession' });
-            })}
+            {item.sessionAllowed !== false &&
+              action('ALLOW FOR SESSION', () => {
+                post({ type: 'permit', id: item.id, decision: 'acceptForSession' });
+              })}
             {action('DENY', () => {
               post({ type: 'permit', id: item.id, decision: 'decline' });
             })}

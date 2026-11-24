@@ -30,6 +30,7 @@ import type { MonitorStore } from '../session/monitor.js';
 import { notifyChat } from '../notifications.js';
 import { providerOf, type UsageStore } from '../session/usage.js';
 import { createNonce, renderWebviewHtml, STYLESHEETS } from './html.js';
+import { agentsGate, consentQuestion, webviewOptions } from './security-gates.js';
 import {
   effortFor,
   NODE_NAME_LENGTH,
@@ -180,13 +181,7 @@ export class OnlyOneChatPanel {
       OnlyOneChatPanel.viewType,
       TITLE,
       vscode.ViewColumn.Active,
-      {
-        enableScripts: true,
-        enableForms: false,
-        enableCommandUris: false,
-        retainContextWhenHidden: true,
-        localResourceRoots: [webviewRoot, mediaRoot],
-      },
+      { ...webviewOptions([webviewRoot, mediaRoot]), retainContextWhenHidden: true },
     );
     OnlyOneChatPanel.current = new OnlyOneChatPanel(
       panel,
@@ -552,6 +547,12 @@ export class OnlyOneChatPanel {
     return this.post({ type: 'session', session: this.sessionInfo() });
   }
 
+  /** The approvals kept for the session by the chat's roles and the nodes (ADR 0050). */
+  private postApprovals(): void {
+    const nodes = [...this.nodes.values()].flatMap((node) => node.approvals());
+    void this.post({ type: 'approvals', approvals: [...(this.chat?.approvals() ?? []), ...nodes] });
+  }
+
   private notice(level: 'info' | 'warn' | 'error', text: string): void {
     void this.post({ type: 'thread', update: { type: 'notice', level, text } });
   }
@@ -576,6 +577,7 @@ export class OnlyOneChatPanel {
         await this.postSquad('roles');
         await this.postSquad('monitor');
         await this.postSquad('usage');
+        this.postApprovals();
         OnlyOneChatPanel.readyEmitter.fire();
         // The models and Codex's usage windows are read when the chat opens: no turn, no quota.
         void this.services.catalog.load();
@@ -708,6 +710,10 @@ export class OnlyOneChatPanel {
         this.chat?.permit(message.id, message.decision);
         for (const node of this.nodes.values()) node.permit(message.id, message.decision);
         break;
+      case 'revokeApproval':
+        this.chat?.revokeApproval(message);
+        for (const node of this.nodes.values()) node.revokeApproval(message);
+        break;
       case 'answer':
         this.chat?.answer(message.id, message.answers);
         break;
@@ -823,18 +829,19 @@ export class OnlyOneChatPanel {
   /** The folder the agents may work in: open, trusted, and agreed to by the user. */
   private async agentsFolder(): Promise<string | undefined> {
     const cwd = workspaceFolder();
-    if (!cwd) {
-      this.notice('error', 'Open the folder where the agents should work.');
+    const gate = agentsGate(
+      cwd,
+      vscode.workspace.isTrusted,
+      isFake(this.context),
+      this.confirmedFolder,
+    );
+    if (!gate.ok || !cwd) {
+      if (!gate.ok) this.notice('error', gate.reason);
       return undefined;
     }
-    if (!vscode.workspace.isTrusted) {
-      this.notice('error', 'Trust this workspace before starting the agents.');
-      return undefined;
-    }
-    const fake = isFake(this.context);
-    if (!fake && this.confirmedFolder !== cwd) {
+    if (gate.consent) {
       const answer = await vscode.window.showWarningMessage(
-        `Agents will work in ${cwd}. They can modify its files and run allowed commands. Continue?`,
+        consentQuestion(cwd),
         { modal: true },
         'Continue',
       );
@@ -928,16 +935,7 @@ export class OnlyOneChatPanel {
         cwd,
         leader,
         implementer,
-        subagents: {
-          codex: {
-            model: settings.get<string>('subagents.codexModel') ?? 'gpt-6-luna',
-            effort: settings.get<string>('subagents.effort') ?? 'low',
-          },
-          claude: {
-            model: settings.get<string>('subagents.claudeModel') ?? 'claude-haiku-5-5',
-            effort: settings.get<string>('subagents.effort') ?? 'low',
-          },
-        },
+        subagents: this.services.roles.subagents(),
         codexExecutable: codex.executable,
         claudeExecutable: claude.executable,
         handoffServer: this.handoffServer(),
@@ -1033,6 +1031,9 @@ export class OnlyOneChatPanel {
           void this.postSession();
           if (!busy && record === this.record)
             this.notifyIfAway('turnEnd', 'The message has finished.');
+        },
+        approvals: () => {
+          this.postApprovals();
         },
         turnUsage: (identityProvider, _turnUsage, quota) => {
           const provider = providerOf(identityProvider);
@@ -1198,6 +1199,9 @@ export class OnlyOneChatPanel {
             this.notifyIfAway('waiting', `${choice.name} requests permission: ${update.summary}`);
           }
           void this.post({ type: 'thread', update, node: id });
+        },
+        approvals: () => {
+          this.postApprovals();
         },
         busy: (busy) => {
           void this.postSession();

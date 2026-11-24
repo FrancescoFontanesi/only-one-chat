@@ -435,9 +435,30 @@ describe('Codex agent session', () => {
     const h = handlers();
     const { text } = await session.runTurn('[approval] pubblica', h.value).done;
     expect(h.approvals).toEqual([
-      { kind: 'item/commandExecution/requestApproval', summary: 'git push — needs network' },
+      {
+        kind: 'item/commandExecution/requestApproval',
+        summary: 'git push — needs network',
+        sessionAllowed: true,
+      },
     ]);
     expect(text).toBe('decision={"decision":"decline"}');
+  });
+
+  it('never sends a destructive command back to Codex for the session, only once (ADR 0050)', async () => {
+    const session = await codex();
+    const h = handlers();
+    const { text } = await session.runTurn('[approval-force] pubblica', {
+      ...h.value,
+      onApprovalRequest: (request) => {
+        h.approvals.push(request);
+        return Promise.resolve('acceptForSession');
+      },
+    }).done;
+    expect(h.approvals[0]).toMatchObject({
+      summary: 'git push --force — needs network',
+      sessionAllowed: false,
+    });
+    expect(text).toBe('decision={"decision":"accept"}');
   });
 
   it('sends the user’s approval of a command, once or for the session, back to Codex', async () => {

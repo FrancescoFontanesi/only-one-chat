@@ -19,6 +19,8 @@ export function PermissionSlab({
   theme: 'dark' | 'light';
 }) {
   const slab = useRef<HTMLElement>(null);
+  // A destructive command, or a CLI that keeps it its own way: once only (ADR 0050).
+  const session = item.sessionAllowed !== false;
   const answer = (decision: PermitDecision) => {
     post({ type: 'permit', id: item.id, decision });
   };
@@ -30,7 +32,7 @@ export function PermissionSlab({
       const typing = (event.target as HTMLElement | null)?.closest('textarea, input');
       if (typing) return;
       if (event.key === '1') answer('accept');
-      else if (event.key === '2') answer('acceptForSession');
+      else if (event.key === '2' && session) answer('acceptForSession');
       else if (event.key === '3' || event.key === 'Escape') answer('decline');
     };
     window.addEventListener('keydown', onKey);
@@ -69,15 +71,17 @@ export function PermissionSlab({
           <span class="cn-btn__label">1 · ALLOW</span>
           <span class="cn-btn__icon">→</span>
         </button>
-        <button
-          class="cn-btn cn-btn--outline cn-btn--sm"
-          type="button"
-          onClick={() => {
-            answer('acceptForSession');
-          }}
-        >
-          <span class="cn-btn__label">2 · ALLOW FOR SESSION</span>
-        </button>
+        {session && (
+          <button
+            class="cn-btn cn-btn--outline cn-btn--sm"
+            type="button"
+            onClick={() => {
+              answer('acceptForSession');
+            }}
+          >
+            <span class="cn-btn__label">2 · ALLOW FOR SESSION</span>
+          </button>
+        )}
         <button
           class="cn-btn cn-btn--text"
           type="button"
@@ -88,7 +92,11 @@ export function PermissionSlab({
           <span class="cn-btn__label">3 · DENY</span>
         </button>
       </div>
-      <span class="hint pslab__h">SESSION APPROVAL APPLIES ONLY TO THIS REQUEST · ESC TO DENY</span>
+      <span class="hint pslab__h">
+        {session
+          ? 'SESSION APPROVAL APPLIES ONLY TO THIS REQUEST · ESC TO DENY'
+          : 'ALLOWED ONCE AT MOST · ESC TO DENY'}
+      </span>
     </section>
   );
 }

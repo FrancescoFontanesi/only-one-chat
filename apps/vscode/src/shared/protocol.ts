@@ -346,6 +346,8 @@ export type ThreadUpdate =
       readonly role: TurnRole;
       readonly agent: string;
       readonly summary: string;
+      /** False: "for the session" is not offered, and counts as once (ADR 0050). */
+      readonly sessionAllowed?: false;
     }
   | { readonly type: 'permission_closed'; readonly id: string; readonly decision: string }
   | { readonly type: 'notice'; readonly level: 'info' | 'warn' | 'error'; readonly text: string }
@@ -434,6 +436,7 @@ export type HostToWebviewMessage =
   | { readonly type: 'usage'; readonly providers: readonly ProviderUsage[] }
   | { readonly type: 'roles'; readonly roles: RolesState }
   | { readonly type: 'monitor'; readonly monitor: MonitorState }
+  | { readonly type: 'approvals'; readonly approvals: readonly SessionApproval[] }
   | { readonly type: 'settings'; readonly settings: SettingsState }
   /** The folder's files and folders for `@` (relative; a folder ends with `/`). */
   | { readonly type: 'files'; readonly paths: readonly string[] }
@@ -479,6 +482,7 @@ export type WebviewToHostMessage =
   /** Stops the chat's turn, or a node's. */
   | { readonly type: 'stop'; readonly node?: string }
   | { readonly type: 'permit'; readonly id: string; readonly decision: PermitDecision }
+  | RevokeApproval
   /** The user's answers to an agent's questions, by question id (ADR 0019). */
   | {
       readonly type: 'answer';
@@ -663,6 +667,8 @@ export function parseWebviewMessage(value: unknown): WebviewToHostMessage | unde
       if (node === undefined) return { type: 'stop' };
       return isId(node) ? { type: 'stop', node } : undefined;
     }
+    case 'revokeApproval':
+      return parseRevoke(msg);
     case 'permit': {
       const id = msg['id'];
       const decision = msg['decision'];
@@ -908,6 +914,10 @@ export function parseHostMessage(value: unknown): HostToWebviewMessage | undefin
         ? { type: 'settings', settings: settings as unknown as SettingsState }
         : undefined;
     }
+    case 'approvals': {
+      const approvals = parseApprovals(msg['approvals']);
+      return approvals ? { type: 'approvals', approvals } : undefined;
+    }
     case 'monitor': {
       const monitor = asRecord(msg['monitor']);
       return monitor ? { type: 'monitor', monitor: monitor as unknown as MonitorState } : undefined;
@@ -917,3 +927,9 @@ export function parseHostMessage(value: unknown): HostToWebviewMessage | undefin
   }
 }
 import type { VerificationEvidence } from '../../../../packages/runtime/src/verification.js';
+import {
+  parseApprovals,
+  parseRevoke,
+  type RevokeApproval,
+  type SessionApproval,
+} from './approvals.js';

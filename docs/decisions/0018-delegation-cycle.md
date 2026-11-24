@@ -45,7 +45,7 @@ Status: Accepted (iteration 3). Partially supersedes [ADR 0010](0010-leader-chat
 
 - **A read-only leader uses less context.** All edits, including small ones, go through the implementer or the user.
 - **Claude relies on Claude Code's command classification** to enforce read-only work for the leader. Codex enforces it through its CLI sandbox.
-  - On Windows, a read-only Codex thread runs without requesting the `unelevated` sandbox (ADR 0008). TODO(security): verify with the real CLI that commands remain confined there.
+  - On Windows, a read-only Codex thread runs without requesting the `unelevated` sandbox (ADR 0008). Verified with the real CLI (ADR 0050): one turn with the leader's configuration (`sandbox: 'read-only'`, `approvalPolicy: 'never'`) read `seed.txt` in the folder, and its PowerShell writes to `work/probe-in.txt` and to an absolute path outside the folder both failed with `PermissionDenied`; no file was created. Not verified: `apply_patch`, and a read-only implementer or node (`approvalPolicy: 'on-request'`).
 - **Manual delivery pauses briefs only.** Reports still appear in the thread for users who read them before the leader.
 - **Each delegation also uses a leader evaluation turn**, except with `leaderReview: deferred`.
 - **The host resolves file links when a turn closes.** Links appear after streaming completes.

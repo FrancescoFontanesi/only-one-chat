@@ -11,8 +11,16 @@ import {
   type PermissionBridgeOptions,
 } from '@only-one-chat/adapters';
 import { agentLabel, agentSessionOptions, type AgentSession } from '@only-one-chat/runtime';
-import { NODE_NAME_LENGTH, type PermitDecision, type ThreadUpdate } from '../shared/protocol.js';
+import {
+  isModel,
+  NODE_NAME_LENGTH,
+  type PermitDecision,
+  type ThreadUpdate,
+} from '../shared/protocol.js';
+import type { ModelCatalog } from './catalog.js';
+import { revokeIn, type RevokeApproval, type SessionApproval } from '../shared/approvals.js';
 import { summarize } from './chat.js';
+import { onceIfNoSession } from './user-requests.js';
 import { changes, snapshot } from './facts.js';
 import { ignoredPaths, type Ignored } from './ignore.js';
 import { plainRefs } from './mentions.js';
@@ -42,12 +50,22 @@ interface NodeEvents {
    * context (ACP reports no window), as the thread shows it under the turn.
    */
   context?(context: { readonly used: number; readonly window: number | null }): void;
+  /** The approvals its bridge keeps for the session changed (ADR 0050). */
+  approvals?(): void;
 }
 
 const NODE_ID = /^[a-z0-9-]{1,64}$/;
 
 /** The nodes of the settings (ADR 0023); an entry of the wrong shape is left out. */
-export function nodesOf(value: unknown): NodeChoice[] {
+/**
+ * The nodes of the settings (ADR 0023). A model a CLI must not receive
+ * (security.md T13) is set aside for none, the CLI's own, and `rejected` is told.
+ */
+export function nodesOf(
+  value: unknown,
+  catalog?: ModelCatalog,
+  rejected?: (key: string, value: unknown) => void,
+): NodeChoice[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
   return value.flatMap((entry): NodeChoice[] => {
@@ -60,12 +78,20 @@ export function nodesOf(value: unknown): NodeChoice[] {
     seen.add(id);
     // A node written before the levels were reasoning keeps its level in the model id.
     const level = cli === 'antigravity' && !effort ? antigravityLevel(model) : null;
+    const given = level?.model ?? model;
+    const settled =
+      given === ''
+        ? { model: '', rejected: false }
+        : catalog
+          ? catalog.settled(cli, given, '')
+          : { model: isModel(given) ? given : '', rejected: !isModel(given) };
+    if (settled.rejected) rejected?.(`nodes.${id}.model`, given);
     return [
       {
         id,
         name: name.trim().slice(0, NODE_NAME_LENGTH),
         cli,
-        model: level?.model ?? model,
+        model: settled.model,
         effort: level?.effort ?? (typeof effort === 'string' ? effort : ''),
         // Read-only unless the settings say otherwise (ADR 0023).
         permission: permission === 'ask' || permission === 'auto' ? permission : 'read-only',
@@ -101,7 +127,10 @@ export class NodeSession {
   private resume: string | undefined;
   private nextId = 1;
   private readonly tag = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  private readonly permissions = new Map<string, (decision: PermitDecision) => void>();
+  private readonly permissions = new Map<
+    string,
+    { resolve: (decision: PermitDecision) => void; sessionAllowed: boolean }
+  >();
   private readonly ignored: Ignored;
 
   constructor(
@@ -147,8 +176,9 @@ export class NodeSession {
     const agent = `${provider.name} (${node.model})`;
     if (provider.bridged && this.config.permissionHook && node.permission !== 'read-only') {
       this.bridge ??= await startPermissionBridge(
-        (request) => this.askPermission(agent, request.summary),
+        (request) => this.askPermission(agent, request.summary, request.sessionAllowed),
         this.config.permissionHook,
+        () => this.events.approvals?.(),
       );
     }
     const resume = this.resume;
@@ -204,7 +234,8 @@ export class NodeSession {
         onText: (chunk) => {
           this.events.update({ type: 'chunk', turnId: id, text: chunk });
         },
-        onApprovalRequest: (request) => this.askPermission(session.name, request.summary),
+        onApprovalRequest: (request) =>
+          this.askPermission(session.name, request.summary, request.sessionAllowed),
         onStep: (step) => {
           this.events.update({ type: 'step', turnId: id, step });
         },
@@ -257,22 +288,65 @@ export class NodeSession {
     }
   }
 
-  private askPermission(agent: string, summary: string): Promise<PermitDecision> {
+  private askPermission(
+    agent: string,
+    summary: string,
+    sessionAllowed = true,
+  ): Promise<PermitDecision> {
     return new Promise((resolve) => {
       const id = this.id('p');
-      this.permissions.set(id, resolve);
-      this.events.update({ type: 'permission', id, role: 'implementer', agent, summary });
+      this.permissions.set(id, { resolve, sessionAllowed });
+      this.events.update({
+        type: 'permission',
+        id,
+        role: 'implementer',
+        agent,
+        summary,
+        ...(sessionAllowed ? {} : { sessionAllowed: false as const }),
+      });
     });
   }
 
   /** The user's answer to a permission request of this node; another id is not its. */
-  permit(id: string, decision: PermitDecision): boolean {
-    const resolve = this.permissions.get(id);
-    if (!resolve) return false;
+  permit(id: string, answer: PermitDecision): boolean {
+    const pending = this.permissions.get(id);
+    if (!pending) return false;
     this.permissions.delete(id);
-    resolve(decision);
+    const decision = onceIfNoSession(answer, pending.sessionAllowed);
+    pending.resolve(decision);
     this.events.update({ type: 'permission_closed', id, decision });
     return true;
+  }
+
+  /** What its bridge keeps approved for the session (ADR 0050). */
+  approvals(): SessionApproval[] {
+    const label = this.config.node.name;
+    const owner = this.config.node.id;
+    return (this.bridge?.list() ?? []).map((a) => ({
+      ownerKind: 'node' as const,
+      owner,
+      label,
+      ...a,
+    }));
+  }
+
+  /** Forgets one approval kept for the session, or all of them. */
+  revokeApproval(message: RevokeApproval): void {
+    const { bridge } = this;
+    if (!bridge) return;
+    revokeIn(
+      [
+        {
+          ownerKind: 'node',
+          owner: this.config.node.id,
+          revoke: (key) => bridge.revoke(key),
+          clear: () => {
+            bridge.clear();
+          },
+        },
+      ],
+      message,
+    );
   }
 
   async stop(): Promise<void> {
@@ -285,7 +359,9 @@ export class NodeSession {
     await this.stop();
     await this.session?.close();
     this.session = undefined;
-    await this.bridge?.close();
+    const bridge = this.bridge;
+    await bridge?.close();
     this.bridge = undefined;
+    if (bridge) this.events.approvals?.();
   }
 }

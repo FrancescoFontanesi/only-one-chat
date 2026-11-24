@@ -41,7 +41,7 @@ describe('UserRequests', () => {
 
   it('declines every permission and question still open, once', async () => {
     const { box, updates } = requests();
-    const permission = box.askPermission('implementer', 'Claude', 'run pnpm test');
+    const permission = box.askPermission('implementer', 'Claude', { summary: 'run pnpm test' });
     const answers = box.ask('leader', 'Codex', [question('why', false)]);
     box.declineAll();
     expect(await permission).toBe('decline');
@@ -59,9 +59,30 @@ describe('UserRequests', () => {
   it('declines a request when its turn stops', async () => {
     const { box, updates } = requests();
     const stop = new AbortController();
-    const permission = box.askPermission('implementer', 'Claude', 'write', stop.signal);
+    const permission = box.askPermission(
+      'implementer',
+      'Claude',
+      { summary: 'write' },
+      stop.signal,
+    );
     stop.abort();
     expect(await permission).toBe('decline');
     expect(updates.at(-1)).toEqual({ type: 'permission_closed', id: 'p1', decision: 'decline' });
+  });
+
+  it('takes "for the session" as once where it is not offered, and says so (ADR 0050)', async () => {
+    const { box, updates } = requests();
+    const once = box.askPermission('implementer', 'Codex', {
+      summary: 'rm -rf build',
+      sessionAllowed: false,
+    });
+    expect(updates.at(-1)).toMatchObject({ type: 'permission', sessionAllowed: false });
+    box.permit('p1', 'acceptForSession');
+    expect(await once).toBe('accept');
+    expect(updates.at(-1)).toEqual({ type: 'permission_closed', id: 'p1', decision: 'accept' });
+    const kept = box.askPermission('implementer', 'Codex', { summary: 'npm test' });
+    expect(updates.at(-1)).not.toHaveProperty('sessionAllowed');
+    box.permit('p2', 'acceptForSession');
+    expect(await kept).toBe('acceptForSession');
   });
 });

@@ -28,6 +28,7 @@ import {
   type AgentTurnStep,
   type AgentUserQuestion,
 } from '../agent.js';
+import { isDestructiveCommand } from '../destructive.js';
 import { longPath } from '../environment.js';
 import { diffCounts, StepStream, tail } from '../steps.js';
 import { CodexAuthError, isUsable } from './auth.js';
@@ -741,10 +742,13 @@ export function createCodexAgentFactory(config: CodexAgentConfig): AgentFactory 
           return { action: 'accept', content: {}, _meta: null };
         }
         const summary = summarize(method, params);
+        // A destructive command is approved once, never for the session (ADR 0050).
+        const sessionAllowed = !isDestructiveCommand(summary);
         // Without a turn there is nobody to ask: declined.
-        const decision = turn
-          ? await turn.handlers.onApprovalRequest({ kind: method, summary })
+        const asked = turn
+          ? await turn.handlers.onApprovalRequest({ kind: method, summary, sessionAllowed })
           : 'decline';
+        const decision = asked === 'acceptForSession' && !sessionAllowed ? 'accept' : asked;
         const id = scope['itemId'];
         if (
           turn &&

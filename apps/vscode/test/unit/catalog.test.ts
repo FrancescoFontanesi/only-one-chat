@@ -47,9 +47,9 @@ describe('model catalog (ADR 0012)', () => {
       claude: () => Promise.reject(new Error('not read')),
       antigravity: () => Promise.resolve([]),
     });
-    // Before the catalog is read, the pattern alone.
+    // Before the catalog is read, the pattern alone, and no default it cannot vouch for.
     expect(catalog.settled('codex', '--dangerously-skip-permissions', 'gpt-6.1-sol')).toEqual({
-      model: 'gpt-6.1-sol',
+      model: '',
       rejected: true,
     });
     await catalog.load();
@@ -77,6 +77,6 @@ describe('model catalog (ADR 0012)', () => {
       model: 'sonnet',
       rejected: false,
     });
-    expect(catalog.settled('claude', '-p', 'haiku')).toEqual({ model: 'haiku', rejected: true });
+    expect(catalog.settled('claude', '-p', 'haiku')).toEqual({ model: '', rejected: true });
   });
 });

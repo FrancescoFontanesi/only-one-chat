@@ -1,7 +1,8 @@
-# Initial security threat model
+# Security threat model
 
-This model dates to the bootstrap. Future features must identify the threats they
-affect and how they mitigate them.
+Written at the bootstrap and aligned with the code by ADR 0050. Future features must
+identify the threats they affect and how they mitigate them. What is declared but not
+implemented is listed under [Known limits and security backlog](#known-limits-and-security-backlog-post-v01).
 
 ## Mandatory rules
 
@@ -31,27 +32,37 @@ affect and how they mitigate them.
 - **Threat.** Token exfiltration or corruption, such as by an adapter that copies or logs
   tokens.
 - **Mitigations.** Official CLIs handle authentication and retain exclusive access to
-  credential files. Child processes receive an explicit allow-list of environment
-  variables. Logs must redact secrets.
+  credential files. Child processes inherit the extension host's environment minus a
+  deny-list of API key variables (ADR 0006, `packages/adapters/src/environment.ts`), so
+  a CLI cannot switch to metered billing. Logs are not redacted (see the backlog).
 - **Reference finding.** usturlab rewrites `settings.json` in the CLI profile
   (`packages/core/src/adapters/gemini.ts:32-52`). This behavior is prohibited.
 
 ### T2. Process isolation
 
 - **Threat.** A CLI or worker executes commands outside its scope.
-- **Mitigations.** Keep native CLI sandboxes active, use an explicit working directory,
-  and isolate workers that write in separate worktrees when possible. Use timeouts and
-  cancellation, and clean up child processes on VS Code exit.
+- **Mitigations.** Keep native CLI sandboxes active and use an explicit working
+  directory. Stop ends a turn: Claude's process tree is killed, Codex is interrupted.
+  Closing the panel closes the sessions and their processes. Worktrees for workers that
+  write, and a cleanup in `deactivate` itself, are in the backlog.
+- **Codex read-only on Windows (ADR 0018, 0050).** A live probe ran one turn with the
+  leader's configuration (`sandbox: 'read-only'`, `approvalPolicy: 'never'`). Reading a
+  file in the folder succeeded. PowerShell writes inside and outside the folder failed
+  with `PermissionDenied`, and no file was created. Not verified: `apply_patch`, and a
+  read-only implementer or node (`approvalPolicy: 'on-request'`).
 
 ### T3. Workspace security
 
 - **Threat.** Opening a malicious repository triggers automatic execution of agents or
   commands.
-- **Mitigations.** Agent execution requires a trusted workspace. Loading workspace
-  instructions, rules, and configuration also requires approval of their contents.
-- **Bootstrap TODO.** When agent execution is introduced, change
-  `capabilities.untrustedWorkspaces` in `apps/vscode/package.json` from `true` to
-  `"limited"` or `false`.
+- **Mitigations.** Agent execution requires a trusted workspace, and no CLI starts in an
+  untrusted one, not even to list its skills (ADR 0050). `capabilities.untrustedWorkspaces`
+  is `"limited"`: the panel opens, no agent runs, and the settings that name programs,
+  commands or ignored paths are restricted. The CLIs load the workspace's own
+  instructions and configuration (`AGENTS.md`, `CLAUDE.md`, `.claude/`) themselves; Workspace
+  Trust is the only gate on them. Approving their contents is in the backlog.
+- **Verification.** `apps/vscode/test/unit/security-gates.test.ts`, `manifest.test.ts`,
+  `skills.test.ts`.
 - **Reference finding.** usturlab sets `GEMINI_CLI_TRUST_WORKSPACE=true`
   (`packages/core/src/adapters/gemini.ts:63`). This behavior is prohibited.
 
@@ -61,15 +72,27 @@ affect and how they mitigate them.
   hostile instructions, such as requests to ignore rules and run a command.
 - **Mitigations.** Treat worker output as _data_ for review. Turning it into an instruction
   for the leader requires explicit framing. Permission requests from delegated tasks
-  show their origin. Task contracts specify scope and allowed paths. Destructive actions
-  always require user approval.
+  show their origin. Task contracts specify scope and allowed paths; files changed outside them are
+  reported after the turn, not prevented. Destructive actions are not always put to the
+  user: see T5.
 
 ### T5. Command authorization
 
 - **Threat.** An overly broad "allow always" rule authorizes dangerous commands.
-- **Mitigations.** Scope approvals to a full command or explicit pattern, working
-  directory, and session. Keep them visible and revocable. Exclude destructive commands
-  from persistent approvals.
+- **Mitigations (ADR 0050).**
+  - In `auto`, the operations inside the workspace are governed by the CLI's sandbox and
+    by the checkpoints, which can put each file back; they are not put to the user one by
+    one, destructive ones included.
+  - For every request that is put to the user, a command of the closed destructive list
+    (`packages/adapters/src/destructive.ts`: deletions, history rewrites such as
+    `git push --force` or `git reset --hard`, permission and process changes, `DROP TABLE`,
+    `npm publish`) never offers "for the session": the button is hidden, and the host and
+    the adapter turn an `acceptForSession` into a single `accept`.
+  - Claude's session approvals match the same tool with the same complete input. They are
+    listed under the usage dial and revocable one by one or all at once, on the open
+    bridge. Codex keeps its own session approvals inside its thread: they cannot be
+    listed one by one and end when the session closes or the chat is reset. Antigravity
+    is never given "for the session" (T15).
 - **Reference finding.** usturlab's `PermissionMemory`
   (`packages/core/src/adapters/permission.ts:59-73`) keys commands on their first token
   (`git status` also authorizes `git push --force`) and keys other requests only on the
@@ -91,9 +114,10 @@ affect and how they mitigate them.
 
 - **Threat.** Transcripts and logs retain secrets or sensitive code in plaintext
   indefinitely.
-- **Mitigations.** Use extension storage. Storing transcripts in the repository requires
-  opt-in. Provide configurable retention, redaction of secret patterns, and deletion
-  commands.
+- **Mitigations.** Transcripts, checkpoints and event logs live in the extension's
+  storage, never in the repository. Deleting a chat removes its history and its
+  checkpoints. The JSONL event logs (`globalStorage/logs`) are kept and not redacted:
+  retention and redaction are in the backlog.
 
 ### T8. State integrity during crashes and failover
 
@@ -113,10 +137,14 @@ affect and how they mitigate them.
   `GEMINI_API_KEY` switches a CLI to metered billing.
 - **Mitigations.** Filter API keys from child process environments. Verify the CLI
   authentication mode before use and reject sessions without a subscription.
-- **Active for Codex** as of milestone 1.2, with an environment allow-list, a dedicated
-  profile, and a fail-closed gate on `account/read`. See [codex-auth.md](codex-auth.md).
+- **Active for Codex** with the environment deny-list, the user's own profile (ADR 0006
+  replaced the dedicated one of ADR 0005), and a fail-closed gate on `account/read`. See
+  [codex-auth.md](codex-auth.md). Claude must report `apiKeySource: none` before a turn.
 
 ### T10. Clipboard reads (ADR 0009)
+
+Not implemented: the extension never reads the clipboard; it only writes to it. The
+mitigations below stay as the requirements of that feature, listed in the backlog.
 
 - **Threats.**
   - The clipboard can contain passwords, tokens, and personal data. Continuous monitoring
@@ -148,7 +176,8 @@ affect and how they mitigate them.
 - **Permission mitigations.**
   - Sandbox permissions apply (ADR 0008). Claude writes with `Edit(./**)` and runs the
     programs in `onlyOneChat.allowedCommands` without prompting. Codex writes with
-    `workspace-write` and has no network access.
+    `workspace-write`; network access is not set by the extension, so Codex's own default
+    for that sandbox applies.
   - At level `auto`, Claude uses Claude Code's auto mode (ADR 0021). Claude Code's
     classifier handles operations that would otherwise prompt. The turn stops if the
     session reports a mode other than `auto` or `default`. `bypassPermissions` is
@@ -156,13 +185,13 @@ affect and how they mitigate them.
   - `onlyOneChat.ignoredPaths` excludes paths from verified facts and checkpoints. It
     is restricted in untrusted folders because excluded files could hide changes from
     review.
-  - The reviewer (ADR 0029) runs commands and writes tests in the folder with the same
-    native CLI permissions as the implementer. To keep implementation code intact, the
-    runtime snapshots the folder before each reviewer turn and restores every changed
-    non-test file. If a snapshot is unavailable, the reviewer runs in read-only mode.
+  - The reviewer (ADR 0029) runs commands and writes tests in the folder at level `auto`,
+    whatever its settings say, when the folder can be recorded; without that record at the
+    start of the review it runs read-only. The runtime snapshots the folder before each
+    reviewer turn and restores every changed non-test file. A later snapshot that fails
+    stops the review before the reviewer's turn starts, with a warning (fail-closed).
     Reviewer instructions have `machine` scope, as do instructions for other roles.
-  - Other CLI approval requests are denied and shown to the user. R9 was pending at this
-    stage.
+  - Approval requests reach the user as in T12.
   - Executable paths, allowed commands, and the verification command have `machine`
     scope, preventing repositories from setting them through workspace settings.
 - **Webview mitigations.**
@@ -191,7 +220,9 @@ affect and how they mitigate them.
     Program names and command prefixes are too broad (T5).
 - **Shared mitigations.** Stopping a request denies any pending approval. Approval
   remains unavailable for requests other than commands or file edits, including sandbox
-  permissions and MCP elicitation.
+  permissions and MCP elicitation, with one exception: the calls to the extension's own
+  handoff server `ooc` are accepted without asking (T16). Destructive commands are never
+  approved for the session (T5).
 - **Known limit.** The token is in the environment of the Claude process and its
   commands. An already allowed command can read it and send a request to the bridge.
   The bridge still displays that request to the user, so the command can only use an
@@ -211,7 +242,10 @@ affect and how they mitigate them.
 - **Selection mitigations.** The view sends the CLI, model, reasoning, and permissions.
   Closed lists and a model pattern that disallows a leading `-` validate the values.
   The host rejects models absent from the loaded catalog and reasoning levels that a
-  model does not support.
+  model does not support. The models read from the settings (leader, implementer,
+  reviewer, nodes, sub-agents) pass the same pattern, and the catalog once read (not for
+  the sub-agents' full ids); one set aside falls back to its default when the read catalog offers it, else to the CLI's own,
+  with a warning (ADR 0049 commit 0A, ADR 0050).
 - **Settings page (ADR 0013).** Only the keys listed in `src/settings.ts` can be written,
   and each value is type-checked. CLI paths, allowed commands, the verification command,
   and role instructions have `machine` scope. This prevents workspace overrides,
@@ -227,6 +261,40 @@ affect and how they mitigate them.
   - Agents receive `@` references only when the real path stays inside the folder
     after resolving links. Only short line ranges are copied.
   - Read diff contents from a read-only schema for valid hashes only.
+
+### T15. Antigravity over ACP (ADR 0023)
+
+- **Threat.** A node on Antigravity acts in the folder with agy's own rules, which the
+  extension cannot inspect.
+- **Mitigations.** Antigravity runs only as a node on Squad: no delegation, review or
+  checkpoint of its work. A read-only node declines every permission request. Its answers
+  never pick `allow_always`, whose lifetime agy decides: "for the session" is not offered
+  and counts as once (ADR 0050). Its environment has no API keys.
+- **Known limit.** Read-only is enforced only on what agy asks; ACP gives no sandbox of
+  its own. agy's own approvals and sub-agents are not limited by the extension.
+
+### T16. The handoff MCP server `ooc` (ADR 0035)
+
+- **Threat.** A tool call between roles becomes a channel to run actions without the user.
+- **Mitigations.** The server runs as its own process from the extension's bundle, with
+  only the handoff tools of the role (`delegate`, `report`, `findings`, `review`), and
+  validates each call against its schema. Its calls have no effect outside the chat, so
+  Codex's elicitation for `ooc` and Antigravity's permission for it are accepted without
+  asking, also in read-only roles. The runtime reads their content as data, framed for
+  the role that receives it.
+
+## Known limits and security backlog (post-v0.1)
+
+Declared above as requirements, not implemented; kept here so they stay traceable.
+
+- **Log redaction (T1, T7).** Event logs and transcripts keep secrets as written.
+- **Event log retention (T7).** No setting or command deletes the JSONL logs.
+- **Approval of workspace instructions (T3).** The CLIs load them under Workspace Trust only.
+- **Clipboard monitoring (T10).** Not built; its mitigations apply if it is.
+- **Process cleanup at VS Code exit (T2).** Relies on the panel's disposal.
+- **Worktrees for writing workers (T2).** Waits for parallel workers (R6).
+- **Codex read-only confinement (T2).** Verified for PowerShell writes in the leader's
+  configuration only.
 
 ## Supply-chain security at bootstrap
 

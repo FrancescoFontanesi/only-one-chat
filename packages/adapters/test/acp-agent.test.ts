@@ -117,12 +117,15 @@ describe('ACP agent (ADR 0023)', () => {
     expect(result.identity.model).toBe('fake-pro');
   });
 
-  it('asks the user for a permission and answers with the chosen option', async () => {
+  it('asks the user for a permission, never "for the session", and answers once (ADR 0050)', async () => {
     const session = await open();
     const always = handlers('acceptForSession');
     const result = await session.runTurn('PERMESSO', always.handlers).done;
-    expect(always.seen.asked).toEqual([{ kind: 'execute', summary: 'rm -rf build' }]);
-    expect(result.text).toContain('{"outcome":"selected","optionId":"always"}');
+    expect(always.seen.asked).toEqual([
+      { kind: 'execute', summary: 'rm -rf build', sessionAllowed: false },
+    ]);
+    // The agent offers allow_always: it is never picked.
+    expect(result.text).toContain('{"outcome":"selected","optionId":"allow"}');
     const no = await session.runTurn('PERMESSO', handlers('decline').handlers).done;
     expect(no.text).toContain('"optionId":"deny"');
   });
@@ -218,6 +221,12 @@ describe('ACP agent (ADR 0023)', () => {
     expect(antigravityModelId('claude-sonnet-4-6', '')).toBe('claude-sonnet-4-6');
     const options = [{ optionId: 'ok', kind: 'allow_once' }];
     expect(acpOption(options, 'acceptForSession')).toBe('ok');
+    const both = [{ optionId: 'always', kind: 'allow_always' }, ...options];
+    expect(acpOption(both, 'acceptForSession')).toBe('ok');
+    expect(acpOption(both, 'accept')).toBe('ok');
+    expect(
+      acpOption([{ optionId: 'always', kind: 'allow_always' }], 'acceptForSession'),
+    ).toBeNull();
     expect(acpOption(options, 'decline')).toBeNull();
   });
 

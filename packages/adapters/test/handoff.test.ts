@@ -368,7 +368,9 @@ describe('Antigravity (ACP)', () => {
     sessions.push(session);
     const h = handlers();
     const result = await session.runTurn('x\n[handoff@docs search {}]', h.value).done;
-    expect(h.approvals).toEqual([{ kind: 'other', summary: 'Run mcp_docs_search' }]);
+    expect(h.approvals).toEqual([
+      { kind: 'other', summary: 'Run mcp_docs_search', sessionAllowed: false },
+    ]);
     expect(result.handoffs).toBeUndefined();
   });
 

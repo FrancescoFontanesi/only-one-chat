@@ -15,6 +15,8 @@
 // and its number (or why there is none), the weekly one dashed and in cells,
 // the renewal when it is known.
 
+import type { SessionApproval } from '../src/shared/approvals.js';
+import { Approvals } from './Approvals.js';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type {
@@ -653,8 +655,11 @@ export function UsageHud({
   usage,
   threshold,
   active,
+  approvals,
 }: {
   usage: readonly ProviderUsage[];
+  /** The requests allowed for the session (ADR 0050): shown while there are any. */
+  approvals: readonly SessionApproval[];
   /** From which percentage a window is shown as over; 0 for none. */
   threshold: number;
   /** The provider of who you talk to: the one shown until you turn the dial. */
@@ -741,6 +746,7 @@ export function UsageHud({
           </span>
         )}
         {five?.resetsAt && <span class="hud__k">Resets at {clock(five.resetsAt * 1000)}</span>}
+        <Approvals approvals={approvals} />
       </div>
     </div>
   );

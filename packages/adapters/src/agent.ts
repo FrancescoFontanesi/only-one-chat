@@ -7,6 +7,8 @@ import type { ContextUsage, QuotaSnapshot, TurnUsage } from './usage.js';
 export interface AgentApprovalRequest {
   readonly kind: string;
   readonly summary: string;
+  /** False: "for the session" is not offered (ADR 0050). Absent: offered. */
+  readonly sessionAllowed?: boolean;
 }
 
 /** What an agent reports about its own sub-agents (runtime: SubagentEvent). */

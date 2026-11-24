@@ -118,7 +118,9 @@ export {
   type PermissionBridgeOptions,
   type PermissionDecision,
   type PermissionRequest,
+  type SessionApproval,
 } from './claude/permission.js';
+export { isDestructiveCommand, isDestructiveRequest } from './destructive.js';
 export {
   ExecutableNotFoundError,
   resolveNativeExecutable,

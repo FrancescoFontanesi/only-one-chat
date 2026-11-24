@@ -6,6 +6,7 @@
 
 import * as vscode from 'vscode';
 import type { Cli, SettingItem, SettingsSection, SettingsTarget } from './shared/protocol.js';
+import { checkedValue, isUserOnly, writeRefusal } from './webview/security-gates.js';
 
 interface Definition {
   readonly key: string;
@@ -181,39 +182,10 @@ export function settingsSections(context: vscode.ExtensionContext): SettingsSect
                 ? 'user'
                 : 'default',
           // Paths, commands and instructions: never from a folder's settings (security.md).
-          userOnly: property?.scope === 'machine' || property?.scope === 'application',
+          userOnly: isUserOnly(property?.scope),
         };
       }),
   }));
-}
-
-/** The value checked against the setting's kind; undefined when it does not fit. */
-function checked(definition: Definition, value: unknown): unknown {
-  switch (definition.kind) {
-    case 'boolean':
-      return typeof value === 'boolean' ? value : undefined;
-    case 'enum':
-      return definition.options?.some((o) => o.value === value) ? value : undefined;
-    case 'number':
-      return typeof value === 'number' &&
-        Number.isFinite(value) &&
-        value >= (definition.min ?? -Infinity) &&
-        value <= (definition.max ?? Infinity)
-        ? value
-        : undefined;
-    case 'string':
-      return typeof value === 'string' && value.length <= 500 && !/[\r\n]/.test(value)
-        ? value.trim()
-        : undefined;
-    case 'text':
-      return typeof value === 'string' && value.length <= 20_000 ? value : undefined;
-    case 'list':
-      return Array.isArray(value) &&
-        value.length <= 50 &&
-        value.every((v) => typeof v === 'string' && v.trim() !== '' && v.length <= 200)
-        ? value.map((v: string) => v.trim())
-        : undefined;
-  }
 }
 
 /**
@@ -229,14 +201,13 @@ export async function writeSetting(
   const definition = definitions(context).find((d) => d.key === key);
   if (!definition) return `Unknown setting: ${key}`;
   const property = contributed(context)[`onlyOneChat.${key}`];
-  const userOnly = property?.scope === 'machine' || property?.scope === 'application';
-  if (target === 'workspace' && userOnly) {
-    return 'This is a user setting.';
-  }
-  if (target === 'workspace' && !vscode.workspace.workspaceFolders?.length) {
-    return 'Open a folder first.';
-  }
-  const next = value === undefined ? undefined : checked(definition, value);
+  const refused = writeRefusal(
+    target,
+    property?.scope,
+    (vscode.workspace.workspaceFolders?.length ?? 0) > 0,
+  );
+  if (refused) return refused;
+  const next = value === undefined ? undefined : checkedValue(definition, value);
   if (value !== undefined && next === undefined) return `Invalid value for ${definition.label}.`;
   await vscode.workspace
     .getConfiguration('onlyOneChat')

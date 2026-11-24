@@ -9,6 +9,11 @@ export interface ApprovalRequest {
   readonly kind: string;
   /** Short human-readable description for the thread. */
   readonly summary: string;
+  /**
+   * False when "for the session" must not be offered: a destructive command,
+   * or a CLI whose session scope is its own (ADR 0050). Absent: offered.
+   */
+  readonly sessionAllowed?: boolean;
 }
 
 /**

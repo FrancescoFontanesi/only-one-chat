@@ -68,7 +68,9 @@ describe('permission bridge and hook', () => {
       behavior: 'allow',
       updatedInput: input,
     });
-    expect(asked).toEqual([{ tool: 'Bash', input, summary: 'Bash: npm test' }]);
+    expect(asked).toEqual([
+      { tool: 'Bash', input, summary: 'Bash: npm test', sessionAllowed: true },
+    ]);
   });
 
   it('denies when the user declines', async () => {
@@ -91,6 +93,55 @@ describe('permission bridge and hook', () => {
     // Same program, another command: asked again (threat T5).
     await runHook({ tool_name: 'Bash', tool_input: { command: 'git push --force' } }, env);
     expect(asked.map((r) => r.summary)).toEqual(['Bash: git status', 'Bash: git push --force']);
+  });
+
+  it('never keeps a destructive command for the session: it is allowed once (ADR 0050)', async () => {
+    const { bridge, asked } = await start(() => 'acceptForSession');
+    const call = { tool_name: 'Bash', tool_input: { command: 'rm -rf build' } };
+    expect((await runHook(call, bridge.env)).behavior).toBe('allow');
+    expect(asked[0]?.sessionAllowed).toBe(false);
+    expect(bridge.list()).toEqual([]);
+    // The same request again is asked again.
+    await runHook(call, bridge.env);
+    expect(asked).toHaveLength(2);
+  });
+
+  it('lists the session approvals, and revokes one or all without closing', async () => {
+    let changes = 0;
+    const asked: PermissionRequest[] = [];
+    bridge = await startPermissionBridge(
+      (request) => {
+        asked.push(request);
+        return Promise.resolve('acceptForSession');
+      },
+      { nodeExecutable: process.execPath, hookScript: HOOK },
+      () => changes++,
+    );
+    const env = bridge.env;
+    const status = { tool_name: 'Bash', tool_input: { command: 'git status' } };
+    const test = { tool_name: 'Bash', tool_input: { command: 'npm test' } };
+    await runHook(status, env);
+    await runHook(test, env);
+    expect(bridge.list().map((a) => a.summary)).toEqual(['Bash: git status', 'Bash: npm test']);
+    expect(changes).toBe(2);
+    const [first] = bridge.list();
+    expect(bridge.revoke(first?.key ?? '')).toBe(true);
+    expect(bridge.revoke(first?.key ?? '')).toBe(false);
+    expect(bridge.list().map((a) => a.summary)).toEqual(['Bash: npm test']);
+    // Revoked: asked again; still kept: not asked.
+    await runHook(status, env);
+    await runHook(test, env);
+    expect(asked.map((r) => r.summary)).toEqual([
+      'Bash: git status',
+      'Bash: npm test',
+      'Bash: git status',
+    ]);
+    bridge.clear();
+    expect(bridge.list()).toEqual([]);
+    expect(changes).toBe(5);
+    // The bridge still answers.
+    await runHook(test, env);
+    expect(asked).toHaveLength(4);
   });
 
   it('denies a caller without the token, and a hook without a bridge', async () => {

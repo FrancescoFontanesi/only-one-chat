@@ -1,6 +1,7 @@
 // The chat session against the adapters' fake CLIs: no model turn, no quota.
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -2468,6 +2469,96 @@ describe('chat session: the roles’ sessions (ADR 0017, 0027)', () => {
       ['implementer', 'kept-7'],
       ['implementer', 'kept-7'],
     ]);
+  }, 20_000);
+
+  it('lists the implementer’s session approvals, revokes them on its open bridge, keeps no destructive one (ADR 0050)', async () => {
+    const { chat, updates } = session(
+      'auto',
+      'always',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { permissionHook: hook },
+    );
+    /** The hook as Claude runs it, with the bridge's port and token of the implementer's turn. */
+    const ask = (command: string) => {
+      const run = readFileSync(join(root, 'claude.jsonl'), 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { argv?: string[]; env?: Record<string, string> })
+        .find((entry) => entry.argv?.includes('-p') && entry.env?.['OOC_PERMISSION_PORT']);
+      const env = {
+        PATH: process.env['PATH'] ?? '',
+        OOC_PERMISSION_PORT: run?.env?.['OOC_PERMISSION_PORT'] ?? '',
+        OOC_PERMISSION_TOKEN: run?.env?.['OOC_PERMISSION_TOKEN'] ?? '',
+      };
+      return new Promise<string>((resolve, reject) => {
+        const child = spawn(process.execPath, [hook.hookScript], { env, stdio: 'pipe' });
+        let out = '';
+        child.stdout.setEncoding('utf8').on('data', (chunk: string) => (out += chunk));
+        child.on('error', reject);
+        child.on('close', () => {
+          const parsed = JSON.parse(out) as {
+            hookSpecificOutput: { decision: { behavior: string } };
+          };
+          resolve(parsed.hookSpecificOutput.decision.behavior);
+        });
+        child.stdin.end(
+          JSON.stringify({
+            hook_event_name: 'PermissionRequest',
+            tool_name: 'Bash',
+            tool_input: { command },
+          }),
+        );
+      });
+    };
+    const asked = () => updates.flatMap((u) => (u.type === 'permission' ? [u] : []));
+    /** Answers the next request "for the session"; what the hook said. */
+    const answer = async (command: string, count: number) => {
+      const behavior = ask(command);
+      await expect.poll(() => asked().length, { timeout: 5000 }).toBe(count);
+      chat.permit(asked().at(-1)?.id ?? '', 'acceptForSession');
+      return behavior;
+    };
+    try {
+      await chat.send('@impl primo');
+      expect(await answer('npm test', 1)).toBe('allow');
+      expect(chat.approvals()).toEqual([
+        expect.objectContaining({
+          ownerKind: 'role',
+          owner: 'implementer',
+          label: 'Implementer',
+          summary: 'Bash: npm test',
+        }),
+      ]);
+      // Kept: the same command is not asked again.
+      expect(await ask('npm test')).toBe('allow');
+      expect(asked()).toHaveLength(1);
+      // A destructive command: offered once only, never kept.
+      expect(await answer('rm -rf build', 2)).toBe('allow');
+      expect(asked()[1]).toMatchObject({ summary: 'Bash: rm -rf build', sessionAllowed: false });
+      expect(updates).toContainEqual({
+        type: 'permission_closed',
+        id: asked()[1]?.id,
+        decision: 'accept',
+      });
+      expect(chat.approvals()).toHaveLength(1);
+      // Revoked on the open bridge: asked again.
+      chat.revokeApproval({
+        type: 'revokeApproval',
+        ownerKind: 'role',
+        owner: 'implementer',
+        key: chat.approvals()[0]?.key ?? '',
+      });
+      expect(chat.approvals()).toEqual([]);
+      expect(await answer('npm test', 3)).toBe('allow');
+      chat.revokeApproval({ type: 'revokeApproval' });
+      expect(chat.approvals()).toEqual([]);
+    } finally {
+      await chat.dispose();
+    }
   }, 20_000);
 
   it('a permission change closes the old bridge at the next message and resumes the session', async () => {
